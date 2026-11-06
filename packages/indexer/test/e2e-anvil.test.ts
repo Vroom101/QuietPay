@@ -32,12 +32,13 @@ describe.skipIf(!have)("13. end to end on anvil with the real router", () => {
   let anvil: ChildProcess;
   beforeAll(async () => {
     anvil = spawn("anvil", ["--port", String(PORT), "--silent"], { stdio: "ignore" });
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 100; i++) {
       try {
         if ((await rpc("eth_chainId")).result) break;
       } catch {
-        await new Promise((r) => setTimeout(r, 200));
+        /* not up yet */
       }
+      await new Promise((r) => setTimeout(r, 200));
     }
   }, 30_000);
   afterAll(() => anvil?.kill());

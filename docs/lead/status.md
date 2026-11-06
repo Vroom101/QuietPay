@@ -14,3 +14,4 @@
 - DemoUSDT and PaymentRouter (with refunds) deployed and source-verified on chain 1874.
 - Real gasless payment from a zero-WBT payer and a real partial refund recorded (see `first-payment.md`, `refund.md`).
 - Still open: hosted relayer, relayer refund endpoints, browser run of the widget, P1.
+- Indexer, ledger and CSV export built (`packages/indexer`, `docs/lead/ledger.md`); live sample in `docs/lead/samples/`.
