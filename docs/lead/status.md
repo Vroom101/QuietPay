@@ -18,3 +18,4 @@
 06:46 Phase 1 | Tasks 1-6 | contracts hardened, 65 forge tests pass, stand-in token removed (awaiting Opus review)
 06:48 Phase 1 | Opus review | no exploitable issue; v-normalize + underflow fix applied; 66 forge tests pass
 06:53 Phase 2 | Tasks 1-6 | shared hardened, 108 shared tests pass; relayer + dashboard knowingly red until A/B merge
+06:58 Phase 3 | Tasks 1,2,5,6 | qualifying router 0xb9D4...2d82 deployed+verified (block 12351795); payment/refund pending: unfunded
