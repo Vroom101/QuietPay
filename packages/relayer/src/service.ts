@@ -17,7 +17,7 @@ import type { WebhookEvent } from "@quietpay/shared/webhook";
 import { CLAIM_GRACE_SECONDS, OWNER_TIMEOUT_SECONDS, rowToOrder, type Db, type DbStatus, type OrderRow } from "./db.js";
 import { CANCEL_GAS, type ChainPort, type PayArgs, type SignedTx, type TxReceipt } from "./chain.js";
 import type { Config } from "./config.js";
-import { RateLimiter } from "./ratelimit.js";
+import { RateLimiter, clientKey } from "./ratelimit.js";
 import { webhookUrlProblem } from "./webhooks.js";
 
 const HOUR = 3600;
@@ -67,6 +67,13 @@ class Mutex {
     this.tail = r.catch(() => undefined);
     return r;
   }
+}
+
+interface NewPayerSlot {
+  added: boolean;
+  committed: boolean;
+  ip: string;
+  payer: string;
 }
 
 const UNRESOLVED: readonly DbStatus[] = ["pending", "broadcast_unknown"];
@@ -296,9 +303,20 @@ export class RelayerService {
    * cheapest checks run first so a flood of junk costs the relayer nothing.
    */
   async relayPay(req: RelayPayRequest, ctx: { ip: string }): Promise<RelayPayResponse> {
+    // The new-wallet slot (4d) is reserved synchronously and kept only if a signed tx was persisted for it.
+    const slot: NewPayerSlot = { added: false, committed: false, ip: "", payer: "" };
+    try {
+      return await this.relayPayInner(req, ctx, slot);
+    } finally {
+      if (slot.added && !slot.committed) this.newPayersByIp.get(slot.ip)?.delete(slot.payer);
+    }
+  }
+
+  private async relayPayInner(req: RelayPayRequest, ctx: { ip: string }, slot: NewPayerSlot): Promise<RelayPayResponse> {
+    const clientIp = clientKey(ctx.ip);
     // 1. rate limit per client. The per-order limit is charged only after the signature verifies (4b),
     //    so a third party spamming junk with a victim's orderId cannot lock the victim out.
-    if (!this.ipLimiter.allow(`ip:${ctx.ip}`)) this.reject("rate_limited");
+    if (!this.ipLimiter.allow(`ip:${clientIp}`)) this.reject("rate_limited");
 
     // 2. order exists and is not expired
     const found = this.db.getOrder(req.orderId);
@@ -375,8 +393,17 @@ export class RelayerService {
       if (ftLost > 0n && ftLost >= ftCap) {
         this.reject("rate_limited", "Too many failed payments from new wallets right now. Please try again later.");
       }
-      if (!this.newPayerAllowed(ctx.ip, req.payer, nowS)) {
+      // Check and reserve with no await in between, so concurrent relays cannot all see an empty set.
+      const m = this.newPayersFor(clientIp, nowS);
+      const key = req.payer.toLowerCase();
+      if (!m.has(key) && m.size >= this.cfg.maxNewPayersPerIpPerHour) {
         this.reject("rate_limited", "Too many new wallets from this connection. Please try again later.");
+      }
+      if (!m.has(key)) {
+        m.set(key, nowS);
+        slot.added = true;
+        slot.ip = clientIp;
+        slot.payer = key;
       }
     }
 
@@ -463,7 +490,13 @@ export class RelayerService {
           this.reject("relayer_paused", "Payments are paused briefly. Please try again later.");
         }
         const share = (this.cfg.lossBudgetWei * BigInt(this.cfg.payerLossSharePercent)) / 100n;
-        const lost = this.db.revertStats(req.payer, nowS - HOUR).wei;
+        // This payer's txs that are signed but not yet resolved may still revert: they count as reverts and as
+        // potential loss, so a burst sent before the first receipt cannot get past the limits.
+        const inflight = this.db.unresolvedPayerTxs(req.payer);
+        if (this.db.revertStats(req.payer, nowS - DAY).count + inflight.count >= this.cfg.maxRevertsPerDay && inflight.count > 0) {
+          this.reject("rate_limited", "Too many payments from this wallet are still being confirmed. Please try again shortly.");
+        }
+        const lost = this.db.revertStats(req.payer, nowS - HOUR).wei + inflight.wei;
         if (lost > 0n && lost + estimate > share) {
           this.reject("rate_limited", "Too many failed payments from this wallet. Please try again later.");
         }
@@ -485,12 +518,12 @@ export class RelayerService {
           throw new Error("claim lost before broadcast");
         }
         persisted.hash = signed.hash;
+        slot.committed = true;
         this.db.recordSpend(signed.hash, nowS, estimate);
         this.relayed += 1;
         const sent = await this.broadcast(row.id, signed);
         return { hash: signed.hash, sent };
       });
-      if (firstTime) this.recordNewPayer(ctx.ip, req.payer, nowS);
       if (out.sent) void this.track(row.id, out.hash);
       return { orderId: row.id as Hex, status: "pending", txHash: out.hash };
     } catch (e) {
@@ -522,19 +555,6 @@ export class RelayerService {
     }
     for (const [p, ts] of m) if (ts < nowS - HOUR) m.delete(p);
     return m;
-  }
-
-  private newPayerAllowed(ip: string, payerAddr: string, nowS: number): boolean {
-    const m = this.newPayersFor(ip, nowS);
-    return m.has(payerAddr.toLowerCase()) || m.size < this.cfg.maxNewPayersPerIpPerHour;
-  }
-
-  private recordNewPayer(ip: string, payerAddr: string, nowS: number) {
-    const m = this.newPayersFor(ip, nowS);
-    if (!m.has(payerAddr.toLowerCase())) m.set(payerAddr.toLowerCase(), nowS);
-    if (this.newPayersByIp.size > 10_000) {
-      for (const [k, v] of this.newPayersByIp) if (v.size === 0) this.newPayersByIp.delete(k);
-    }
   }
 
   private async nodeHas(hash: Hex): Promise<boolean> {

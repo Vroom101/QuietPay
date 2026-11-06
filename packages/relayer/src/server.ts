@@ -10,7 +10,7 @@ import {
   type ErrorCode,
 } from "@quietpay/shared";
 import type { RelayerService } from "./service.js";
-import { RateLimiter } from "./ratelimit.js";
+import { RateLimiter, clientKey } from "./ratelimit.js";
 
 function safeEqual(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -72,14 +72,14 @@ export function buildServer(svc: RelayerService): FastifyInstance {
   // Health is unauthenticated and costs RPC calls, so it gets its own small per-IP limit.
   const healthLimiter = new RateLimiter(60, 60_000);
   app.get("/v1/health", async (req) => {
-    if (!healthLimiter.allow(req.ip)) throw new QuietpayError("rate_limited");
+    if (!healthLimiter.allow(clientKey(req.ip))) throw new QuietpayError("rate_limited");
     return svc.health();
   });
 
   // Order creation is per-IP limited before the API-key check, so unauthenticated floods are counted too.
   const ordersLimiter = new RateLimiter(120, 60_000);
   app.post("/v1/orders", async (req, reply) => {
-    if (!ordersLimiter.allow(req.ip)) throw new QuietpayError("rate_limited");
+    if (!ordersLimiter.allow(clientKey(req.ip))) throw new QuietpayError("rate_limited");
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
     const body = CreateOrderRequest.parse(req.body);

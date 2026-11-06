@@ -66,6 +66,8 @@ export interface TxAttemptRow {
   gas_price: string | null;
   raw: string | null;
   signed_at: number | null;
+  /** The payer whose authorization this pay tx carries (null for cancels and rows from older versions). */
+  payer?: string | null;
 }
 
 /** Failure codes of orders whose tx was never seen to execute: re-checked for a late receipt. */
@@ -203,14 +205,26 @@ export class Db {
     ] as const) {
       if (!cols.includes(name)) this.raw.exec(`ALTER TABLE orders ADD COLUMN ${name} ${type}`);
     }
+    const attemptCols = (this.raw.prepare("PRAGMA table_info(tx_attempts)").all() as { name: string }[]).map((c) => c.name);
+    if (!attemptCols.includes("payer")) {
+      this.raw.transaction(() => {
+        this.raw.exec("ALTER TABLE tx_attempts ADD COLUMN payer TEXT");
+        // Only an order's CURRENT pay tx is known to carry the order's payer; earlier attempts stay NULL
+        // (settleAttempt then keeps the order's payer, the pre-migration behaviour).
+        this.raw.exec(
+          `UPDATE tx_attempts SET payer = (SELECT o.payer FROM orders o WHERE o.id = tx_attempts.order_id AND o.tx_hash = tx_attempts.tx_hash)
+           WHERE payer IS NULL AND kind = 'pay'`,
+        );
+      })();
+    }
     const revertCols = (this.raw.prepare("PRAGMA table_info(reverts)").all() as { name: string }[]).map((c) => c.name);
     if (!revertCols.includes("first_time")) this.raw.exec("ALTER TABLE reverts ADD COLUMN first_time INTEGER NOT NULL DEFAULT 0");
     // Every order's current tx is part of its attempt history (rows written before tx_attempts existed).
     if (this.getSetting("tx_attempts_backfilled") !== "1") {
       this.raw.transaction(() => {
         this.raw.exec(
-          `INSERT OR IGNORE INTO tx_attempts (tx_hash, order_id, kind, nonce, raw, signed_at)
-           SELECT tx_hash, id, 'pay', tx_nonce, raw_tx, COALESCE(tx_signed_at, relayed_at) FROM orders WHERE tx_hash IS NOT NULL`,
+          `INSERT OR IGNORE INTO tx_attempts (tx_hash, order_id, kind, nonce, raw, signed_at, payer)
+           SELECT tx_hash, id, 'pay', tx_nonce, raw_tx, COALESCE(tx_signed_at, relayed_at), payer FROM orders WHERE tx_hash IS NOT NULL`,
         );
         this.setSetting("tx_attempts_backfilled", "1");
       })();
@@ -416,7 +430,8 @@ export class Db {
         )
         .run(tx.hash, tx.raw, tx.nonce, now, id.toLowerCase(), owner);
       if (r.changes !== 1) return false;
-      this.insertAttempt({ tx_hash: tx.hash, order_id: id, kind: "pay", nonce: tx.nonce, gas_price: tx.gasPrice?.toString() ?? null, raw: tx.raw, signed_at: now });
+      const payer = this.getOrder(id)?.payer ?? null;
+      this.insertAttempt({ tx_hash: tx.hash, order_id: id, kind: "pay", nonce: tx.nonce, gas_price: tx.gasPrice?.toString() ?? null, raw: tx.raw, signed_at: now, payer });
       return true;
     }).immediate();
   }
@@ -426,15 +441,18 @@ export class Db {
     const r = this.raw
       .prepare("UPDATE orders SET tx_hash=?, claim_prev=NULL WHERE id=? AND status='pending' AND tx_hash IS NULL AND claim_owner IS ?")
       .run(txHash, id.toLowerCase(), owner);
-    if (r.changes === 1) this.insertAttempt({ tx_hash: txHash, order_id: id, kind: "pay", nonce: null, gas_price: null, raw: null, signed_at: null });
+    if (r.changes === 1) {
+      const payer = this.getOrder(id)?.payer ?? null;
+      this.insertAttempt({ tx_hash: txHash, order_id: id, kind: "pay", nonce: null, gas_price: null, raw: null, signed_at: null, payer });
+    }
     return r.changes === 1;
   }
 
   // ---- tx attempt history (pay attempts and cancels)
   private insertAttempt(a: TxAttemptRow) {
     this.raw
-      .prepare("INSERT OR IGNORE INTO tx_attempts (tx_hash, order_id, kind, nonce, gas_price, raw, signed_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(a.tx_hash, a.order_id.toLowerCase(), a.kind, a.nonce, a.gas_price, a.raw, a.signed_at);
+      .prepare("INSERT OR IGNORE INTO tx_attempts (tx_hash, order_id, kind, nonce, gas_price, raw, signed_at, payer) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(a.tx_hash, a.order_id.toLowerCase(), a.kind, a.nonce, a.gas_price, a.raw, a.signed_at, a.payer?.toLowerCase() ?? null);
   }
 
   getAttempt(txHash: string): TxAttemptRow | undefined {
@@ -481,16 +499,19 @@ export class Db {
   /**
    * Settles an order on one of its own pay attempts (`txHash` must be the current tx or an earlier attempt of
    * this order), from any not-yet-settled state: a receipt with status success for a pay tx of this order
-   * proves it was paid on chain. The order's tx_hash becomes the settling hash. Returns true once.
+   * proves it was paid on chain. The order's tx_hash becomes the settling hash, and its payer becomes the payer
+   * of that attempt (a later claimant whose retry reverted is not credited with the payment, its cap and
+   * repeat-payer status are not affected, and the webhook names the wallet that paid). Returns true once.
    */
   settleAttempt(id: string, txHash: string, settledAt: number): boolean {
     const r = this.raw
       .prepare(
-        `UPDATE orders SET status='settled', tx_hash=?, failure_code=NULL, settled_at=?
+        `UPDATE orders SET status='settled', tx_hash=?, failure_code=NULL, settled_at=?,
+           payer=COALESCE((SELECT a.payer FROM tx_attempts a WHERE a.order_id=orders.id AND a.tx_hash=? AND a.kind='pay'), payer)
          WHERE id=? AND status IN ('pending','broadcast_unknown','failed','expired')
            AND (tx_hash=? OR EXISTS (SELECT 1 FROM tx_attempts a WHERE a.order_id=orders.id AND a.tx_hash=? AND a.kind='pay'))`,
       )
-      .run(txHash, settledAt, id.toLowerCase(), txHash, txHash);
+      .run(txHash, settledAt, txHash, id.toLowerCase(), txHash, txHash);
     return r.changes === 1;
   }
 
@@ -619,6 +640,21 @@ export class Db {
       last: rows.length ? Math.max(...rows.map((r) => r.ts)) : null,
       wei: rows.reduce((a, r) => a + BigInt(r.wei), 0n),
     };
+  }
+
+  /**
+   * This payer's signed txs whose outcome is not known yet (pending / broadcast_unknown, any age): how many, and
+   * the gas estimate recorded for each when it was signed (spend table). Every one of them may still revert, so
+   * the per-payer revert limits count them as potential reverts / potential loss.
+   */
+  unresolvedPayerTxs(payer: string): { count: number; wei: bigint } {
+    const rows = this.raw
+      .prepare(
+        `SELECT COALESCE(s.wei, '0') wei FROM orders o LEFT JOIN spend s ON s.tx_hash = o.tx_hash
+         WHERE o.payer=? AND o.status IN ${UNRESOLVED} AND o.tx_hash IS NOT NULL`,
+      )
+      .all(payer.toLowerCase()) as { wei: string }[];
+    return { count: rows.length, wei: rows.reduce((a, r) => a + BigInt(r.wei), 0n) };
   }
 
   orderRevertCount(orderId: string, since: number): number {
