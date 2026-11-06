@@ -35,12 +35,8 @@ export function buildLedgerRows(events: RawEvent[], cfg: LedgerConfig): LedgerRo
   const ZERO_AMOUNT = formatAmount(0n, d);
   const router = lc(cfg.router);
   const payTo = cfg.facilitatorPayTo ? lc(cfg.facilitatorPayTo) : undefined;
+  if (payTo !== undefined && payTo === router) throw new Error("facilitatorPayTo must not be the router: every pull into the router would look like a deposit");
   const sorted = [...events].sort(compareEvents);
-
-  const routerTxs = new Set<string>();
-  for (const e of sorted) {
-    if (lc(e.address) === router && (e.kind === "Paid" || e.kind === "Refunded")) routerTxs.add(lc(e.txHash));
-  }
 
   const rows = new Map<string, LedgerRow & { gross: bigint; fee: bigint; refunded: bigint }>();
 
@@ -97,7 +93,6 @@ export function buildLedgerRows(events: RawEvent[], cfg: LedgerConfig): LedgerRo
     for (const e of sorted) {
       if (e.kind !== "Transfer" || lc(e.args.to!) !== payTo) continue;
       if (lc(e.args.from!) === router) continue;
-      if (routerTxs.has(lc(e.txHash))) continue;
       const gross = BigInt(e.args.value!);
       out.push({
         key: `${lc(e.txHash)}:${e.logIndex}`,

@@ -1,5 +1,17 @@
 import type { VerifyReport } from "./types.js";
 
+/** Escapes control, DEL, C1 and bidi-override characters so text copied from a hostile file cannot drive the terminal. */
+export function safeText(s: string): string {
+  const BS = String.fromCharCode(92);
+  let out = "";
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    const bad = c < 0x20 || (c >= 0x7f && c <= 0x9f) || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
+    out += bad ? BS + "u" + c.toString(16).padStart(4, "0") : ch;
+  }
+  return out;
+}
+
 /** Plain-text report for people. The JSON report carries the same facts. */
 export function formatHuman(r: VerifyReport, csvPath?: string): string {
   const L: string[] = [];
@@ -34,5 +46,5 @@ export function formatHuman(r: VerifyReport, csvPath?: string): string {
   L.push("");
   L.push(`RESULT: ${r.ok ? (r.anchored ? "OK" : "OK (unanchored: pass --from, --to and --min-confirmations from outside the file to rule out a shrunken range)") : "FAIL"}`);
   L.push(`Note: ${r.trust}`);
-  return L.join("\n");
+  return L.map(safeText).join("\n");
 }

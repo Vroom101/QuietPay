@@ -137,11 +137,9 @@ export function eventSetDigest(events: { txHash: string; logIndex: number }[]): 
 export function deriveRows(events: SpecEvent[], cfg: { router: string; payTo?: string; decimals: number }): SpecRow[] {
   const router = lc(cfg.router);
   const payTo = cfg.payTo ? lc(cfg.payTo) : undefined;
+  if (payTo !== undefined && payTo === lc(cfg.router)) throw new Error("payTo must not be the router: every pull into the router would look like a deposit");
   const ordered = [...events].sort((a, b) => a.block - b.block || a.logIndex - b.logIndex);
   const fromRouter = (e: SpecEvent) => lc(e.address) === router;
-  const settlementTxs = new Set(
-    ordered.filter((e) => fromRouter(e) && (e.kind === "Paid" || e.kind === "Refunded")).map((e) => lc(e.txHash)),
-  );
   const iso = (t: number) => new Date(t * 1000).toISOString();
   const rows: SpecRow[] = [];
   const byOrder = new Map<string, { row: SpecRow; value: bigint; fee: bigint; refunded: bigint }>();
@@ -185,7 +183,7 @@ export function deriveRows(events: SpecEvent[], cfg: { router: string; payTo?: s
   }
   if (payTo) {
     for (const e of ordered) {
-      if (e.kind !== "Transfer" || lc(e.args.to!) !== payTo || lc(e.args.from!) === router || settlementTxs.has(lc(e.txHash))) continue;
+      if (e.kind !== "Transfer" || lc(e.args.to!) !== payTo || lc(e.args.from!) === router) continue;
       const v = BigInt(e.args.value!);
       rows.push({
         dateUtc: iso(e.timestamp),

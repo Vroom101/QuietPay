@@ -103,19 +103,19 @@ describe("payto_transfer rows", () => {
     expect(rows[0]!.source).toBe("router");
   });
 
-  it("excludes a Transfer from the router, and any Transfer sharing a tx with a router Paid/Refunded", () => {
+  it("excludes a Transfer from the router but counts a direct deposit sharing a tx with a router Paid (T1d)", () => {
     const tx = txHash();
     const rows = buildLedgerRows(
       [
         raw(paidLog({ block: 200, tx, logIndex: 3, orderId: order(1), value: 25_000_000n, fee: 0n })),
-        raw(transferLog({ block: 200, tx, logIndex: 1, from: PAYER, to: PAYTO, value: 5n })), // same tx as router log
+        raw(transferLog({ block: 200, tx, logIndex: 1, from: PAYER, to: PAYTO, value: 5n })), // same tx as a router log: still a genuine deposit
         raw(transferLog({ block: 201, from: ROUTER, to: PAYTO, value: 7n })), // from the router, different tx
         raw(transferLog({ block: 202, from: PAYER, to: PAYTO, value: 9n })), // genuine agent payment
       ],
       cfg,
     );
-    expect(rows.map((r) => r.source)).toEqual(["router", "payto_transfer"]);
-    expect(rows[1]!.grossUsdt).toBe("0.000009");
+    expect(rows.map((r) => r.source)).toEqual(["payto_transfer", "router", "payto_transfer"]); // block 200 log 1, block 200 log 3, block 202
+    expect(rows.filter((r) => r.source === "payto_transfer").map((r) => r.grossUsdt)).toEqual(["0.000005", "0.000009"]);
   });
 
   it("ignores transfers to other addresses and does nothing without a facilitator address", () => {

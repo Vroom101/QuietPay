@@ -56,12 +56,12 @@ async function main() {
   add("no demo-token references in tracked source", hits.length === 0 ? "PASS" : "FAIL", hits.join(", "));
 
   // 7. No secrets in the tree or in history.
-  const keyAssign = /(PRIVATE_KEY|SECRET|MNEMONIC)\s*=\s*['"]?(0x)?[0-9a-fA-F]{64}\b/;
-  const treeHits = git("ls-files").split("\n").filter((f) => isFile(f) && !/\.(png|jpg|lock|yaml)$/.test(f) && !f.includes("fixtures/") && keyAssign.test(readFileSync(f, "utf8")));
+  const keyAssign = /(PRIVATE_KEY|SECRET|MNEMONIC)\w*["']?\s*[:=]\s*["']?(0x)?[0-9a-fA-F]{64}\b/;
+  const treeHits = git("ls-files").split("\n").filter((f) => isFile(f) && !/\.(png|jpg|lock)$/.test(f) && !f.includes("fixtures/") && !f.includes("pnpm-lock") && keyAssign.test(readFileSync(f, "utf8")));
   add("no private-key assignments in the working tree", treeHits.length === 0 ? "PASS" : "FAIL", treeHits.join(", "));
-  const hist = git("log", "-p", "--all", "-G", "PRIVATE_KEY\\s*=\\s*['\"]?(0x)?[0-9a-fA-F]{64}").split("\n").filter((l) => l.startsWith("+") && keyAssign.test(l));
+  const hist = git("log", "-p", "--all", "-G", "(PRIVATE_KEY|SECRET|MNEMONIC)\\w*['\"]?\\s*[:=]\\s*['\"]?(0x)?[0-9a-fA-F]{64}").split("\n").filter((l) => l.startsWith("+") && keyAssign.test(l));
   add("no private-key assignments in git history", hist.length === 0 ? "PASS" : "FAIL", hist.length ? `${hist.length} added line(s) match` : "");
-  add("env files are untracked", !git("ls-files").split("\n").some((f) => /(^|\/)\.env(\.local)?$/.test(f)) ? "PASS" : "FAIL", "");
+  add("env files are untracked", !git("ls-files").split("\n").some((f) => /(^|\/)\.env(\..+)?$/.test(f) && !/\.(example|sample|template)$/.test(f)) ? "PASS" : "FAIL", "");
 
   // 8. Steady commit history from the Lead.
   const dates = git("log", "--format=%ad", "--date=format:%Y-%m-%d %H").split("\n").filter(Boolean);
