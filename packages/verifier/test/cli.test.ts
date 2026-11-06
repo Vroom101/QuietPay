@@ -62,8 +62,8 @@ describe("cli", () => {
     expect(await runCli(["verify", "--rpc", "x"], { makeSource: () => scenario(), ...o })).toBe(2);
     expect(o.err.join("\n")).toMatch(/--csv/);
     expect(await runCli([], { makeSource: () => scenario(), ...io() })).toBe(2);
-    expect(await runCli(["verify", "--csv", "nope.csv", "--rpc", "x", "--router", ROUTER, "--usdt", USDT], { makeSource: () => scenario(), ...io() })).toBe(2);
-    expect(await runCli(["verify", "--csv", "a.csv", "--rpc", "x", "--router", "0x12", "--usdt", USDT], { makeSource: () => scenario(), ...io() })).toBe(2);
+    expect(await runCli(["verify", "--csv", "nope.csv", "--rpc", "x", "--router", ROUTER, "--usdt", USDT, "--no-payto"], { makeSource: () => scenario(), ...io() })).toBe(2);
+    expect(await runCli(["verify", "--csv", "a.csv", "--rpc", "x", "--router", "0x12", "--usdt", USDT, "--no-payto"], { makeSource: () => scenario(), ...io() })).toBe(2);
   });
 
   it("exit 2 when the sidecar is missing", async () => {

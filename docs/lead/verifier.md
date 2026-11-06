@@ -2,18 +2,22 @@
 
 `packages/verifier` (`@quietpay/verifier`) checks a ledger export (the CSV and its `.meta.json` sidecar from
 `pnpm cli export`) against the chain, without trusting the tool that produced it. It does **not** read the indexer's
-database or talk to the relayer. Its only inputs are an RPC URL, the router address, the USDT address, an optional
-facilitator pay-to address, and the CSV path.
+database or talk to the relayer. Its only inputs are an RPC URL, the router address, the USDT address, the reader's
+explicit pay-to expectation (`--payto 0x..` or `--no-payto`), and the CSV path.
 
 ```
-pnpm --filter @quietpay/verifier cli verify --csv FILE --rpc URL --router 0x.. --usdt 0x.. [--payto 0x..] \
+pnpm --filter @quietpay/verifier cli verify --csv FILE --rpc URL --router 0x.. --usdt 0x.. (--payto 0x.. | --no-payto) \
      [--meta FILE] [--report FILE] [--json]
 ```
 
 - `--meta` defaults to `FILE.meta.json`. `--report` (the JSON report) defaults to `FILE.verify.json`. `--json` prints the
   JSON instead of the human report.
-- Pass `--payto` exactly when the export was made with `FACILITATOR_PAYTO`. If you leave it out for such an export, the
-  deposit rows show up as `extra_row` and the event set hash does not match.
+- One of `--payto` / `--no-payto` is **required**. Pass `--payto <address>` when the export was made with
+  `FACILITATOR_PAYTO`, and `--no-payto` when it was made without one. Omitting both exits `2` with
+  `missing pay-to expectation` before any chain call; passing both, or a flag twice, is also a usage error. The
+  programmatic API is the same: `verifyLedger({ ..., expectedPayTo: "0x.." | null })` is required with no default
+  (the old `payTo: "0x.."` is a deprecated spelling of an address expectation), and a caller that leaves it out gets a
+  report with `ok: false` and the single issue `payto_expectation_missing`.
 - Relative paths are resolved from the directory you run the command in.
 - Exit codes: `0` everything matches, `1` mismatch, `2` usage, config or RPC error. **pnpm turns any non-zero exit into
   1.** For the exact codes, run the entry point directly, for example
@@ -96,8 +100,17 @@ the facilitator.
   both would still go unnoticed; the invariants in step 5 are computed separately and partly cover this risk.
 - **Anchoring.** A result is printed `OK (unanchored)` unless `--from`, `--to` and `--min-confirmations` were supplied from
   outside the export. Without them a forger can shrink the range in both files. Compare the printed checkpoint with the
-  publisher's out of band. Sidecars written since 2026-11-06 also record `router`, `usdt` and `payTo`; the verifier fails
-  with `config_mismatch` if it is run with different values (so omitting `--payto` cannot hide deposits).
+  publisher's out of band.
+- **The sidecar never decides what is checked.** The sidecar must carry `router`, `usdt` and `payTo` (an address or
+  `null`; the exporter always writes all three). A sidecar missing any of the three keys (the old shape, or one edited
+  to drop them) is rejected as `bad_sidecar` (`malformed_sidecar: ...`) and can never be OK. All three must equal what
+  the reader states (`config_mismatch`): the router and USDT flags, and the pay-to expectation, where an address
+  matches case-insensitively and a sidecar `payTo: null` matches only `--no-payto`. So a forger who strips the deposit
+  rows, rebuilds the hash over router events and sets `payTo: null` gets `config_mismatch` from a reader who passes
+  `--payto`, and a refusal from a reader who passes neither flag. What remains is the reader's own statement: a reader
+  who wrongly passes `--no-payto` for an export that had a pay-to address is told only what they asserted.
+  Sidecars written before 2026-11-06 (no pins, for example `docs/lead/samples/live-sample.csv.meta.json`) must be
+  re-exported to verify.
 - **A refund appears only in the export that contains its payment.** Rows are placed at their `Paid` block, so a refund
   made after `toBlock` of an earlier export, or of a payment before `fromBlock`, is not visible in a later range's rows.
   Export from the deploy block, or re-export, to see current refund totals. Pinned by a test as a known limitation.
@@ -117,9 +130,13 @@ the facilitator.
   - each of the 13 cells tampered, each with its specific reason
   - a deleted row, an added row, swapped rows, a duplicate row, a row out of range
   - CRLF line endings, a 7-decimal amount, a bad header, a missing final newline, a wrong cell count, a bad integer
-  - a wrong sidecar hash, a hidden event, a `toBlock` beyond finality, a malformed sidecar, a missing `--payto`
+  - a wrong sidecar hash, a hidden event, a `toBlock` beyond finality, a malformed sidecar, `--no-payto` on an export that had a pay-to address
   - transfer mismatches (payout, relayer fee, payer pull)
   - the chain 1874 guard
+- **`test/round7-coverage.test.ts`**: the pay-to expectation is required and reader-decided: a forged `payTo: null`
+  sidecar with no expectation is refused (API and CLI), `--no-payto` against a real `payTo` and a mismatching
+  `--payto` are `config_mismatch`, stripped deposits with `payTo: null` fail under `--payto <real>`, and legitimate
+  exports with and without a pay-to address still verify OK.
 - **`test/cli.test.ts`**: exit codes 0, 1 and 2, the JSON report file, `--json`, a missing sidecar, an RPC error, and the
   guard.
 - **`test/e2e-anvil.test.ts`**: runs on anvil with the real router. It makes a real payment and a partial refund plus a
@@ -127,4 +144,4 @@ the facilitator.
   verification FAILS with `wrong_amount` on `net_usdt`.
 - **`test/live-sample.test.ts`**: verifies `docs/lead/samples/live-sample.csv` against chain 1874 through the public RPC.
   It runs only when `RPC_URL` is set in the environment (read-only). Set `VERIFY_PAYTO` if the sample was exported
-  with a pay-to address.
+  with a pay-to address; otherwise the test passes `--no-payto`.

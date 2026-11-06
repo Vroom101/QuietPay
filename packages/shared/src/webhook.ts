@@ -58,6 +58,8 @@ export function verifyWebhookSignature(
   header: string,
   opts?: { nowSeconds?: number; toleranceSeconds?: number },
 ): boolean {
+  // An empty (or whitespace-only) secret is a public HMAC key: never verify against it.
+  if (secret.trim() === "") return false;
   const parsed = parseSignatureHeader(header);
   if (!parsed) return false;
   const now = opts?.nowSeconds ?? Math.floor(Date.now() / 1000);

@@ -8,7 +8,7 @@ describe("tampered demo samples are caught with the expected class", () => {
     const chain = scenario();
     const { csv, metaText, meta } = await exportWithIndexer(chain);
     const verify = (c: string, m: string, expected?: { fromBlock: number; toBlock: number }) =>
-      verifyLedger({ csvText: c, metaText: m, src: chain, router: ROUTER, usdt: USDT, payTo: PAYTO, expected, sleep: async () => undefined });
+      verifyLedger({ csvText: c, metaText: m, src: chain, router: ROUTER, usdt: USDT, expectedPayTo: PAYTO, expected, sleep: async () => undefined });
     expect((await verify(csv, metaText, { fromBlock: meta.fromBlock, toBlock: meta.toBlock })).ok).toBe(true);
 
     const samples = makeTamperedSamples(csv, metaText);
@@ -24,7 +24,7 @@ describe("tampered demo samples are caught with the expected class", () => {
   it("the changed row is flagged exactly: one field, one row", async () => {
     const chain = scenario();
     const { csv, metaText } = await exportWithIndexer(chain);
-    const r = await verifyLedger({ csvText: changeFirstRowAmount(csv), metaText, src: chain, router: ROUTER, usdt: USDT, payTo: PAYTO, sleep: async () => undefined });
+    const r = await verifyLedger({ csvText: changeFirstRowAmount(csv), metaText, src: chain, router: ROUTER, usdt: USDT, expectedPayTo: PAYTO, sleep: async () => undefined });
     const rowIssues = r.issues.filter((i) => i.check === "rows");
     expect(rowIssues).toHaveLength(1);
     expect(rowIssues[0]).toMatchObject({ code: "wrong_amount", field: "gross_usdt", line: 2 });
@@ -33,7 +33,7 @@ describe("tampered demo samples are caught with the expected class", () => {
   it("the deleted row is reported missing, once", async () => {
     const chain = scenario();
     const { csv, metaText } = await exportWithIndexer(chain);
-    const r = await verifyLedger({ csvText: deleteFirstRow(csv), metaText, src: chain, router: ROUTER, usdt: USDT, payTo: PAYTO, sleep: async () => undefined });
+    const r = await verifyLedger({ csvText: deleteFirstRow(csv), metaText, src: chain, router: ROUTER, usdt: USDT, expectedPayTo: PAYTO, sleep: async () => undefined });
     expect(r.issues.filter((i) => i.code === "missing_row")).toHaveLength(1);
   });
 

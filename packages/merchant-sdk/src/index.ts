@@ -116,6 +116,7 @@ export interface VerifyWebhookOptions {
  * Receivers should ignore events whose `id` they have already processed.
  */
 export function verifyWebhook(opts: VerifyWebhookOptions): WebhookEvent {
+  if (opts.secret.trim() === "") throw new WebhookVerificationError("Webhook secret is empty; refusing to verify");
   if (!opts.signatureHeader) throw new WebhookVerificationError("Missing Quietpay-Signature header");
   const ok = verifyWebhookSignature(opts.secret, opts.body, opts.signatureHeader, {
     toleranceSeconds: opts.toleranceSeconds ?? WEBHOOK_TOLERANCE_SECONDS,

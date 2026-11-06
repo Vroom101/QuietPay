@@ -16,7 +16,9 @@ describe.skipIf(!rpcUrl)("live sample (read-only, public testnet, needs RPC_URL)
     const dep = getQualifyingDeployment();
     const report = join(mkdtempSync(join(tmpdir(), "qp-verifier-live-")), "live.verify.json");
     const argv = ["verify", "--csv", sample, "--rpc", rpcUrl!, "--router", dep.router, "--usdt", QUALIFYING_USDT, "--report", report];
+    // The reader states the pay-to expectation explicitly; the sidecar is never trusted to decide it.
     if (process.env.VERIFY_PAYTO) argv.push("--payto", process.env.VERIFY_PAYTO);
+    else argv.push("--no-payto");
     const lines: string[] = [];
     const code = await runCli(argv, { makeSource: makeVerifierSource, stdout: (s) => lines.push(s), stderr: (s) => lines.push(s) });
     console.log(lines.join("\n"));

@@ -80,6 +80,12 @@ export async function getLogsPaged(
 
 const hex = (n: number) => `0x${n.toString(16)}`;
 
+/** Asks the node which chain it serves (eth_chainId). Used so the CLI never trusts CHAIN_ID alone. */
+export async function getNodeChainId(rpcUrl: string): Promise<number> {
+  const client = createPublicClient({ transport: http(rpcUrl, { retryCount: 2 }) });
+  return client.getChainId();
+}
+
 export function makeLogSource(rpcUrl: string): LogSource {
   const client = createPublicClient({ transport: http(rpcUrl, { retryCount: 2 }) });
   const req = client.request as unknown as (a: { method: string; params: unknown[] }) => Promise<unknown>;

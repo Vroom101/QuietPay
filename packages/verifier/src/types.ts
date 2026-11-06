@@ -36,6 +36,7 @@ export type IssueCode =
   | "to_block_not_final"
   | "range_mismatch"
   | "config_mismatch"
+  | "payto_expectation_missing"
   | "confirmations_below_expected"
   | "rpc_disagreement"
   // rows (CSV vs rows rebuilt from chain logs)

@@ -5,7 +5,7 @@ import { mkdirSync } from "node:fs";
 import { assertQualifyingConfig, getDeployment, getQualifyingDeployment, QUALIFYING_CHAIN_ID } from "@quietpay/shared";
 import { IndexerDb } from "./db.js";
 import { buildExport, indexOnce, rebuild, type IndexerConfig } from "./indexer.js";
-import { makeLogSource } from "./rpc.js";
+import { getNodeChainId, makeLogSource } from "./rpc.js";
 
 const USAGE = `quietpay-indexer <command>
   index                         catch up to the finalized head once
@@ -20,8 +20,26 @@ function need(name: string): string {
   return v;
 }
 
+/** On chain 1874 the router must be the qualifying one recorded in deployments.json. */
+function assertQualifyingRouter(router: string): void {
+  const q = getQualifyingDeployment();
+  if (router.toLowerCase() !== q.router.toLowerCase()) {
+    throw new Error(`Refusing router ${router}: on chain ${QUALIFYING_CHAIN_ID} only the qualifying router ${q.router} is accepted`);
+  }
+}
+
+/** Refuses to index unless the RPC node itself reports chain 1874 and CHAIN_ID (if set) agrees with it. */
+async function assertNodeChain(rpcUrl: string): Promise<void> {
+  const nodeId = await getNodeChainId(rpcUrl);
+  if (nodeId !== QUALIFYING_CHAIN_ID) throw new Error(`RPC node reports chain ${nodeId}; refusing (expected ${QUALIFYING_CHAIN_ID})`);
+  if (process.env.CHAIN_ID !== undefined && Number(process.env.CHAIN_ID) !== nodeId) {
+    throw new Error(`CHAIN_ID=${process.env.CHAIN_ID} disagrees with the RPC node (chain ${nodeId})`);
+  }
+}
+
 function loadConfig(): { cfg: IndexerConfig; rpcUrl: string; dbPath: string } {
-  const chainId = Number(process.env.CHAIN_ID ?? 1874);
+  const chainId = Number(process.env.CHAIN_ID ?? QUALIFYING_CHAIN_ID);
+  if (chainId !== QUALIFYING_CHAIN_ID) throw new Error(`Refusing chain ${chainId}: this indexer runs only on chain ${QUALIFYING_CHAIN_ID}`);
   // On the qualifying chain, only the qualifying router and the official USDT are accepted.
   const dep = (() => {
     try {
@@ -33,12 +51,14 @@ function loadConfig(): { cfg: IndexerConfig; rpcUrl: string; dbPath: string } {
   const deployBlock = Number(process.env.DEPLOY_BLOCK ?? dep?.deployBlock ?? NaN);
   if (!Number.isFinite(deployBlock)) throw new Error("No deploy block: set DEPLOY_BLOCK or record deployBlock in deployments.json");
   const usdt = process.env.USDT_ADDRESS ?? dep?.token ?? need("USDT_ADDRESS");
-  if (chainId === QUALIFYING_CHAIN_ID) assertQualifyingConfig({ chainId, tokenAddress: usdt });
+  assertQualifyingConfig({ chainId, tokenAddress: usdt });
+  const router = process.env.ROUTER_ADDRESS ?? dep?.router ?? need("ROUTER_ADDRESS");
+  assertQualifyingRouter(router);
   return {
     rpcUrl: need("RPC_URL"),
     dbPath: process.env.DATABASE_PATH ?? "./indexer.db",
     cfg: {
-      router: process.env.ROUTER_ADDRESS ?? dep?.router ?? need("ROUTER_ADDRESS"),
+      router,
       usdt,
       facilitatorPayTo: process.env.FACILITATOR_PAYTO || undefined,
       confirmations: Number(process.env.CONFIRMATIONS ?? 12),
@@ -58,6 +78,8 @@ const log = (m: string) => console.log(`[${new Date().toISOString()}] ${m}`);
 async function main() {
   if (!cmd || cmd === "--help" || cmd === "-h") return console.log(USAGE);
   const { cfg, rpcUrl, dbPath } = loadConfig();
+  // Commands that talk to the node must agree with it on the chain id; export and rebuild read only the local DB.
+  if (cmd === "index" || cmd === "watch") await assertNodeChain(rpcUrl);
   const db = new IndexerDb(dbPath);
   const src = makeLogSource(rpcUrl);
   try {

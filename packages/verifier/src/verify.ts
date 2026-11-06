@@ -21,14 +21,12 @@ export const TRUST_NOTE =
   "Re-derived from chain logs and block headers served by the RPC node; the node itself is trusted. " +
   "A payto_transfer row is a deposit, not proof of an x402 API purchase.";
 
-export interface VerifyInput {
+export interface VerifyInputBase {
   csvText: string;
   metaText: string;
   src: VerifierSource;
   router: string;
   usdt: string;
-  /** The facilitator pay-to address the export used (FACILITATOR_PAYTO). Omit if the export had none. */
-  payTo?: string;
   decimals?: number;
   /**
    * The range and depth the reader expects, supplied OUTSIDE the export's own sidecar. Without it a forger who edits
@@ -40,6 +38,20 @@ export interface VerifyInput {
   pageSize?: number;
   sleep?: (ms: number) => Promise<void>;
 }
+
+/**
+ * What the READER expects the export's facilitator pay-to address to be. Required, no default: the sidecar comes from
+ * whoever hands over the files, so it must never decide whether deposits are checked.
+ * - `expectedPayTo: "0x.."` (CLI `--payto 0x..`): the export was made with that FACILITATOR_PAYTO.
+ * - `expectedPayTo: null` (CLI `--no-payto`): the reader states the export was made without a pay-to address.
+ * Leaving it out (possible only from untyped callers) refuses verification with `payto_expectation_missing`.
+ * `payTo: "0x.."` is a deprecated spelling of `expectedPayTo: "0x.."` (an address only; it can never mean "none").
+ */
+export type PayToExpectation =
+  | { expectedPayTo: string | null; payTo?: undefined }
+  | { /** @deprecated use `expectedPayTo` */ payTo: string; expectedPayTo?: undefined };
+
+export type VerifyInput = VerifyInputBase & PayToExpectation;
 
 const lc = (s: string) => s.toLowerCase();
 const CHECKS: CheckName[] = ["structure", "sidecar", "finality", "rows", "event_set_hash", "invariants", "timestamps"];
@@ -67,12 +79,24 @@ function parseAmount(s: string, decimals: number): bigint | null {
 export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
   const { src } = input;
   const decimals = input.decimals ?? token.decimals;
-  for (const [name, a] of [["router", input.router], ["usdt", input.usdt], ["payto", input.payTo]] as const) {
-    if (a !== undefined && !isAddress(a, { strict: false })) throw new ConfigError(`--${name} is not an address: ${a}`);
+  // Untyped callers can send anything; read both spellings defensively.
+  const raw = input as { expectedPayTo?: unknown; payTo?: unknown };
+  if (raw.expectedPayTo !== undefined && raw.payTo !== undefined) {
+    throw new ConfigError("pass the pay-to expectation once: expectedPayTo (preferred) or the deprecated payTo, not both");
+  }
+  const stated: unknown = raw.expectedPayTo !== undefined ? raw.expectedPayTo : raw.payTo;
+  if (raw.payTo !== undefined && typeof raw.payTo !== "string") throw new ConfigError(`--payto is not an address: ${String(raw.payTo)}`);
+  if (stated !== undefined && stated !== null && (typeof stated !== "string" || !isAddress(stated, { strict: false }))) {
+    throw new ConfigError(`--payto is not an address: ${String(stated)}`);
+  }
+  for (const [name, a] of [["router", input.router], ["usdt", input.usdt]] as const) {
+    if (!isAddress(a, { strict: false })) throw new ConfigError(`--${name} is not an address: ${a}`);
   }
   const router = lc(input.router);
   const usdt = lc(input.usdt);
-  const payTo = input.payTo ? lc(input.payTo) : undefined;
+  /** undefined = the reader stated nothing (refused below); null = explicitly no pay-to; else the expected address. */
+  const expectation: string | null | undefined = stated === undefined ? undefined : stated === null ? null : lc(stated as string);
+  const payTo = expectation ?? undefined;
 
   const chainId = await src.getChainId();
   assertQualifying(chainId, router, usdt);
@@ -116,6 +140,17 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
 
   // Sidecar.
   ran.add("sidecar");
+  if (expectation === undefined) {
+    // Fail closed: what gets checked is decided by the reader, never by the (attacker-controlled) sidecar.
+    issues.push({
+      check: "sidecar",
+      code: "payto_expectation_missing",
+      message:
+        "refusing to verify: state the pay-to expectation explicitly, --payto <address> if the export was made with " +
+        "FACILITATOR_PAYTO, or --no-payto if it was made without one (programmatic: expectedPayTo: address | null)",
+    });
+    return finish();
+  }
   const sc = parseSidecar(input.metaText);
   if ("error" in sc) {
     issues.push({ check: "sidecar", code: "bad_sidecar", message: sc.error });
@@ -132,8 +167,8 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
 
   const want = input.expected ?? {};
   report.anchored = want.fromBlock !== undefined && want.toBlock !== undefined && want.minConfirmations !== undefined;
-  for (const [name, mine, theirs] of [["router", router, meta.router], ["usdt", usdt, meta.usdt], ["payTo", payTo ?? null, meta.payTo]] as const) {
-    if (theirs !== undefined && theirs !== mine) {
+  for (const [name, mine, theirs] of [["router", router, meta.router], ["usdt", usdt, meta.usdt], ["payTo", expectation, meta.payTo]] as const) {
+    if (theirs !== mine) {
       issues.push({
         check: "sidecar",
         code: "config_mismatch",

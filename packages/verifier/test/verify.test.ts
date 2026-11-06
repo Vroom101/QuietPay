@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError, QUALIFYING_USDT, getQualifyingDeployment } from "@quietpay/shared";
-import { verifyLedger, type VerifyReport } from "../src/index.js";
+import { verifyLedger, type VerifyInputBase, type VerifyReport } from "../src/index.js";
 import { FakeChain, PAYER, PAYTO, ROUTER, USDT, exportWithIndexer, payment, scenario, transfer, tx, order } from "./fake.js";
 
 const COLS = ["date_utc", "source", "order_id", "merchant_id", "payer", "gross_usdt", "relay_fee_usdt", "refunded_usdt", "net_usdt", "status", "tx_hash", "block", "log_index"];
@@ -16,8 +16,8 @@ function setCell(csv: string, row: number, col: string, value: string): string {
 const cell = (csv: string, row: number, col: string) => csv.split("\n")[row]!.split(",")[COLS.indexOf(col)]!;
 const codes = (r: VerifyReport) => r.issues.map((i) => i.code);
 
-async function run(csv: string, metaText: string, chain: FakeChain, over: Partial<Parameters<typeof verifyLedger>[0]> = {}) {
-  return verifyLedger({ csvText: csv, metaText, src: chain, router: ROUTER, usdt: USDT, payTo: PAYTO, sleep: async () => undefined, ...over });
+async function run(csv: string, metaText: string, chain: FakeChain, over: Partial<VerifyInputBase> & { expectedPayTo?: string | null } = {}) {
+  return verifyLedger({ csvText: csv, metaText, src: chain, router: ROUTER, usdt: USDT, expectedPayTo: PAYTO, sleep: async () => undefined, ...over });
 }
 
 async function valid() {
@@ -58,10 +58,10 @@ describe("a correct export", () => {
     expect(r.issues).toEqual([]);
   });
 
-  it("passes for an export made without a pay-to address when none is given", async () => {
+  it("passes for an export made without a pay-to address when the reader says so (--no-payto)", async () => {
     const chain = scenario();
     const { csv, metaText } = await exportWithIndexer(chain, { payTo: null });
-    const r = await run(csv, metaText, chain, { payTo: undefined });
+    const r = await run(csv, metaText, chain, { expectedPayTo: null });
     expect(r.issues).toEqual([]);
   });
 });
@@ -233,9 +233,9 @@ describe("sidecar and finality", () => {
     expect(codes(await run(csv, JSON.stringify({ fromBlock: 10, toBlock: 5, confirmations: 12, eventSetHash: "a".repeat(64) }), chain))).toEqual(["bad_sidecar"]);
   });
 
-  it("verifying without the pay-to address the export used is reported", async () => {
+  it("verifying with --no-payto an export that used a pay-to address is reported", async () => {
     const { chain, csv, metaText } = await valid();
-    const r = await run(csv, metaText, chain, { payTo: undefined });
+    const r = await run(csv, metaText, chain, { expectedPayTo: null });
     expect(codes(r)).toContain("extra_row");
     expect(codes(r)).toContain("event_set_hash_mismatch");
   });
@@ -286,8 +286,8 @@ describe("qualifying guard on chain 1874", () => {
     const dep = getQualifyingDeployment();
     const chain = new FakeChain(dep.deployBlock + 100, 1874);
     const csv = COLS.join(",") + "\n";
-    const meta = { fromBlock: dep.deployBlock, toBlock: dep.deployBlock + 50, confirmations: 12, eventSetHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", generatedAt: "x" };
-    const r = await verifyLedger({ csvText: csv, metaText: JSON.stringify(meta), src: chain, router: dep.router, usdt: QUALIFYING_USDT });
+    const meta = { fromBlock: dep.deployBlock, toBlock: dep.deployBlock + 50, confirmations: 12, eventSetHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", router: dep.router, usdt: QUALIFYING_USDT, payTo: null, generatedAt: "x" };
+    const r = await verifyLedger({ csvText: csv, metaText: JSON.stringify(meta), src: chain, router: dep.router, usdt: QUALIFYING_USDT, expectedPayTo: null });
     expect(r.issues).toEqual([]);
     expect(r.chainId).toBe(1874);
   });
@@ -368,10 +368,10 @@ describe("the sidecar pins what the export covered (Opus R1 findings 2 and 3)", 
     expect(meta).toMatchObject({ router: ROUTER, usdt: USDT, payTo: PAYTO });
   });
 
-  it("fails when --payto is left out but the export covered deposits (stripped deposits cannot hide)", async () => {
+  it("fails when --no-payto is given but the export covered deposits (stripped deposits cannot hide)", async () => {
     const chain = scenario();
     const { csv, metaText } = await valid();
-    const r = await run(csv, metaText, chain, { payTo: undefined });
+    const r = await run(csv, metaText, chain, { expectedPayTo: null });
     expect(r.ok).toBe(false);
     expect(codes(r)).toContain("config_mismatch");
   });

@@ -4,10 +4,13 @@ import { formatHuman } from "./report.js";
 import type { VerifierSource } from "./types.js";
 import { verifyLedger } from "./verify.js";
 
-export const USAGE = `quietpay-verifier verify --csv FILE --rpc URL --router 0x.. --usdt 0x.. [--payto 0x..]
+export const USAGE = `quietpay-verifier verify --csv FILE --rpc URL --router 0x.. --usdt 0x.. (--payto 0x.. | --no-payto)
                          [--meta FILE] [--report FILE] [--json]
                          [--from BLOCK] [--to BLOCK] [--min-confirmations N] [--rpc2 URL]
   Recomputes a ledger export from chain logs and checks the CSV and its .meta.json sidecar.
+  --payto     the facilitator pay-to address the export was made with (FACILITATOR_PAYTO)
+  --no-payto  the export was made WITHOUT a pay-to address. One of --payto / --no-payto is required: the sidecar
+              never decides whether deposits are checked, and it must name the same pay-to (or null).
   --meta    sidecar path (default FILE.meta.json)
   --report  where to write the JSON report (default FILE.verify.json)
   --json    print the JSON report instead of the human report
@@ -25,7 +28,7 @@ export interface CliDeps {
 }
 
 const VALUE_FLAGS = new Set(["csv", "rpc", "router", "usdt", "payto", "meta", "report", "from", "to", "min-confirmations", "rpc2"]);
-const BOOL_FLAGS = new Set(["json", "help"]);
+const BOOL_FLAGS = new Set(["json", "help", "no-payto"]);
 
 function parseArgs(args: string[]): Record<string, string | true> {
   const out: Record<string, string | true> = {};
@@ -33,6 +36,7 @@ function parseArgs(args: string[]): Record<string, string | true> {
     const a = args[i]!;
     if (!a.startsWith("--")) throw new Error(`unexpected argument ${a}`);
     const name = a.slice(2);
+    if (name in out) throw new Error(`--${name} given more than once`);
     if (BOOL_FLAGS.has(name)) out[name] = true;
     else if (VALUE_FLAGS.has(name)) {
       const v = args[++i];
@@ -90,6 +94,18 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
       return 2;
     }
   }
+  if (payTo !== undefined && f["no-payto"]) {
+    deps.stderr(`--payto and --no-payto contradict each other; pass exactly one
+${USAGE}`);
+    return 2;
+  }
+  if (payTo === undefined && !f["no-payto"]) {
+    deps.stderr(
+      `missing pay-to expectation: pass --payto <address> if the export was made with FACILITATOR_PAYTO, or --no-payto if it was made without one (the sidecar is not trusted to decide)
+${USAGE}`,
+    );
+    return 2;
+  }
   for (const [k, v] of [["router", router], ["usdt", usdt], ["payto", payTo]] as const) {
     if (v !== undefined && !isAddress(v, { strict: false })) {
       deps.stderr(`--${k} is not an address: ${v}`);
@@ -129,7 +145,7 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
       src: deps.makeSource(rpcUrl!),
       router: router!,
       usdt: usdt!,
-      payTo,
+      expectedPayTo: payTo === undefined ? null : payTo,
       expected: { fromBlock: fromBlock as number | undefined, toBlock: toBlock as number | undefined, minConfirmations: minConf as number | undefined },
       src2: rpc2 ? deps.makeSource(rpc2) : undefined,
       sleep: deps.sleep,

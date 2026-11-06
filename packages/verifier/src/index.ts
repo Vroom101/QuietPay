@@ -1,5 +1,5 @@
 export { verifyLedger, compareRows, assertQualifying, VERIFIER_VERSION, TRUST_NOTE } from "./verify.js";
-export type { VerifyInput } from "./verify.js";
+export type { VerifyInput, VerifyInputBase, PayToExpectation } from "./verify.js";
 export { checkStructure, parseCsvLine } from "./csv.js";
 export type { CsvRow } from "./csv.js";
 export { parseSidecar } from "./sidecar.js";

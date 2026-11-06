@@ -20,4 +20,4 @@ for (const s of makeTamperedSamples(csv, meta)) {
   writeFileSync(`${out}.meta.json`, s.meta);
   console.log(`${out}\n  ${s.note}\n  expect: ${s.expect}${s.verifierArgs.length ? `  (run the verifier with ${s.verifierArgs.join(" ")})` : ""}`);
 }
-console.log("\nVerify with: pnpm --filter @quietpay/verifier cli verify --csv <file> --rpc $RPC_URL --router <router> --usdt <usdt>");
+console.log("\nVerify with: pnpm --filter @quietpay/verifier cli verify --csv <file> --rpc $RPC_URL --router <router> --usdt <usdt> (--payto <address> | --no-payto)");
