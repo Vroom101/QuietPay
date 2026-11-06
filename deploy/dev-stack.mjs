@@ -68,15 +68,22 @@ start("store", "apps/demo-store", ["--import", "tsx", "server/index.ts"], {
   QUIETPAY_STATE_FILE: resolve(tmp, "store-state.json"), QUIETPAY_RECEIPT_DATABASE_PATH: resolve(tmp, "store-receipts.db"),
   QUIETPAY_DASHBOARD_TOKEN: dashboardToken, QUIETPAY_ROUTER_ADDRESS: router, QUIETPAY_CHAIN_ID: "1874", QUIETPAY_TOKEN_ADDRESS: usdt,
   QUIETPAY_REFUND_SIGNER_PRIVATE_KEY: need("REFUND_SIGNER_PRIVATE_KEY"), QUIETPAY_MERCHANT_DATABASE_PATH: resolve(tmp, "store-merchant.db"),
+  // Merchant wallet sign-in: the wallets allowed to open the dashboard. Default is the payout address; set
+  // MERCHANT_WALLETS=0xYourMetaMaskAddress[,0x...] in the env file to allow your own.
+  ...(process.env.MERCHANT_WALLETS ? { QUIETPAY_MERCHANT_WALLETS: process.env.MERCHANT_WALLETS } : {}),
+  QUIETPAY_AUTH_DOMAIN: "localhost:5174", QUIETPAY_AUTH_URI: "http://localhost:5174",
 });
 
 start("web", "apps/demo-store", [resolve(root, "apps/demo-store/node_modules/vite/bin/vite.js"), "--host", "127.0.0.1", "--port", "5173"], {
   VITE_RELAYER_URL: `http://127.0.0.1:${RELAYER_PORT}`,
 });
 
+start("dashboard", "apps/merchant-dashboard", [resolve(root, "apps/merchant-dashboard/node_modules/vite/bin/vite.js"), "--host", "127.0.0.1", "--port", "5174"], {});
+
 writeFileSync(resolve(tmp, "pids.json"), JSON.stringify(children.map((c) => c.pid)));
 console.log(`\nQuietPay demo starting (logs: ${resolve(tmp, "logs")})`);
-console.log("  Store UI   http://localhost:5173");
+console.log("  Store UI   http://localhost:5173   (customers)");
+console.log("  Dashboard  http://localhost:5174   (merchant: sign in with MetaMask)");
 console.log(`  Store API  http://127.0.0.1:3001   Relayer http://127.0.0.1:${RELAYER_PORT}`);
 console.log(`  Dashboard access token for merchant refunds: kept in memory only; print it with --show-token`);
 if (process.argv.includes("--show-token")) console.log(`  token: ${dashboardToken}`);
