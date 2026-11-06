@@ -118,6 +118,12 @@ export interface VerifyWebhookOptions {
   toleranceSeconds?: number;
   /** For tests. */
   nowSeconds?: number;
+  /**
+   * Optional replay guard. Called with the event `id` only AFTER the signature and timestamp checked out; return
+   * true if you have already processed that id and the event is rejected. Record the id yourself (for example with
+   * an atomic insert-if-absent in your database). Without it verification is stateless and dedupe is your job.
+   */
+  isDuplicate?: (eventId: string) => boolean;
 }
 
 /**
@@ -148,6 +154,7 @@ export function verifyWebhook(opts: VerifyWebhookOptions): WebhookEvent {
   }
   const parsed = WebhookEvent.safeParse(json);
   if (!parsed.success) throw new WebhookVerificationError("Body is not a Quietpay event");
+  if (opts.isDuplicate?.(parsed.data.id)) throw new WebhookVerificationError("Duplicate event id: already processed");
   return parsed.data;
 }
 

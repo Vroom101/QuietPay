@@ -2,3 +2,4 @@
 - 2026-11-06 16:50Z B2.1/B2.2 F13 front-run fix (chain-port findExternalSettlement, unresolved state, external settlement columns) + R4 tests; facilitator 24/24, relayer 361/361, paid-api 8/8
 - 2026-11-06 16:57Z B2.1 F13 closed: settle() adopts a front-run before verify; real anvil front-run test (fails on old code); facilitator 28/28, relayer 361/361, paid-api 8/8
 - 2026-11-06 17:04Z B2.2 R16 reorg protection (SETTLE_CONFIRMATIONS), relayer 364/364; route matrix drafted
+- 2026-11-06 17:13Z B2.2 closed: R23 R19 R22 F4 F5 F18 S5 S8 P4 + paywall tests (sdk 93% lines); paywall now 503s on settlement_unresolved; facilitator 32, relayer 380, sdk 59, paid-api 9

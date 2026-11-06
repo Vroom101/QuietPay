@@ -10,7 +10,11 @@ async function codeOf(p: Promise<unknown>): Promise<string | null> {
   return err instanceof QuietpayError ? err.code : err === null ? null : "non-quietpay-error";
 }
 
-import { signFor } from "./helpers.js";
+import { signFor, MERCHANT_ID, refundSigner, payer, ROUTER } from "./helpers.js";
+import { ERROR_CODES, ERROR_HTTP_STATUS, buildRefundAuthorization } from "@quietpay/shared";
+import { WebhookEvent } from "@quietpay/shared/webhook";
+import { buildServer } from "../src/server.js";
+import type { Hex } from "viem";
 
 const ctx = { ip: "203.0.113.9" };
 const tick = () => new Promise((r) => setTimeout(r, 15));
@@ -56,6 +60,91 @@ describe("audit R16: settlement waits for confirmation depth and survives a reor
     const e = await relayed(1);
     expect(e.svc.getOrder(e.order.id).status).toBe("settled");
     expect(events(e).n).toBe(1);
+  });
+});
+
+// Backend audit B2.2 (R23): a refund the signer cannot fund is refused and changes nothing at all.
+describe("audit R23: insufficient_refund_balance changes no state", () => {
+  it("leaves the order, refund table, spend ledger and webhook queue exactly as they were", async () => {
+    const e = makeEnv();
+    const order = await newOrder(e.svc, "25000000", { webhookUrl: "https://merchant.test/hook" });
+    await e.svc.relayPay(await signFor(order, e.clock.t), ctx);
+    await tick();
+    expect(e.svc.getOrder(order.id).status).toBe("settled");
+    const snapshot = () => ({
+      order: JSON.stringify(e.svc.getOrder(order.id)),
+      refunds: e.db.raw.prepare("SELECT COUNT(*) n FROM refunds").get(),
+      spend: e.db.raw.prepare("SELECT COUNT(*) n, COALESCE(SUM(CAST(wei AS INTEGER)),0) s FROM spend").get(),
+      deliveries: e.db.raw.prepare("SELECT COUNT(*) n FROM deliveries").get(),
+      attempts: e.db.raw.prepare("SELECT COUNT(*) n FROM relay_attempts").get(),
+    });
+    const before = snapshot();
+    e.chain.refundBalance = 1n;
+    const signature = await refundSigner.signTypedData(
+      buildRefundAuthorization({
+        merchantId: MERCHANT_ID, orderId: order.id as Hex, payer: payer.address, refundSigner: refundSigner.address, router: ROUTER,
+        amount: 5_000_000n, refundIndex: 0n, validAfter: BigInt(e.clock.t - 5), validBefore: BigInt(e.clock.t + 300),
+        token: e.cfg.usdt, chainId: e.cfg.chainId, domainName: e.cfg.tokenDomain.name, domainVersion: e.cfg.tokenDomain.version,
+      }),
+    );
+    const req = { orderId: order.id, amount: "5000000", refundIndex: 0, validAfter: e.clock.t - 5, validBefore: e.clock.t + 300, signature };
+    expect(await codeOf(e.svc.refunds.submit(MERCHANT_ID, req as never, "203.0.113.1"))).toBe("insufficient_refund_balance");
+    await tick();
+    expect(snapshot()).toEqual(before);
+    expect(e.chain.refundPrepared).toHaveLength(0);
+  });
+});
+
+// Backend audit B2.2 (R19): every webhook event carries a unique id, which is what receivers dedupe on.
+describe("audit R19: payment.settled and payment.failed events carry an id", () => {
+  const events = (e: ReturnType<typeof makeEnv>) =>
+    (e.db.raw.prepare("SELECT body FROM deliveries").all() as { body: string }[]).map((r) => WebhookEvent.parse(JSON.parse(r.body)));
+
+  it("settled", async () => {
+    const e = makeEnv();
+    const order = await newOrder(e.svc, "25000000", { webhookUrl: "https://merchant.test/hook" });
+    await e.svc.relayPay(await signFor(order, e.clock.t), ctx);
+    await tick();
+    const evs = events(e);
+    expect(evs.map((x) => x.type)).toEqual(["payment.settled"]);
+    expect(evs[0]!.id).toMatch(/\S{8,}/);
+  });
+
+  it("failed, and ids differ between events", async () => {
+    const e = makeEnv();
+    e.chain.receiptStatus = "reverted";
+    const o1 = await newOrder(e.svc, "25000000", { webhookUrl: "https://merchant.test/hook" });
+    await e.svc.relayPay(await signFor(o1, e.clock.t), ctx);
+    await tick();
+    const evs = events(e);
+    expect(evs.map((x) => x.type)).toEqual(["payment.failed"]);
+    expect(evs[0]!.id).toMatch(/\S{8,}/);
+    const ok = makeEnv();
+    const o2 = await newOrder(ok.svc, "25000000", { webhookUrl: "https://merchant.test/hook" });
+    await ok.svc.relayPay(await signFor(o2, ok.clock.t), ctx);
+    await tick();
+    expect(events(ok)[0]!.id).not.toBe(evs[0]!.id);
+  });
+});
+
+// Backend audit B2.2 (R22): every frozen error code leaves the HTTP layer as {error:{code,message}} with its frozen status,
+// a non-empty plain-words message and nothing that looks like a stack trace, path or secret.
+describe("audit R22: every frozen error code over HTTP", () => {
+  it.each(ERROR_CODES)("%s", async (code) => {
+    const e = makeEnv();
+    const app = buildServer(e.svc);
+    (e.svc as unknown as { getOrder: () => never }).getOrder = () => {
+      throw new QuietpayError(code);
+    };
+    const res = await app.inject({ method: "GET", url: "/v1/orders/" + "0x" + "ab".repeat(32) });
+    expect(res.statusCode).toBe(ERROR_HTTP_STATUS[code]);
+    const body = res.json();
+    expect(Object.keys(body)).toEqual(["error"]);
+    expect(body.error.code).toBe(code);
+    expect(typeof body.error.message).toBe("string");
+    expect(body.error.message.length).toBeGreaterThan(10);
+    expect(res.body).not.toMatch(/\bat \S+\(|node_modules|\.ts:\d+|0x[0-9a-fA-F]{64}|PRIVATE|stack/i);
+    await app.close();
   });
 });
 
