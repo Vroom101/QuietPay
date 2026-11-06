@@ -53,3 +53,11 @@ Merge validation: 1,117 local tests passed across the workspace (final shared
 security-suite rerun included); 12 Anvil/live-RPC tests skipped. All workspace
 TypeScript checks and widget/dashboard/store builds passed. Foundry/Anvil
 execution remains for CI; no new live transactions were submitted.
+
+Round 9 from main retained: known-good authenticated callers remain usable
+under failed-auth throttling, and webhook delivery has bounded concurrency
+with per-merchant/per-host fairness. Refund routes use the same auth guards.
+
+After round 9: 1,149 tests passed across the current workspace suites (the
+affected shared/SDK/relayer/facilitator suites were rerun); 12 optional tests
+remain skipped locally.

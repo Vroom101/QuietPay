@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { ZodError } from "zod";
 import {
   AdminPauseRequest,
@@ -55,32 +55,74 @@ export function buildServer(svc: RelayerService): FastifyInstance {
     return reply.code(500).send({ error: { code: "simulation_failed", message: "Something went wrong on our side." } });
   });
 
-  // Failed bearer-token attempts (merchant key or operator token) are counted per client IP; once an IP has
-  // used up its failures the credential check is not even evaluated, so online key guessing is throttled.
+  // Failed bearer-token attempts (merchant key or operator token) are counted per client IP. Once an IP has used
+  // up its failures, only a credential that ALREADY authenticated from that same IP within the last hour is still
+  // honoured; anything else gets 429 before it is evaluated, so online guessing stays throttled while a stranger's
+  // junk keys cannot lock out a legitimate merchant or the operator sharing an egress address.
   const authFailLimiter = new RateLimiter(10, 60_000);
   const authBlocked = (req: FastifyRequest) => !authFailLimiter.wouldAllow(clientKey(ipOf(req)));
   const authFailed = (req: FastifyRequest) => void authFailLimiter.allow(clientKey(ipOf(req)));
 
-  const merchantFromKey = (req: FastifyRequest, reply: FastifyReply) => {
-    if (authBlocked(req)) throw new QuietpayError("rate_limited");
-    const key = bearer(req);
-    const merchant = key ? svc.cfg.apiKeys.get(key) : undefined;
-    if (!merchant) {
-      authFailed(req);
-      void reply.code(401).send({ error: { code: "bad_signature", message: "Invalid API key." } });
-      return undefined;
+  const KNOWN_TTL_MS = 3_600_000;
+  const MAX_KNOWN_IPS = 10_000;
+  const knownGood = new Map<string, Map<string, number>>(); // ip key -> credential digest -> expiry
+  const digest = (kind: string, cred: string) => createHash("sha256").update(kind).update("\0").update(cred).digest("hex");
+  const isKnown = (req: FastifyRequest, d: string) => {
+    const e = knownGood.get(clientKey(ipOf(req)))?.get(d);
+    return e !== undefined && e > Date.now();
+  };
+  const remember = (req: FastifyRequest, d: string) => {
+    const k = clientKey(ipOf(req));
+    const now = Date.now();
+    let m = knownGood.get(k);
+    if (!m) {
+      if (knownGood.size >= MAX_KNOWN_IPS) {
+        for (const [ip, mm] of knownGood) {
+          for (const [dd, exp] of mm) if (exp <= now) mm.delete(dd);
+          if (mm.size === 0) knownGood.delete(ip);
+        }
+        if (knownGood.size >= MAX_KNOWN_IPS) return;
+      }
+      m = new Map();
+      knownGood.set(k, m);
     }
-    return merchant;
+    if (m.size >= 32 && !m.has(d)) return;
+    m.set(d, now + KNOWN_TTL_MS);
+  };
+
+  /** Constant-time scan over every configured key (no early exit on the first hit). */
+  const lookupKey = (key: string | undefined): string | undefined => {
+    if (!key) return undefined;
+    let found: string | undefined;
+    for (const [k, m] of svc.cfg.apiKeys) if (safeEqual(k, key) && found === undefined) found = m;
+    return found;
+  };
+
+  const merchantFromKey = (req: FastifyRequest, reply: FastifyReply) => {
+    const key = bearer(req);
+    const merchant = lookupKey(key);
+    const d = key ? digest("merchant", key) : "";
+    if (merchant && (!authBlocked(req) || isKnown(req, d))) {
+      remember(req, d);
+      return merchant;
+    }
+    if (authBlocked(req)) throw new QuietpayError("rate_limited");
+    authFailed(req);
+    void reply.code(401).send({ error: { code: "bad_signature", message: "Invalid API key." } });
+    return undefined;
   };
   const operatorOnly = (req: FastifyRequest, reply: FastifyReply) => {
-    if (authBlocked(req)) throw new QuietpayError("rate_limited");
     const t = bearer(req);
-    if (!t || !safeEqual(t, svc.cfg.operatorToken)) {
-      authFailed(req);
-      void reply.code(401).send({ error: { code: "bad_signature", message: "Operator token required." } });
-      return false;
+    const valid = !!t && safeEqual(t, svc.cfg.operatorToken);
+    const d = t ? digest("operator", t) : "";
+    if (valid && (!authBlocked(req) || isKnown(req, d))) {
+      remember(req, d);
+      return true;
     }
-    return true;
+    if (authBlocked(req)) throw new QuietpayError("rate_limited");
+    authFailed(req);
+    void reply.code(401).send({ error: { code: "bad_signature", message: "Operator token required." } });
+    return false;
   };
 
   // Health is unauthenticated and costs RPC calls, so it gets its own small per-IP limit.
@@ -121,7 +163,7 @@ export function buildServer(svc: RelayerService): FastifyInstance {
   app.get<{ Params: { id: string } }>("/v1/orders/:id/refund-context", async (req, reply) => {
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
-    return svc.refunds.context(merchant, req.params.id as `0x${string}`);
+    return svc.refunds.context(merchant as `0x${string}`, req.params.id as `0x${string}`);
   });
   app.get<{ Params: { id: string } }>("/v1/orders/:id/refunds", async (req, reply) => {
     const merchant = merchantFromKey(req, reply);
@@ -131,7 +173,7 @@ export function buildServer(svc: RelayerService): FastifyInstance {
   app.post("/v1/relay/refund", async (req, reply) => {
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
-    return svc.refunds.submit(merchant, RelayRefundRequest.parse(req.body), ipOf(req));
+    return svc.refunds.submit(merchant as `0x${string}`, RelayRefundRequest.parse(req.body), ipOf(req));
   });
   app.get<{ Params: { id: string } }>("/v1/refunds/:id", async (req, reply) => {
     const merchant = merchantFromKey(req, reply);
@@ -141,10 +183,7 @@ export function buildServer(svc: RelayerService): FastifyInstance {
 
   app.get("/v1/metrics", async (req, reply) => {
     if (!operatorOnly(req, reply)) return reply;
-    await svc.refreshBalance();
-    const metrics = svc.metrics();
-    metrics.paused = svc.localPaused || await svc.chain.isPaused();
-    return metrics;
+    return svc.metrics();
   });
 
   app.post("/v1/admin/pause", async (req, reply) => {
