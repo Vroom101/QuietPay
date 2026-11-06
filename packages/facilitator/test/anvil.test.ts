@@ -427,9 +427,15 @@ describe.skipIf(!ready)(
         expect(
           db.raw.prepare("SELECT COUNT(*) n FROM x402_payments").get(),
         ).toEqual({ n: 5 });
-        expect(db.attempts(created.id)).toHaveLength(1);
+        // Checkout pay attempts live in tx_attempts (payAttempts); the legacy relay_attempts table
+        // (db.attempts) only holds x402/refund sends. Assert the real checkout record and its spend.
+        const payAttempts = db.payAttempts(created.id);
+        expect(payAttempts).toHaveLength(1);
+        expect(payAttempts[0]!.tx_hash.toLowerCase()).toBe(checkout.txHash.toLowerCase());
+        expect(
+          db.raw.prepare("SELECT COUNT(*) n FROM spend WHERE tx_hash=?").get(payAttempts[0]!.tx_hash),
+        ).toEqual({ n: 1 });
         expect(db.spentSince(0)).toBeGreaterThan(0n);
-        await rpcCall("evm_mine");
         const scope = {
           chainId: 31337,
           router,
@@ -438,6 +444,8 @@ describe.skipIf(!ready)(
           confirmations: 2,
           agent: { payTo, merchantId: merchant },
         };
+        // The ledger only counts logs buried under confirmations blocks, so bury the newest transfer.
+        for (let i = 0; i < scope.confirmations; i++) await rpcCall("evm_mine");
         const ledgerDb = new IndexDb(":memory:", scope),
           indexer = new Indexer(ledgerDb, makeReader(rpc, scope), scope);
         const exported = await indexer.export({ merchantId: merchant });

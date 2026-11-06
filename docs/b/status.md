@@ -1,0 +1,1 @@
+- Z B0 facilitator anvil test fixed (stale accessor + confirmations), 16/16 x3 local; not pushed, waiting for main force-push
