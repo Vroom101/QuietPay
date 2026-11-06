@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { loadConfig as loadRelayerConfig } from "@quietpay/relayer/core";
-import { makePaidPolicies, token, Address, Bytes32 } from "@quietpay/shared";
+import { makePaidPolicies, Address, Bytes32 } from "@quietpay/shared";
 export function loadConfig(
   env: Record<string, string | undefined> = process.env,
 ) {
@@ -29,8 +29,8 @@ export function loadConfig(
       payTo: e.FACILITATOR_PAYTO,
       asset: relay.usdt,
       chainId: relay.chainId,
-      name: token.eip712Domain.name,
-      version: token.eip712Domain.version,
+      name: relay.tokenDomain.name,
+      version: relay.tokenDomain.version,
       quoteAmount: e.X402_QUOTE_AMOUNT,
       signalAmount: e.X402_SIGNAL_AMOUNT,
     }),

@@ -5,7 +5,6 @@ import {
   checkAuthWindow,
   computePayNonce,
   recoverCheckoutSigner,
-  token as tokenFacts,
   type CreateOrderRequest,
   type ErrorCode,
   type MetricsResponse,
@@ -92,7 +91,7 @@ export class RelayerService {
       router: this.cfg.router,
       token: this.cfg.usdt,
       chainId: this.cfg.chainId,
-      domain: tokenFacts.eip712Domain,
+      domain: this.cfg.tokenDomain,
       explorerBaseUrl: this.cfg.explorerBaseUrl,
     }), refunded: totals.amount.toString(), refundCount: totals.count };
   }
@@ -255,6 +254,8 @@ export class RelayerService {
           validBefore: BigInt(req.validBefore),
           chainId: this.cfg.chainId,
           token: this.cfg.usdt,
+          domainName: this.cfg.tokenDomain.name,
+          domainVersion: this.cfg.tokenDomain.version,
         },
         req.signature as Hex,
       );

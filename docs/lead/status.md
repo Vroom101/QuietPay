@@ -14,7 +14,7 @@
 - Router supports sequential, payer-bound partial/full refunds from the merchant refundSigner.
 - Merchant-authenticated context, relay and status endpoints, SDK signing, durable recovery and signed refund webhooks implemented.
 - Anvil integration proves payment, partial refund and remaining refund through the SDK, with payer and refundSigner both holding zero native currency.
-- New ABI is generated from the Solidity build. Live deployment and dashboard refund controls remain pending.
+- New ABI is generated from the Solidity build. Live deployment remains pending. Dashboard controls and merchant-server signing routes are now implemented locally (see below).
 
 ## Ledger/export/verifier: implemented locally
 - Read-only packages/indexer polls confirmed router/merchant events in pages of at most 1,000 blocks, persists progress and repairs reorgs.
@@ -35,3 +35,9 @@
 - Pending/unknown payments reuse the same authorization with `retry(id)`; concurrent requests cannot exceed the session budget or sign twice for an unresolved resource.
 - `apps/agent-demo` buys a quote and signal, prints receipt/explorer links and checks successful RPC receipts plus zero payer native balance.
 - Sessions and pending authorizations are in memory; crash recovery and durable shared agent budgets are not implemented. Live testnet proof and a browser demo UI remain pending.
+
+## Dashboard refunds and merchant integration: implemented locally
+- Dashboard shows precise remaining/refunded amounts, signer balance, partial/full refund review, pending/settled/failed history and reload-safe business request IDs.
+- Demo-store merchant server exposes separately authenticated order/refund routes and holds both the relayer API key and refundSigner key server-side.
+- A scoped SQLite journal deduplicates retries/concurrent requests and reconciles uncertain SDK responses after restart without automatic re-signing.
+- Real HTTP Anvil checkout integration now proves insufficient-balance rejection plus partial/full refunds through the merchant server. Live deployment/hosted browser walkthrough and customer-facing refund tracking remain pending.

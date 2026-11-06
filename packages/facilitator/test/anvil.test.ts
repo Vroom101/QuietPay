@@ -214,7 +214,9 @@ describe.skipIf(!ready)(
             X402Required,
           ),
           accepted = required.accepts[0]!;
-        const now = Number((await pub.getBlock()).timestamp),
+        // Match the client's wall clock: rapid Anvil blocks may run ahead of wall time,
+        // while the facilitator enforces maxTimeoutSeconds against its own clock.
+        const now = Math.floor(Date.now() / 1000),
           nonce = ("0x" + n.toString(16).padStart(64, "0")) as Hex;
         const a = {
           from: payer.address,
@@ -262,7 +264,7 @@ describe.skipIf(!ready)(
           }
           await pause();
         }
-        throw new Error("Agent transaction did not arrive");
+        throw new Error(`Agent transaction did not arrive; rejections: ${JSON.stringify(svc.metrics().rejected)}`);
       };
       const headers = (payload: X402Payload) => ({
         "PAYMENT-SIGNATURE": encodeX402Header(payload),
@@ -313,7 +315,7 @@ describe.skipIf(!ready)(
             body: JSON.stringify({ merchantId: merchant, amount: "1000000" }),
           })
         ).json();
-        const now = Number((await pub.getBlock()).timestamp),
+        const now = Math.floor(Date.now() / 1000),
           validAfter = now - 5,
           validBefore = now + 300;
         const paySignature = await payer.signTypedData(

@@ -1,5 +1,6 @@
 import { privateKeyToAccount } from "viem/accounts";
 import {
+  ListOrdersResponse,
   CreateOrderRequest,
   RefundContext,
   Refund,
@@ -151,6 +152,7 @@ export interface RefundOptions {
   refundIndex: number;
   chainId?: number;
   tokenAddress?: Hex;
+  tokenDomain?: { name: string; version: string };
   fetch?: typeof fetch;
   nowSeconds?: number;
 }
@@ -183,7 +185,7 @@ export async function refund(opts: RefundOptions): Promise<Refund> {
   if (c.orderId.toLowerCase() !== opts.orderId.toLowerCase() || c.merchantId.toLowerCase() !== opts.merchantId.toLowerCase()
     || c.router.toLowerCase() !== opts.router.toLowerCase() || c.chainId !== (opts.chainId ?? token.chainId)
     || c.token.toLowerCase() !== (opts.tokenAddress ?? token.address).toLowerCase()
-    || c.domain.name !== token.eip712Domain.name || c.domain.version !== token.eip712Domain.version) {
+    || c.domain.name !== (opts.tokenDomain ?? token.eip712Domain).name || c.domain.version !== (opts.tokenDomain ?? token.eip712Domain).version) {
     throw new Error("Refund context does not match the configured merchant, order, router, token or network.");
   }
   if (c.refundIndex !== opts.refundIndex) throw new Error("Refund index changed. Check the original refund status before creating another refund.");
@@ -198,6 +200,7 @@ export async function refund(opts: RefundOptions): Promise<Refund> {
     merchantId: opts.merchantId, orderId: opts.orderId, payer: c.payer as Hex,
     refundSigner: account.address, router: opts.router, amount: BigInt(amount), refundIndex: BigInt(opts.refundIndex),
     validAfter: BigInt(validAfter), validBefore: BigInt(validBefore), chainId: c.chainId, token: c.token as Hex,
+    domainName: c.domain.name, domainVersion: c.domain.version,
   }));
   const body = RelayRefundRequest.parse({ orderId: opts.orderId, amount, refundIndex: opts.refundIndex, validAfter, validBefore, signature });
   const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/relay/refund`, {
@@ -207,3 +210,9 @@ export async function refund(opts: RefundOptions): Promise<Refund> {
 }
 
 export { paywall, type PaywallOptions } from "./paywall.js";
+
+/** Lists only the authenticated merchant's orders. Call on the merchant server. */
+export async function listOrders(opts: { baseUrl: string; apiKey: string; fetch?: typeof fetch }): Promise<Order[]> {
+  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/orders`, { headers: { authorization: `Bearer ${opts.apiKey}` } });
+  return (await parse(res, ListOrdersResponse)).orders;
+}

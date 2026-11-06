@@ -31,6 +31,8 @@ const EnvSchema = z.object({
   RELAY_FEE_USDT: decimal(6).default("0.05"),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(20),
   EXPLORER_BASE_URL: z.string().url().default("https://testnet.whitechain.io"),
+  TOKEN_DOMAIN_NAME: z.string().trim().min(1).default("Tether USD"),
+  TOKEN_DOMAIN_VERSION: z.string().trim().min(1).default("1"),
   PORT: z.coerce.number().int().default(8787),
 });
 
@@ -54,6 +56,7 @@ export interface Config {
   relayFee: bigint; // USDT base units
   rateLimitPerMinute: number;
   explorerBaseUrl: string;
+  tokenDomain: { name: string; version: string };
   port: number;
 }
 
@@ -87,6 +90,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     relayFee: parseUnits(e.RELAY_FEE_USDT, 6),
     rateLimitPerMinute: e.RATE_LIMIT_PER_MINUTE,
     explorerBaseUrl: e.EXPLORER_BASE_URL.replace(/\/$/, ""),
+    tokenDomain: { name: e.TOKEN_DOMAIN_NAME, version: e.TOKEN_DOMAIN_VERSION },
     port: e.PORT,
   };
 }

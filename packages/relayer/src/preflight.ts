@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbi, formatUnits } from "viem";
+import { createPublicClient, http, parseAbi, formatUnits, hashDomain } from "viem";
 import { paymentRouterAbi, REFUND_TAG } from "@quietpay/shared";
 import { privateKeyToAccount } from "viem/accounts";
 import { resolve } from "node:path";
@@ -16,16 +16,19 @@ export async function preflight(cfg: Config) {
   if (chainId !== cfg.chainId) throw new Error("RPC chain ID does not match CHAIN_ID.");
   if (!routerCode || routerCode === "0x") throw new Error("ROUTER_ADDRESS has no deployed code.");
   if (!tokenCode || tokenCode === "0x") throw new Error("USDT_ADDRESS has no deployed code.");
-  const [token, allowed, paused, refundTag, decimals] = await Promise.all([
+  const [token, allowed, paused, refundTag, decimals, separator] = await Promise.all([
     client.readContract({ address: cfg.router, abi: paymentRouterAbi, functionName: "token" }),
     client.readContract({ address: cfg.router, abi: paymentRouterAbi, functionName: "isRelayer", args: [relayer] }),
     client.readContract({ address: cfg.router, abi: paymentRouterAbi, functionName: "paused" }),
     client.readContract({ address: cfg.router, abi: paymentRouterAbi, functionName: "REFUND_TAG" }),
     client.readContract({ address: cfg.usdt, abi: parseAbi(["function decimals() view returns (uint8)"]), functionName: "decimals" }),
+    client.readContract({ address: cfg.usdt, abi: parseAbi(["function DOMAIN_SEPARATOR() view returns (bytes32)"]), functionName: "DOMAIN_SEPARATOR" }),
   ]);
   if (token.toLowerCase() !== cfg.usdt.toLowerCase()) throw new Error("Router token does not match USDT_ADDRESS.");
   if (refundTag !== REFUND_TAG) throw new Error("Router does not support the expected refund authorization version.");
   if (!allowed) throw new Error("Relayer address is not allowlisted on the router.");
+  const expectedDomain = hashDomain({ types: { EIP712Domain: [{ name: "name", type: "string" }, { name: "version", type: "string" }, { name: "chainId", type: "uint256" }, { name: "verifyingContract", type: "address" }] }, domain: { ...cfg.tokenDomain, chainId: BigInt(cfg.chainId), verifyingContract: cfg.usdt } });
+  if (separator.toLowerCase() !== expectedDomain.toLowerCase()) throw new Error("Token signing domain does not match TOKEN_DOMAIN_NAME/TOKEN_DOMAIN_VERSION.");
   if (decimals !== 6) throw new Error("Configured token must use six decimals.");
   for (const merchantId of new Set(cfg.apiKeys.values())) {
     const [payout] = await client.readContract({ address: cfg.router, abi: paymentRouterAbi, functionName: "merchants", args: [merchantId] });

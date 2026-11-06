@@ -10,6 +10,12 @@ const env = {
 };
 
 describe("P0 configuration", () => {
+  it("loads explicit token domains and rejects empty domains", () => {
+    expect(loadConfig(env).tokenDomain).toEqual({ name: "Tether USD", version: "1" });
+    expect(loadConfig({ ...env, TOKEN_DOMAIN_NAME: "DemoUSDT", TOKEN_DOMAIN_VERSION: "2" }).tokenDomain).toEqual({ name: "DemoUSDT", version: "2" });
+    expect(() => loadConfig({ ...env, TOKEN_DOMAIN_NAME: " " })).toThrow();
+    expect(() => loadConfig({ ...env, TOKEN_DOMAIN_VERSION: "" })).toThrow();
+  });
   it("loads bounded recovery defaults", () => {
     expect(loadConfig(env)).toMatchObject({ maxGasLimit: 500_000n, pendingRetrySeconds: 30,
       maxReplacements: 3, lowBalanceWei: 10n ** 16n });

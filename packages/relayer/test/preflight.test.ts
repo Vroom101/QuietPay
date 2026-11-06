@@ -3,6 +3,7 @@ const client = vi.hoisted(() => ({ getChainId: vi.fn(), getCode: vi.fn(), getBal
 vi.mock("viem", async importOriginal => ({ ...await importOriginal<typeof import("viem")>(), createPublicClient: () => client }));
 import { preflight } from "../src/preflight.js";
 import { REFUND_TAG } from "@quietpay/shared";
+import { hashDomain } from "viem";
 import { makeCfg, PAYOUT } from "./helpers.js";
 
 beforeEach(() => {
@@ -15,11 +16,15 @@ beforeEach(() => {
     if (functionName === "isRelayer") return true;
     if (functionName === "paused") return false;
     if (functionName === "decimals") return 6;
+    if (functionName === "DOMAIN_SEPARATOR") { const cfg = makeCfg(); return hashDomain({ types: { EIP712Domain: [{ name: "name", type: "string" }, { name: "version", type: "string" }, { name: "chainId", type: "uint256" }, { name: "verifyingContract", type: "address" }] }, domain: { ...cfg.tokenDomain, chainId: BigInt(cfg.chainId), verifyingContract: cfg.usdt } }); }
     return [PAYOUT, PAYOUT, 100_000n];
   });
 });
 
 describe("read-only deployment preflight", () => {
+  it("rejects a configured domain that differs from the token", async () => {
+    await expect(preflight(makeCfg({ tokenDomain: { name: "Wrong token", version: "1" } }))).rejects.toThrow("Token signing domain");
+  });
   it("accepts a funded and registered deployment", async () => {
     expect(await preflight(makeCfg())).toMatchObject({ ok: true, chainId: 1874, balanceWbt: "1", paused: false });
   });

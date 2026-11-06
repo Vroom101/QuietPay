@@ -25,6 +25,21 @@ function transport(c = context) {
   return { requests, fetcher };
 }
 describe("merchant SDK refunds", () => {
+  it("requires a pinned custom token domain and signs with it", async () => {
+    const domain = { name: "DemoUSDT", version: "2" };
+    const c = { ...context, token: "0x9999999999999999999999999999999999999999", domain };
+    const { requests, fetcher } = transport(c);
+    await expect(refund({ ...opts, tokenAddress: c.token as Hex, fetch: fetcher })).rejects.toThrow("does not match");
+    expect(requests).toHaveLength(1);
+    await refund({ ...opts, tokenAddress: c.token as Hex, tokenDomain: domain, fetch: fetcher });
+    const body = JSON.parse(String(requests.at(-1)?.init?.body));
+    const td = buildRefundAuthorization({ merchantId: c.merchantId as Hex, orderId: c.orderId as Hex,
+      payer: c.payer as Hex, refundSigner: signer.address, router: c.router as Hex,
+      amount: BigInt(body.amount), refundIndex: BigInt(body.refundIndex), validAfter: BigInt(body.validAfter),
+      validBefore: BigInt(body.validBefore), token: c.token as Hex, chainId: c.chainId,
+      domainName: domain.name, domainVersion: domain.version });
+    expect(await recoverTypedDataAddress({ ...td, signature: body.signature })).toBe(signer.address);
+  });
   it("signs the remaining amount with the exact authorization and sends no key", async () => {
     const { requests, fetcher } = transport();
     expect(await refund({ ...opts, fetch: fetcher })).toMatchObject(result);

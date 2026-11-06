@@ -124,6 +124,7 @@ export function makeCfg(over: Partial<Config> = {}): Config {
     relayFee: 50_000n,
     rateLimitPerMinute: 1000,
     explorerBaseUrl: "https://explorer.test",
+    tokenDomain: { name: "Tether USD", version: "1" },
     port: 0,
     ...over,
   };
@@ -159,6 +160,8 @@ export async function signFor(
     validBefore: BigInt(validBefore),
     chainId: order.checkout.chainId,
     token: order.checkout.token as Hex,
+    domainName: order.checkout.domain.name,
+    domainVersion: order.checkout.domain.version,
   });
   const signature = await acct.signTypedData(td);
   return {

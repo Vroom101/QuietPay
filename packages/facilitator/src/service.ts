@@ -10,7 +10,6 @@ import {
   FacilitatorRequest,
   X402Policy,
   buildAgentAuthorization,
-  token,
   type X402VerifyResponse,
   type X402SettleResponse,
   type DeliveryClaim,
@@ -83,8 +82,8 @@ export class FacilitatorService {
         !eq(r.asset, relayer.cfg.usdt) ||
         eq(r.payTo, relayer.cfg.router) ||
         /^0x0{40}$/i.test(r.payTo) ||
-        r.extra.name !== token.eip712Domain.name ||
-        r.extra.version !== token.eip712Domain.version ||
+        r.extra.name !== relayer.cfg.tokenDomain.name ||
+        r.extra.version !== relayer.cfg.tokenDomain.version ||
         r.extra.paymentFlow !== "upfront"
       )
         throw new Error("Policy does not match this USDT facilitator");

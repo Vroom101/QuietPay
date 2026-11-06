@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { keccak256, stringToHex, recoverTypedDataAddress, type Hex } from "viem";
-import { QuietpayError, buildRefundAuthorization, checkAuthWindow, token, type RelayRefundRequest, type Refund, type RefundContext } from "@quietpay/shared";
+import { QuietpayError, buildRefundAuthorization, checkAuthWindow, type RelayRefundRequest, type Refund, type RefundContext } from "@quietpay/shared";
 import type { RelayerService } from "./service.js";
 import type { RefundRow } from "./db.js";
 import type { RefundArgs, TxReceipt } from "./chain.js";
@@ -45,7 +45,7 @@ export class RefundService {
     return { orderId, merchantId: merchant, payer: receipt.payer, refundSigner: registry.refundSigner,
       amountPaid: receipt.value.toString(), refunded: receipt.refunded.toString(), refundIndex: Number(receipt.refundCount),
       refundBalance: (await this.svc.chain.getTokenBalance(registry.refundSigner)).toString(),
-      chainId: this.svc.cfg.chainId, token: this.svc.cfg.usdt, router: this.svc.cfg.router, domain: token.eip712Domain };
+      chainId: this.svc.cfg.chainId, token: this.svc.cfg.usdt, router: this.svc.cfg.router, domain: this.svc.cfg.tokenDomain };
   }
   async submit(merchant: Hex, req: RelayRefundRequest, ip: string): Promise<Refund> {
     this.owned(merchant, req.orderId);
@@ -62,6 +62,7 @@ export class RefundService {
       if (checkAuthWindow(req.validAfter, req.validBefore, this.svc.now())) throw new QuietpayError("bad_signature", "Invalid refund authorization window.");
       const td = buildRefundAuthorization({ merchantId: merchant, orderId: req.orderId as Hex, payer: c.payer as Hex,
         refundSigner: c.refundSigner as Hex, router: c.router as Hex, token: c.token as Hex, chainId: c.chainId,
+        domainName: c.domain.name, domainVersion: c.domain.version,
         amount: BigInt(req.amount), refundIndex: BigInt(req.refundIndex), validAfter: BigInt(req.validAfter), validBefore: BigInt(req.validBefore) });
       let signer: string;
       try { signer = await recoverTypedDataAddress({ ...td, signature: req.signature as Hex }); }

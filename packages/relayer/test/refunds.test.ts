@@ -22,13 +22,22 @@ async function signed(e: Awaited<ReturnType<typeof setup>>, over: Partial<RelayR
   const validAfter = over.validAfter ?? e.clock.t - 5, validBefore = over.validBefore ?? e.clock.t + 300;
   const signature = await key.signTypedData(buildRefundAuthorization({ merchantId: MERCHANT_ID,
     orderId: e.order.id as Hex, payer: signingPayer, refundSigner: refundSigner.address, router: ROUTER,
-    amount: BigInt(amount), refundIndex: BigInt(index), validAfter: BigInt(validAfter), validBefore: BigInt(validBefore), token: USDT }));
+    amount: BigInt(amount), refundIndex: BigInt(index), validAfter: BigInt(validAfter), validBefore: BigInt(validBefore), token: e.cfg.usdt, chainId: e.cfg.chainId, domainName: e.cfg.tokenDomain.name, domainVersion: e.cfg.tokenDomain.version }));
   return { orderId: e.order.id, amount, refundIndex: index, validAfter, validBefore, signature, ...over };
 }
 const submit = (e: Awaited<ReturnType<typeof setup>>, req: RelayRefundRequest) => e.svc.refunds.submit(MERCHANT_ID, req, "203.0.113.1");
 
 // Fake-chain receipts are explicit; contract/E2E tests verify actual token movement.
 describe("gasless partial refunds", () => {
+  it("uses the configured token and domain for both payments and refunds", async () => {
+    const e = await setup({ usdt: "0x9999999999999999999999999999999999999999", tokenDomain: { name: "DemoUSDT", version: "2" } });
+    expect(e.order.checkout).toMatchObject({ token: e.cfg.usdt, domain: e.cfg.tokenDomain });
+    expect(await e.svc.refunds.context(MERCHANT_ID, e.order.id as Hex)).toMatchObject({ token: e.cfg.usdt, domain: e.cfg.tokenDomain });
+    const r = await submit(e, await signed(e));
+    await flush();
+    expect(e.svc.refunds.get(MERCHANT_ID, r.id).status).toBe("settled");
+    e.db.close();
+  });
   it("settles partial and full refunds without overwriting the original payment hash", async () => {
     const e = await setup();
     const paymentHash = e.svc.getOrder(e.order.id).txHash;
