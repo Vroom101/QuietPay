@@ -79,6 +79,7 @@ export function checkStructure(text: string, decimals: number): { rows: CsvRow[]
       add({ code: "empty_line", line, message: "empty line inside the file" });
       continue;
     }
+    if (raw.includes('"')) add({ code: "quoted_cell", line, message: "a quote character appears; none of the 13 columns can need quoting, so the file was not written by the exporter" });
     const parts = parseCsvLine(raw);
     if (parts.length !== CSV_COLUMNS.length) {
       add({ code: "bad_cell_count", line, message: `expected ${CSV_COLUMNS.length} cells, found ${parts.length}`, actual: String(parts.length) });

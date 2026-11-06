@@ -394,3 +394,17 @@ describe("the sidecar pins what the export covered (Opus R1 findings 2 and 3)", 
     expect(pinned.anchored).toBe(true);
   });
 });
+
+describe("canonical shape (Opus R1 finding 5)", () => {
+  it("rejects a quoted cell, because the exporter never quotes any of the 13 columns", async () => {
+    const chain = scenario();
+    const { csv, metaText } = await valid();
+    const lines = csv.split("\n");
+    const cells = lines[1]!.split(",");
+    cells[1] = `"${cells[1]}"`;
+    lines[1] = cells.join(",");
+    const r = await run(lines.join("\n"), metaText, chain);
+    expect(r.ok).toBe(false);
+    expect(codes(r)).toContain("quoted_cell");
+  });
+});
