@@ -40,7 +40,10 @@ expected and is listed under "Broken on main right now".
       artifact is now `contracts/out/MockAuthToken.sol/MockAuthToken.json` (function `mint`, domain `Tether USD` / `1`).
       Until you do, that test skips itself because its old artifact no longer exists.
 - [ ] `packages/relayer/src/config.ts`: delete the comment "Set for the demo token" next to `TOKEN_DOMAIN_NAME`.
-- [ ] Point the hosted relayer at the new router address once it is published here (Phase 3).
+- [ ] **Point the relayer at the qualifying router** `0xb9D475cdd817900B45C356169c6FdC379B942d82` (deploy block 12351795,
+      official USDT). The same values are in `contracts/deployments.json` and `.env.example`; in code use
+      `getQualifyingDeployment()` from `@quietpay/shared` so the address cannot drift. Orders created for any older
+      router cannot be paid.
 
 ## A (widget, store, dashboard): `feat/frontend`
 
@@ -54,6 +57,7 @@ expected and is listed under "Broken on main right now".
 - [ ] The widget needs no nonce arithmetic: it signs `order.checkout.nonce`, which now includes the fee. Show the fee
       the order quotes.
 - [ ] The widget's mock-server tests: a seven-decimal amount now returns `invalid_amount` (already in the error table).
+- [ ] Point the widget and store at the same router (read it from the order's `checkout.router`; no hard-coded address needed).
 - [ ] Remove any leftover reference to a demo or stand-in token in your folders (none found by search in A's code).
 
 ## Broken on main right now (by design, until A and B merge)

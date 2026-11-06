@@ -9,8 +9,17 @@ Built for ETHGlobal Mumbai 2026 (Whitechain: Operate and Scale tracks). **Testne
 ## Status
 
 Quietpay targets the official Whitechain test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874 only.
-An earlier deployment used a self-minted stand-in token; it is superseded and is not qualification evidence.
-The qualifying deployment and live official-USDT payment are tracked in `docs/lead/live-usdt.md`.
+An earlier run used a self-minted stand-in token; it is superseded and is not qualification evidence.
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| PaymentRouter deployed and verified | **Done** (block 12351795) | [router](https://explorer.testnet.whitechain.io/address/0xb9D475cdd817900B45C356169c6FdC379B942d82), [deploy tx](https://explorer.testnet.whitechain.io/tx/0xb2ce9853989c79207659f2c7aac30d165a4b152e84c2f76c265342273ea3c4fa), `docs/lead/live-usdt.md` |
+| Qualifying official-USDT payment (zero-WBT payer) | **Pending: unfunded** (payer holds no official USDT) | `docs/lead/live-usdt.md` |
+| Official-USDT refund, on-chain | Contract implemented and tested (72 Foundry tests); live refund **pending: unfunded** | `contracts/test/PaymentRouterRefund.t.sol`, `docs/lead/refund.md` |
+| Refund API in the relayer and the dashboard refund button | **Not built** | `docs/lead/shared-change.md` |
+| Hosted relayer | **Not done** (runs locally only) | `render.yaml` is ready |
+| Browser checkout | **Not run in a real browser** | widget and store pass their unit tests against the mock relayer |
+| Ledger and verifier | Indexer and ledger CSV built and tested; verifier **not built** | `docs/lead/ledger.md` |
 
 ## How it works
 
@@ -61,5 +70,5 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 - Tokens sent directly to the router are not supported and cannot be recovered.
 - The relayer is a trusted gas sponsor: it can censor or pause, but cannot redirect funds or exceed the fee cap.
 - The rate limiter is in memory; the gas loss budget is persisted.
-- Not done yet: hosted relayer (payments so far ran through a local relayer), relayer refund endpoints, a browser run of the widget.
+- Not done yet: the live official-USDT payment and refund (funding), a hosted relayer, relayer refund endpoints, a browser run of the widget.
 - P1 (refunds, ledger and verifier, x402) is not started.
