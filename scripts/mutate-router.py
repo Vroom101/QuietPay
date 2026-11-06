@@ -16,7 +16,38 @@ ap.add_argument("--scratch", default=os.path.join(tempfile.gettempdir(), "qp-mut
 ap.add_argument("--max", type=int, default=60)
 ap.add_argument("--min-free-gb", type=float, default=1.5)
 args = ap.parse_args()
-scratch = args.scratch
+MARKER = ".qp-mutants-scratch"
+
+
+def refuse(msg):
+    print(f"refusing: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def inside(path, base):
+    try:
+        return os.path.commonpath([path, base]) == base
+    except ValueError:  # different drives
+        return False
+
+
+# Resolve real paths (symlinks, "..") BEFORE any deletion.
+scratch = os.path.realpath(args.scratch)
+real_repo = os.path.realpath(REPO)
+if inside(scratch, real_repo) or inside(real_repo, scratch):
+    refuse(f"--scratch {scratch} is the repo, inside it, or contains it ({real_repo})")
+if os.path.dirname(scratch) == scratch:
+    refuse("--scratch must not be a filesystem root")
+fx = os.path.join(os.path.dirname(scratch), "packages")
+if inside(real_repo, fx) or inside(fx, real_repo):
+    refuse(f"{fx} would overlap the repo")
+if os.path.lexists(scratch):
+    if not os.path.isdir(scratch) or os.path.islink(scratch):
+        refuse(f"{scratch} exists and is not a plain directory")
+    if os.listdir(scratch) and not os.path.isfile(os.path.join(scratch, MARKER)):
+        refuse(f"{scratch} is a non-empty directory without the {MARKER} marker")
+if os.path.lexists(fx) and not os.path.isfile(os.path.join(fx, MARKER)):
+    refuse(f"{fx} already exists and has no {MARKER} marker")
 resfile = os.path.join(os.path.dirname(scratch), "qp-mutants.json")
 
 
@@ -45,9 +76,10 @@ if os.path.exists(resfile):
 
 shutil.rmtree(scratch, ignore_errors=True)
 shutil.copytree(os.path.join(REPO, "contracts"), scratch, ignore=shutil.ignore_patterns("out", "cache", "broadcast"))
-fx = os.path.join(os.path.dirname(scratch), "packages")
+open(os.path.join(scratch, MARKER), "w").write("qualifying mutation scratch\n")
 shutil.rmtree(fx, ignore_errors=True)
 os.makedirs(os.path.join(fx, "shared"))
+open(os.path.join(fx, MARKER), "w").write("qualifying mutation scratch\n")
 shutil.copytree(os.path.join(REPO, "packages/shared/fixtures"), os.path.join(fx, "shared/fixtures"))
 shutil.copy(os.path.join(REPO, "packages/shared/token.json"), os.path.join(fx, "shared/token.json"))
 

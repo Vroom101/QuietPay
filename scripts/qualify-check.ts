@@ -30,11 +30,30 @@ async function main() {
   if (offline) add("router source verified on the explorer", "SKIP", "--offline");
   else {
     try {
-      const r = await fetch(`https://explorer.testnet.whitechain.io/api/v2/smart-contracts/${deployments.router}`);
+      const apiBase = (process.env.EXPLORER_API_BASE ?? "https://explorer.testnet.whitechain.io").replace(/[/]$/, "");
+      const r = await fetch(`${apiBase}/api/v2/smart-contracts/${deployments.router}`);
       const j = (await r.json()) as { is_verified?: boolean; is_fully_verified?: boolean };
       add("router source verified on the explorer", j.is_verified || j.is_fully_verified ? "PASS" : "FAIL", `HTTP ${r.status}`);
     } catch (e) {
       add("router source verified on the explorer", "FAIL", `explorer unreachable: ${(e as Error).message}`);
+    }
+  }
+
+  // 2b. The deployed router's token() is the official USDT, read from chain (needs RPC_URL; skipped with --offline).
+  if (offline || !process.env.RPC_URL) add("router on-chain token matches", "SKIP", offline ? "--offline" : "RPC_URL not set");
+  else {
+    try {
+      const res = await fetch(process.env.RPC_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // 0xfc0c546a = token()
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: deployments.router, data: "0xfc0c546a" }, "latest"] }),
+      });
+      const j = (await res.json()) as { result?: string; error?: { message?: string } };
+      const onChain = typeof j.result === "string" && /^0x[0-9a-fA-F]{64}$/.test(j.result) ? "0x" + j.result.slice(26).toLowerCase() : "";
+      add("router on-chain token matches", onChain === official ? "PASS" : "FAIL", onChain ? `token() = ${onChain}` : `no token() result: ${j.error?.message ?? "empty"}`);
+    } catch (err) {
+      add("router on-chain token matches", "FAIL", `RPC unreachable: ${(err as Error).message}`);
     }
   }
 

@@ -1,3 +1,4 @@
+import { redactSecrets } from "../redact.js";
 import Fastify, { type FastifyRequest, type FastifyReply } from "fastify";
 import { z, ZodError } from "zod";
 import { Indexer } from "./indexer.js";
@@ -43,7 +44,7 @@ export function buildServer(indexer: Indexer, apiKeys: Map<string, string>) {
       .send({
         error: {
           code: code === 400 ? "invalid_request" : "ledger_unavailable",
-          message: (error as Error).message,
+          message: redactSecrets((error as Error).message),
         },
       });
   });

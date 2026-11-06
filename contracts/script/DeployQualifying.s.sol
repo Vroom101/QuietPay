@@ -28,6 +28,15 @@ contract DeployQualifying is Script {
     error WrongChain(uint256 actual);
     error WrongToken(address actual);
     error TokenMismatch();
+    error FeeTooHigh(uint256 maxRelayFee);
+    error BadParty(string role);
+
+    /// @dev Hard ceiling on the per-merchant relay fee cap read from the environment: 1 USDT (6 decimals).
+    uint256 public constant MAX_RELAY_FEE_CEILING = 1_000_000;
+
+    function _checkParty(string memory role, address a, address owner, address usdt, address router_) internal pure {
+        if (a == address(0) || a == owner || a == usdt || a == router_) revert BadParty(role);
+    }
 
     /// @dev Reverts unless the chain and token are the qualifying pair. Public so tests can call it directly.
     function guard(address usdt) public view {
@@ -46,7 +55,12 @@ contract DeployQualifying is Script {
         uint256 maxRelayFee
     ) public returns (PaymentRouter router) {
         guard(usdt);
+        if (maxRelayFee > MAX_RELAY_FEE_CEILING) revert FeeTooHigh(maxRelayFee);
+        // The router address is the CREATE address of this contract (or of the broadcaster when run under forge).
         router = new PaymentRouter(usdt, owner);
+        _checkParty("relayer", relayer, owner, usdt, address(router));
+        _checkParty("payout", payout, owner, usdt, address(router));
+        _checkParty("refundSigner", refundSigner, owner, usdt, address(router));
         router.setRelayer(relayer, true);
         router.registerMerchant(merchantId, payout, refundSigner, maxRelayFee);
 
