@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { buildServer } from "@quietpay/relayer/core";
-import { setup } from "../../../packages/facilitator/test/helpers.js";
+import { setup, payer } from "../../../packages/facilitator/test/helpers.js";
 import { registerFacilitator } from "../../../packages/facilitator/src/server.js";
 import { buildPaidApi } from "../src/app.js";
 import {
@@ -10,6 +10,7 @@ import {
   X402SettleResponse,
   PAYMENT_REQUIRED,
   PAYMENT_RESPONSE,
+  buildAgentAuthorization,
 } from "@quietpay/shared";
 async function running(
   options: { failFirst?: boolean; offline?: boolean; unknown?: boolean; hold?: boolean } = {},
@@ -217,6 +218,45 @@ describe("paid API over real HTTP", () => {
       expect(response.status).toBe(503);
       expect(response.headers.get(PAYMENT_REQUIRED)).toBeNull();
       expect(e.handler).not.toHaveBeenCalled();
+    } finally {
+      await e.close();
+    }
+  });
+});
+
+// Backend audit P4: the price is enforced at the paid API's HTTP edge, not only inside the facilitator service.
+describe("paid API refuses a wrong price over real HTTP", () => {
+  it("a validly signed authorization for less than the price, or an `accepted` that lowers it, never reaches the resource or the chain", async () => {
+    const e = await running();
+    try {
+      const req = await e.request();
+      const base = req.paymentPayload;
+      const a = { ...base.payload.authorization, value: "1" };
+      const signature = await payer.signTypedData(
+        buildAgentAuthorization({
+          from: a.from as `0x${string}`,
+          to: a.to as `0x${string}`,
+          value: 1n,
+          validAfter: 0n,
+          validBefore: BigInt(a.validBefore),
+          nonce: a.nonce as `0x${string}`,
+        }),
+      );
+      const cheap = { ...base, payload: { authorization: a, signature } };
+      const lowered = { ...base, accepted: { ...base.accepted, amount: "1" } };
+      for (const payload of [cheap, lowered]) {
+        const res = await fetch(e.url + "/v1/quote", {
+          headers: { "PAYMENT-SIGNATURE": encodeX402Header(payload) },
+        });
+        expect([400, 402]).toContain(res.status);
+        expect(JSON.stringify(await res.json())).not.toContain("paid-data");
+      }
+      expect(e.handler).not.toHaveBeenCalled();
+      expect(e.state.sent).toHaveLength(0);
+      // the genuine price still works afterwards
+      const ok = await fetch(e.url + "/v1/quote", { headers: await e.headers() });
+      expect(ok.status).toBe(200);
+      expect(e.handler).toHaveBeenCalledTimes(1);
     } finally {
       await e.close();
     }

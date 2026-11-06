@@ -6,12 +6,14 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { keccak256, type Hex } from "viem";
 import { makeChain, type PayArgs } from "../src/chain.js";
+import { assertPortFree, requireInCi, waitForRpc } from "./anvil-util.js";
 
 const PORT = 18571;
 const RPC = `http://127.0.0.1:${PORT}`;
 // Standard anvil dev key #2 (public, test-only).
 const RELAYER_KEY = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a" as Hex;
 const hasAnvil = spawnSync("anvil", ["--version"], { stdio: "ignore" }).status === 0;
+requireInCi(hasAnvil, "anvil");
 
 async function rpc(method: string, params: unknown[] = []) {
   const r = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
@@ -34,15 +36,9 @@ const args: PayArgs = {
 describe.skipIf(!hasAnvil)("chain on anvil: sign locally, persist, send, look up", () => {
   let anvil: ChildProcess;
   beforeAll(async () => {
+    await assertPortFree(PORT);
     anvil = spawn("anvil", ["--port", String(PORT), "--silent"], { stdio: "ignore" });
-    for (let i = 0; i < 50; i++) {
-      try {
-        await rpc("eth_chainId");
-        return;
-      } catch {
-        await new Promise((r) => setTimeout(r, 200));
-      }
-    }
+    await waitForRpc(RPC);
   }, 30_000);
   afterAll(() => {
     anvil?.kill();

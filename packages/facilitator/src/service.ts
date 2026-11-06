@@ -15,11 +15,17 @@ import {
   type DeliveryClaim,
 } from "@quietpay/shared";
 import {
+  type ExternalSettlement,
   type RelayerService,
   type TransferArgs,
   type TxReceipt,
 } from "@quietpay/relayer/core";
 import { PaymentStore, type PaymentRow } from "./store.js";
+
+/** A tx that used the agent's authorization without us must be this many blocks deep before we deliver. */
+export const EXTERNAL_SETTLEMENT_CONFIRMATIONS = 2;
+/** A nonce reported used with no visible tx for this long is parked as `unresolved` instead of retried. */
+const UNRESOLVED_AFTER_SECONDS = 900;
 
 export class PaymentError extends Error {
   constructor(readonly reason: string) {
@@ -223,6 +229,46 @@ export class FacilitatorService {
       };
     }
   }
+  private newRow(data: ReturnType<FacilitatorService["inspect"]>): PaymentRow {
+    const { req, policy, auth, id } = data;
+    return {
+      id,
+      payer: auth.from.toLowerCase(),
+      nonce: auth.nonce.toLowerCase(),
+      merchant_id: policy.merchantId.toLowerCase(),
+      resource: new URL(policy.resource.url).href,
+      pay_to: auth.to.toLowerCase(),
+      amount: auth.value,
+      fingerprint: data.fingerprint,
+      request: JSON.stringify(req),
+      status: "settling",
+      tx_hash: null,
+      error_reason: null,
+      created_at: this.relayer.now(),
+      delivered_at: null,
+      delivery_attempts: 0,
+      lease_token: null,
+      lease_until: null,
+    };
+  }
+  /**
+   * The nonce was already used before we sent anything. Record the payment and let the external-settlement
+   * check decide: a plain transfer that paid exactly this authorization settles it (once deep enough), a
+   * cancelled one fails, anything unbindable is parked as unresolved. Returns false (nothing recorded) when
+   * the nonce turns out not to be used, so the caller answers payment_replayed as before.
+   */
+  private adoptExternal(
+    data: ReturnType<FacilitatorService["inspect"]>,
+  ): Promise<boolean> {
+    return this.relayer.sendLock.run(async () => {
+      if (this.store.get(data.id)) return false;
+      const row = this.newRow(data);
+      this.store.insert(row);
+      if ((await this.resolveExternal(row)) !== "none") return true;
+      this.relayer.db.raw.prepare("DELETE FROM x402_payments WHERE id=?").run(row.id);
+      return false;
+    });
+  }
   private result(id: string): X402SettleResponse {
     const row = this.store.get(id)!;
     const base = {
@@ -236,7 +282,7 @@ export class FacilitatorService {
       row.delivery_attempts < 2
     )
       return { ...base, success: true };
-    if (row.status === "settling" && row.tx_hash)
+    if (row.status === "settling")
       return { ...base, success: false, errorReason: "settlement_pending" };
     return {
       ...base,
@@ -281,28 +327,18 @@ export class FacilitatorService {
     this.inflight.add(id);
     try {
       const verified = await this.verify(req, merchant);
-      if (!verified.isValid) return failed(verified.invalidReason!);
+      if (!verified.isValid) {
+        // A used nonce may be a front-run: someone else submitted this very authorization and the payee was paid.
+        if (
+          verified.invalidReason === "payment_replayed" &&
+          (await this.adoptExternal(data))
+        )
+          return this.result(id);
+        return failed(verified.invalidReason!);
+      }
       await this.relayer.sendLock.run(async () => {
         if (this.store.get(id)) throw new PaymentError("payment_replayed");
-        const row: PaymentRow = {
-          id,
-          payer: auth.from.toLowerCase(),
-          nonce: auth.nonce.toLowerCase(),
-          merchant_id: policy.merchantId.toLowerCase(),
-          resource: new URL(policy.resource.url).href,
-          pay_to: auth.to.toLowerCase(),
-          amount: auth.value,
-          fingerprint: data.fingerprint,
-          request: JSON.stringify(req),
-          status: "settling",
-          tx_hash: null,
-          error_reason: null,
-          created_at: this.relayer.now(),
-          delivered_at: null,
-          delivery_attempts: 0,
-          lease_token: null,
-          lease_until: null,
-        };
+        const row = this.newRow(data);
         this.store.insert(row);
         try {
           await this.sendLocked(row);
@@ -370,6 +406,8 @@ export class FacilitatorService {
       gas =
         ((await svc.chain.simulateTransfer(this.args(req))) * 12n + 9n) / 10n;
     } catch {
+      // The authorization may already have been used by someone else before we could send (a front-run).
+      if ((await this.resolveExternal(row)) !== "none") return;
       throw new PaymentError("invalid_transaction_state");
     }
     const price = await svc.chain.getGasPrice();
@@ -398,7 +436,48 @@ export class FacilitatorService {
       });
     }
   }
-  private finish(id: string, hash: Hex, receipt: TxReceipt) {
+  /**
+   * Our own send failed or reverted. Before calling that a failure, check whether someone else already used the
+   * signed authorization (a front-run): if a plain `transferWithAuthorization` to the token paid exactly this
+   * payer, payee and amount under this nonce, the payee WAS paid and the payment is settled by that tx once it
+   * is deep enough. A used nonce that cannot be bound to a payment is parked as `unresolved` (never delivered).
+   * Returns "none" when the nonce is unused, so the caller records the ordinary failure.
+   */
+  private async resolveExternal(
+    row: PaymentRow,
+  ): Promise<"none" | "pending" | "settled" | "failed" | "unresolved"> {
+    const svc = this.relayer;
+    let used: boolean;
+    let outcome: ExternalSettlement;
+    try {
+      used = await svc.chain.authorizationUsed(row.payer as Hex, row.nonce as Hex);
+      if (!used) return "none";
+      outcome = await svc.chain.findExternalSettlement(
+        this.args(FacilitatorRequest.parse(JSON.parse(row.request))),
+      );
+    } catch {
+      return "pending"; // RPC trouble: stay settling, the recovery sweep tries again
+    }
+    if (outcome.kind === "cancelled") {
+      this.store.failed(row.id, "authorization_cancelled");
+      return "failed";
+    }
+    if (outcome.kind === "matched") {
+      const ours = new Set(svc.db.attempts(row.id).map((a) => a.hash.toLowerCase()));
+      if (!ours.has(outcome.hash.toLowerCase())) {
+        if (outcome.confirmations < EXTERNAL_SETTLEMENT_CONFIRMATIONS) return "pending";
+        if (this.store.settledExternal(row.id, outcome)) return "settled";
+      }
+    } else if (
+      outcome.kind === "none" &&
+      svc.now() - row.created_at < UNRESOLVED_AFTER_SECONDS
+    ) {
+      return "pending"; // used, but the tx is not visible yet (node lag, reorg): give it time
+    }
+    this.store.unresolved(row.id);
+    return "unresolved";
+  }
+  private async finish(id: string, hash: Hex, receipt: TxReceipt) {
     const svc = this.relayer,
       row = this.store.get(id);
     if (!row || row.status !== "settling") return;
@@ -415,22 +494,28 @@ export class FacilitatorService {
         svc.db.raw
           .prepare("DELETE FROM spend WHERE tx_hash=?")
           .run(attempt.hash);
+      // Our tx burned gas whether or not it paid, so it always counts against the loss budget.
       svc.db.recordSpend(
         hash,
         svc.now(),
         receipt.gasUsed * receipt.effectiveGasPrice,
       );
-      svc.db.raw
-        .prepare(
-          "UPDATE x402_payments SET status=?,tx_hash=?,error_reason=? WHERE id=?",
-        )
-        .run(
-          success ? "settled" : "failed",
-          hash,
-          success ? null : "invalid_transaction_state",
-          id,
-        );
+      if (success)
+        svc.db.raw
+          .prepare(
+            "UPDATE x402_payments SET status='settled',tx_hash=?,error_reason=NULL WHERE id=?",
+          )
+          .run(hash, id);
     })();
+    if (success) return;
+    // Only a REVERTED attempt can mean someone else used the authorization first. If our own tx succeeded
+    // but did not pay as signed, our tx consumed the nonce: that is a plain failure, never an external settlement.
+    if (receipt.status !== "success" && (await this.resolveExternal(row)) !== "none") return;
+    svc.db.raw
+      .prepare(
+        "UPDATE x402_payments SET status='failed',tx_hash=?,error_reason='invalid_transaction_state' WHERE id=? AND status='settling'",
+      )
+      .run(hash, id);
   }
   private track(id: string, hash: Hex): Promise<void> {
     const current = this.tracking.get(id);
@@ -462,7 +547,7 @@ export class FacilitatorService {
       for (const attempt of attempts) {
         const receipt = await svc.chain.getReceipt(attempt.hash as Hex);
         if (receipt) {
-          this.finish(id, attempt.hash as Hex, receipt);
+          await this.finish(id, attempt.hash as Hex, receipt);
           return;
         }
       }

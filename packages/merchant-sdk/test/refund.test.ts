@@ -58,7 +58,7 @@ describe("merchant SDK refunds", () => {
     { refundSigner: "0x" + "11".repeat(20) }, { refundIndex: 2 },
   ])("refuses tampered or stale context %# before submitting", async changed => {
     const { requests, fetcher } = transport({ ...context, ...changed });
-    await expect(refund({ ...opts, fetch: fetcher })).rejects.toThrow();
+    await expect(refund({ ...opts, fetch: fetcher })).rejects.toThrow(/Refund context does not match|Refund key does not match|Refund index changed/);
     expect(requests).toHaveLength(1);
   });
   it("rejects insufficient balance and an excessive amount without posting", async () => {

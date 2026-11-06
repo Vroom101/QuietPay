@@ -99,7 +99,13 @@ export function paywall(options: PaywallOptions) {
       const settled = await post("/settle", request, X402SettleResponse);
       if (!settled.success) {
         if (
-          ["unexpected_settle_error", "unexpected_verify_error"].includes(
+          // `settlement_unresolved`: the authorization was used on-chain but no payment could be bound to it, so the
+          // payer may well have paid. Never invite a second payment; a person has to look.
+          [
+            "unexpected_settle_error",
+            "unexpected_verify_error",
+            "settlement_unresolved",
+          ].includes(
             settled.errorReason ?? "",
           )
         ) {

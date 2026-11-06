@@ -677,6 +677,12 @@ export class RelayerService {
     const wei = r.gasUsed * r.effectiveGasPrice;
     this.db.recordSpend(hash, this.now(), wei);
     if (r.status === "success") {
+      // Reorg protection: below SETTLE_CONFIRMATIONS the receipt is not trusted yet. The order stays as it is
+      // and reconciliation looks again; a receipt that disappears meanwhile never settled anything.
+      if (this.cfg.settleConfirmations > 1) {
+        const head = await this.chain.getBlockNumber();
+        if (head - r.blockNumber + 1n < BigInt(this.cfg.settleConfirmations)) return false;
+      }
       // A success receipt for any pay tx of this order proves it was paid, whatever local state it is in.
       if (!this.db.finishTx(orderId, hash, "settled", { settledAt: this.now() }) && !this.db.settleAttempt(orderId, hash, this.now())) {
         return false;

@@ -75,6 +75,7 @@ export class FakeChain implements ChainPort {
   async getBalance() { return this.balance; }
   async getTokenBalance() { return this.refundBalance; }
   async authorizationUsed(_payer?: Hex, _nonce?: Hex) { return false; }
+  async findExternalSettlement(_args?: unknown) { return { kind: "none" } as const; }
   async simulateTransfer() { throw new Error("Configure a transfer fake for x402 tests"); return 0n; }
   async prepareTransfer(): Promise<PreparedTx> { throw new Error("Configure a transfer fake for x402 tests"); }
   async simulateRefund() { if (this.simulateFails) throw new Error("refund simulation failed"); return this.gas; }
@@ -167,8 +168,9 @@ export class FakeChain implements ChainPort {
   release() {
     this.resolveReceipt?.({} as TxReceipt);
   }
+  head = 100n;
   async getBlockNumber() {
-    return 100n;
+    return this.head;
   }
 }
 
@@ -189,6 +191,7 @@ export function makeCfg(over: Partial<Config> = {}): Config {
     maxGasLimit: 500000n, lowBalanceWei: 10n ** 16n, pendingRetrySeconds: 30, maxReplacements: 3,
     payerCap: 100_000_000n, // 100 USDT
     relayFee: 50_000n,
+    settleConfirmations: 1,
     rateLimitPerMinute: 1000,
     tokenDomain: { name: "Tether USD", version: "1" },
     explorerBaseUrl: "https://explorer.test",
@@ -216,6 +219,15 @@ export function makeEnv(cfgOver: Partial<Config> = {}) {
   const cfg = makeCfg(cfgOver);
   const svc = new RelayerService({ cfg, db, chain, now: () => clock.t, broadcastRetryMs: 0 });
   return { clock, chain, db, cfg, svc };
+}
+
+/** Polls until `cond` is true; throws on timeout. Replaces fixed sleeps so tests neither race nor over-wait. */
+export async function waitFor(cond: () => boolean, what = "condition", timeoutMs = 2000): Promise<void> {
+  const end = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 2));
+  }
 }
 
 export async function newOrder(svc: RelayerService, amount = "25000000", extra: { webhookUrl?: string } = {}) {
