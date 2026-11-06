@@ -17,7 +17,7 @@ The demo uses no other token.
 | Qualifying official-USDT payment (zero-gas payer) | **Done**: 1 USDT, fee 0.05, block 12361192 | [pay tx](https://explorer.testnet.whitechain.io/tx/0x1f2da1062f4c941382d1f0d3c7134c49858662d8eb3a68436b8f88fc7d892384), `docs/lead/live-usdt.md` |
 | Official-USDT refund, on-chain | **Done**: 0.5 USDT refunded to the payer | [refund tx](https://explorer.testnet.whitechain.io/tx/0x1ac62248eb3def54499896fd8bfc197436fcb83d9544fe94432c138c2d85127d), `docs/lead/refund.md` |
 | Refund API in the relayer and the dashboard refund button | **Not built** | `docs/lead/shared-change.md` |
-| Hosted relayer | **Not done** (runs locally only) | `render.yaml` is ready |
+| Hosted relayer | **Not done** (runs locally only) | `render.yaml` is ready (sets `TRUST_PROXY_HOPS=1`; keep it `0` without a proxy) |
 | Browser checkout | **Not run in a real browser** | widget and store pass their unit tests against the mock relayer |
 | Indexer and ledger export | **Done**, live-evidenced | `docs/lead/ledger.md` |
 | Independent ledger verifier | **Done**: the live sample re-derives from chain data, RESULT OK | `docs/lead/verifier.md`, `docs/lead/samples/live-sample.verify.json` |
@@ -39,7 +39,7 @@ Merchant server --createOrder--> Relayer ----- signed webhook ---> Merchant serv
 
 - `contracts/`: PaymentRouter (Solidity 0.8.24, Foundry). The payer signs the token's own EIP-3009
   `ReceiveWithAuthorization` with `to` = router. The nonce is
-  `keccak256(PAY_TAG, merchantId, orderId, payout, value)`, so changing the payout, amount or order
+  `keccak256(PAY_TAG, merchantId, orderId, payout, value, fee)` (tag `quietpay.pay.v2`), so changing the payout, amount, fee or order
   invalidates the signature. One receipt per (merchant, order).
 - `packages/shared`: zod schemas, error codes, typed-data builders, fixtures, mock relayer, generated ABI, token facts.
 - `packages/relayer`: Fastify service with a guard pipeline, nonce manager, SQLite and signed webhooks with retry.
@@ -49,9 +49,13 @@ Merchant server --createOrder--> Relayer ----- signed webhook ---> Merchant serv
 
 ## Why onchain
 
-The merchant payout and the relay fee move in one transaction anyone can audit. The receipt, the payout
-address the payer agreed to and the fee cap are enforced by the contract, not by trusting the relayer. A
-compromised relayer can refuse service but cannot redirect funds or exceed the fee cap.
+- **Operate:** the merchant payout, the relay fee and the receipt settle in one transaction that anyone can audit on the
+  explorer, and the payer's signature fixes the payout address, amount and fee. A normal card or bank rail cannot give
+  the payer a signed commitment to those terms that a third-party relayer is unable to change, and the merchant cannot
+  edit the ledger afterwards: the exported ledger is re-derived from chain logs by an independent verifier.
+- **Scale:** the payer needs no gas and no wallet setup, so a store can take payments without onboarding each customer to a
+  gas token, and any number of relayers can be allowed in the registry without being trusted with funds. A compromised
+  relayer can refuse service but cannot redirect funds or exceed the fee cap.
 
 ## Setup
 
@@ -74,7 +78,13 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 ## Limitations
 
 - Demo-grade payer wallet: a random key encrypted with AES-GCM in IndexedDB. Not production custody.
-- Official test USDT only, testnet only, no audit. No INR conversion or production custody is claimed.
+- Official test USDT only, testnet only, contracts not audited. No INR conversion or production custody is claimed.
+- Refunds go to the payer key stored in the browser; if that browser key is lost the refund cannot be received there.
+- The operator pays gas on refunds and on any future x402 settlements. The flat relay fee is not market pricing.
+- x402 agent settlement is not built; a bare USDT transfer to the pay-to address is a `payto_transfer` deposit, not proof of an agent payment. Subscriptions are a roadmap item.
+- The test USDT is a proxy token whose admin can pause it or blacklist addresses; a router payment would then revert.
+- The verifier proves consistency with chain data inside a declared range, as served by the RPC node(s) given. It does not prove completeness outside that range; pass `--from/--to/--min-confirmations` and compare its checkpoint out of band.
+- `net_usdt` can be negative (the relay fee is not returned on a full refund).
 - Tokens sent directly to the router are not supported and cannot be recovered.
 - The relayer is a trusted gas sponsor: it can censor or pause, but cannot redirect funds or exceed the fee cap.
 - The rate limiter is in memory; the gas loss budget is persisted.
@@ -82,4 +92,4 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 
 ## Security
 
-Pen-tested in three rounds; see `docs/lead/pentest-round-1.md`.
+Pen-tested in several rounds by AI-driven attackers (no human audit); see `docs/lead/pentest-round-1.md` and `docs/lead/attack-log.md`.
