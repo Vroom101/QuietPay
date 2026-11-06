@@ -14,3 +14,6 @@
 
 Everything needed is already on chain: no transaction was sent in this step.
 Decision: the payer's "zero WBT" requirement means "cannot pay gas". The payer holds 9.99e-9 WBT (dust that cannot cover a transfer), and exact zero is not reachable after the earlier sweep. Preflight must compare the payer's WBT with the cost of one transfer, not with exact zero.
+
+## Merchant payout changed on chain (2026-11-07)
+The demo merchant's registered payout was changed from `0x8DEA71e7930b45648Dc9d2E8fEc742F56B329425` to `0x0bC8E049aaf6C510c148065130C1cCAe8C56f8fA` (the MetaMask "Merchant payout" account) with one owner transaction, `setPayout`: [0xeb2d9427...](https://explorer.testnet.whitechain.io/tx/0xeb2d94278d0d625628d476eb31016034d4aa66819c836e09defd4144633a92ae). The refund signer is unchanged. `contracts/deployments.json` and its shared mirror record the new payout (`payoutChangedFrom`, `payoutChangedTx`). The router, token and earlier evidence transactions are unaffected; the earlier payment and refund paid out to the old address. This is the owner power described in the README: the owner can change a merchant's payout instantly. Reversible with another `setPayout`.

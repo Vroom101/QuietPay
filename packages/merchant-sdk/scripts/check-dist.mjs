@@ -54,7 +54,7 @@ for (const [label, m] of [["ESM", esm], ["CommonJS", cjs]]) {
 // A TypeScript consumer compiles against the declarations (no workspace paths).
 const tmp = mkdtempSync(join(tmpdir(), "qp-sdk-consumer-"));
 writeFileSync(join(tmp, "consumer.ts"), `
-import { createOrder, getOrder, refund, verifyWebhook, type Order, type WebhookEvent, QuietpayApiError } from ${JSON.stringify(pathToFileURL(join(dist, "index.js")).href.replace("file:///", ""))};
+import { createOrder, getOrder, refund, verifyWebhook, type Order, type WebhookEvent, QuietpayApiError } from "sdk-under-test";
 export async function demo(): Promise<string> {
   const o: Order = await createOrder({ baseUrl: "https://relayer.example", apiKey: "k", merchantId: ("0x" + "00".repeat(32)) as \`0x\${string}\`, amount: "1000000" });
   const same: Order = await getOrder({ baseUrl: "https://relayer.example", orderId: o.id });
@@ -63,7 +63,7 @@ export async function demo(): Promise<string> {
   return same.status + ev.type;
 }
 `);
-writeFileSync(join(tmp, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2022", module: "ESNext", moduleResolution: "Bundler", strict: true, noEmit: true, skipLibCheck: false, types: ["node"], typeRoots: [join(root, "node_modules", "@types")], baseUrl: ".", paths: { "*": [join(root, "node_modules", "*")] } }, files: ["consumer.ts"] }));
+writeFileSync(join(tmp, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2022", module: "ESNext", moduleResolution: "Bundler", strict: true, noEmit: true, skipLibCheck: false, types: ["node"], typeRoots: [join(root, "node_modules", "@types")], baseUrl: ".", paths: { "sdk-under-test": [join(dist, "index.d.ts")], "*": [join(root, "node_modules", "*")] } }, files: ["consumer.ts"] }));
 try {
   const tsc = join(root, "node_modules", "typescript", "bin", "tsc");
   execFileSync(process.execPath, [tsc, "-p", join(tmp, "tsconfig.json")], { stdio: "pipe" });

@@ -11,8 +11,10 @@
     "merchants": {
       "demo-store": {
         "merchantId": "0x1d3fd9d6b97c92388e18a6e72355c17e73deaeef19351e5d6acce905f81454ac",
-        "payout": "0x8DEA71e7930b45648Dc9d2E8fEc742F56B329425",
-        "refundSigner": "0xeF70298c52b917d2301F7331bfe7038550d2CD5d"
+        "payout": "0x0bC8E049aaf6C510c148065130C1cCAe8C56f8fA",
+        "refundSigner": "0xeF70298c52b917d2301F7331bfe7038550d2CD5d",
+        "payoutChangedFrom": "0x8DEA71e7930b45648Dc9d2E8fEc742F56B329425",
+        "payoutChangedTx": "0xeb2d94278d0d625628d476eb31016034d4aa66819c836e09defd4144633a92ae"
       }
     },
     "explorerUrl": "https://explorer.testnet.whitechain.io/address/0xb9D475cdd817900B45C356169c6FdC379B942d82",
