@@ -1,1 +1,2 @@
 - W6 step 1: read-only GET /v1/x402/payments/:payer/:nonce + tests
+- W6 step 2: second real-chain front-run + cancel tests (own kit, cancel-capable fixture token)
