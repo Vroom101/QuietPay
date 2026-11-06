@@ -27,6 +27,7 @@ A read-only grep of `apps/`, `packages/widget`, `packages/relayer`, `packages/me
       `authorizationState(authorizer, nonce)` and look for the `Transfer` log for that nonce; if the transfer happened,
       treat the payment as settled. Add a test that front-runs the authorization on anvil.
 - [ ] Reject all-zero `orderId` and `merchantId` in `createOrder` (the router accepts them; see decisions.md, router review R1/R3).
+- [ ] Upgrade `fastify` (high advisories, fix >= 5.12.2) and re-run the relayer suites; see blocked.md, dependency audit.
 - [ ] Reconcile only against the qualifying router. Orders created for any older router cannot be paid.
 
 ## A (widget, store, dashboard): `feat/frontend`

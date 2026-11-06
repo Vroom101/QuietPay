@@ -13,3 +13,6 @@
 
 ## Router mutation sweep not completed
 `scripts/mutate-router.py` ran for about 35 minutes and was stopped by Claude Code because the machine was critically low on memory (each mutant recompiles the router with viaIR and runs the suite). No survivor list exists, so "zero surviving mutants" is NOT claimed. To finish: close other programs, then run `python scripts/mutate-router.py` (consider running forge with `--no-match-test invariant` and a lower `FOUNDRY_FUZZ_RUNS`). Not restarted automatically.
+
+## Dependency audit (T3-R4, 2026-11-06): `pnpm audit` = 28 findings (3 critical, 8 high)
+Critical: `vitest <3.2.6` and `tinypool` (test runner only, never shipped). High, reachable in shipped code: `fastify` (<5.12.2; relayer, B), `find-my-way` (<=9.6.0, via fastify), `zod` (<4.6.6; shared + others), `vite` (<=6.4.3; dev server of the demo store). Fixes are major-version upgrades (fastify 4 to 5, zod 3 to 4, vitest 2 to 3) that touch every package and were not attempted blind. Next step: B upgrades fastify and the relayer tests; Lead upgrades zod in `packages/shared` behind its 250 tests, then everyone re-runs `pnpm -r test`. Running the relayer behind the Render proxy with `TRUST_PROXY_HOPS=1` does not mitigate these.
