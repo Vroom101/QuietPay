@@ -56,10 +56,10 @@ const artifact = (path: string) =>
   JSON.parse(readFileSync(path, "utf8")) as { abi: Abi; bytecode: { object: Hex } | Hex };
 const fixture = (name: string) => resolve(here, "fixtures", name);
 
-export async function startAnvil() {
+export async function startAnvil(chainId?: number) {
   const port = await freePort(),
     rpc = `http://127.0.0.1:${port}`;
-  const proc = spawn(anvilBin, ["--port", String(port), "--silent"], { stdio: "ignore" });
+  const proc = spawn(anvilBin, ["--port", String(port), "--silent", ...(chainId ? ["--chain-id", String(chainId)] : [])], { stdio: "ignore" });
   const call = async (method: string, params: unknown[] = []) => {
     const body = await (
       await fetch(rpc, {
@@ -122,8 +122,7 @@ export interface World {
   cancel: (payer: ReturnType<typeof privateKeyToAccount>, nonce: Hex) => Promise<Hex>;
 }
 
-export async function deployWorld(rpc: string, call: World["call"], cancelable = false): Promise<World> {
-  const chainId = 31337;
+export async function deployWorld(rpc: string, call: World["call"], cancelable = false, chainId = 31337): Promise<World> {
   const chain = {
     id: chainId,
     name: "Anvil",
