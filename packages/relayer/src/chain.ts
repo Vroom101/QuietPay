@@ -1,11 +1,13 @@
 import {
+  TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
   createPublicClient,
-  createWalletClient,
   defineChain,
+  encodeFunctionData,
   http,
+  keccak256,
   type Hex,
   type PublicClient,
-  type WalletClient,
 } from "viem";
 import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { paymentRouterAbi } from "@quietpay/shared";
@@ -34,33 +36,70 @@ export interface TxReceipt {
   blockNumber: bigint;
 }
 
+/** A pay transaction signed locally. Nothing has been sent yet; `nonce` is reserved by the NonceManager. */
+export interface SignedTx {
+  hash: Hex;
+  raw: Hex;
+  nonce: number;
+}
+
 /** Everything the relayer needs from the chain. Faked in unit tests, viem-backed in production. */
 export interface ChainPort {
   readonly relayerAddress: Hex;
   getMerchant(merchantId: Hex): Promise<MerchantRegistry>;
   isPaused(): Promise<boolean>;
   isSettled(merchantId: Hex, orderId: Hex): Promise<boolean>;
-  /** Throws on revert. Returns the gas the call would use. */
+  /** Throws on revert. Returns the gas the call would use. Evaluated against the pending block. */
   simulatePay(args: PayArgs): Promise<bigint>;
   getGasPrice(): Promise<bigint>;
-  sendPay(args: PayArgs, gas: bigint, gasPrice: bigint): Promise<Hex>;
+  /**
+   * Signs a pay transaction locally with the next managed nonce and returns its raw bytes and hash.
+   * Nothing is broadcast. The nonce stays reserved; call resyncNonce() if the signed tx is abandoned
+   * before it could ever have been sent.
+   */
+  signPay(args: PayArgs, gas: bigint, gasPrice: bigint): Promise<SignedTx>;
+  /**
+   * Broadcasts a signed raw transaction. Throws on any error, including ambiguous ones (timeouts, resets)
+   * where the node may in fact have accepted the tx: callers must look the hash up before assuming it was
+   * not sent. Re-sending the same raw bytes is idempotent.
+   */
+  sendRawTx(raw: Hex): Promise<Hex>;
+  /** Forget the cached next nonce; the next signPay refetches the account's pending nonce from the node. */
+  resyncNonce(): void;
+  /** Waits (bounded) for a receipt. Throws on timeout. */
   waitForReceipt(hash: Hex): Promise<TxReceipt>;
+  /** The receipt if the tx is mined, else null. Never waits. */
+  getReceipt(hash: Hex): Promise<TxReceipt | null>;
+  /** True if the node knows the tx (in its mempool or mined). */
+  hasTransaction(hash: Hex): Promise<boolean>;
+  /** Number of transactions from the relayer account included in the latest block (its mined nonce). */
+  getConfirmedNonce(): Promise<number>;
   getBlockNumber(): Promise<bigint>;
 }
 
-/** Hands out sequential nonces and resyncs from the node after any failed send. */
+/**
+ * Hands out sequential nonces. A nonce is consumed when `fn` resolves (the tx was signed and handed to
+ * the caller, who must then either persist and track it or call resync()). If `fn` throws, nothing was
+ * signed and the manager resyncs from the node on next use.
+ */
 export class NonceManager {
   private next: number | null = null;
+  private stale = false;
   private tail: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly fetchPending: () => Promise<number>) {}
 
   run<T>(fn: (nonce: number) => Promise<T>): Promise<T> {
     const result = this.tail.then(async () => {
+      if (this.stale) {
+        this.next = null;
+        this.stale = false;
+      }
       if (this.next === null) this.next = await this.fetchPending();
+      const nonce = this.next;
       try {
-        const out = await fn(this.next);
-        this.next += 1;
+        const out = await fn(nonce);
+        this.next = nonce + 1;
         return out;
       } catch (e) {
         this.next = null; // resync on next use
@@ -69,6 +108,11 @@ export class NonceManager {
     });
     this.tail = result.catch(() => undefined);
     return result;
+  }
+
+  /** Refetch from the node before the next nonce is handed out (applied at the start of the next run). */
+  resync() {
+    this.stale = true;
   }
 }
 
@@ -81,11 +125,16 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
   });
   const account: PrivateKeyAccount = privateKeyToAccount(cfg.relayerKey);
   const pub: PublicClient = createPublicClient({ chain, transport: http(cfg.rpcUrl) });
-  const wallet: WalletClient = createWalletClient({ account, chain, transport: http(cfg.rpcUrl) });
   const nonces = new NonceManager(() => pub.getTransactionCount({ address: account.address, blockTag: "pending" }));
   const router = cfg.router;
   const argList = (a: PayArgs) =>
     [a.merchantId, a.orderId, a.payer, a.value, a.fee, a.validAfter, a.validBefore, a.signature] as const;
+  const toReceipt = (r: { status: "success" | "reverted"; gasUsed: bigint; effectiveGasPrice: bigint; blockNumber: bigint }): TxReceipt => ({
+    status: r.status,
+    gasUsed: r.gasUsed,
+    effectiveGasPrice: r.effectiveGasPrice,
+    blockNumber: r.blockNumber,
+  });
 
   return {
     relayerAddress: account.address,
@@ -111,34 +160,47 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
       return r.settled;
     },
     async simulatePay(a) {
-      await pub.simulateContract({ address: router, abi: paymentRouterAbi, functionName: "pay", args: argList(a), account });
-      return pub.estimateContractGas({ address: router, abi: paymentRouterAbi, functionName: "pay", args: argList(a), account });
+      // Both run against the PENDING block, so a payer whose balance is already committed by a tx still in
+      // the mempool fails here instead of passing on "latest" and reverting at the relayer's cost. Nodes
+      // differ in their default block tag for eth_estimateGas, so it is always explicit.
+      await pub.simulateContract({ address: router, abi: paymentRouterAbi, functionName: "pay", args: argList(a), account, blockTag: "pending" });
+      return pub.estimateContractGas({ address: router, abi: paymentRouterAbi, functionName: "pay", args: argList(a), account, blockTag: "pending" });
     },
     getGasPrice: () => pub.getGasPrice(),
-    sendPay(a, gas, gasPrice) {
-      return nonces.run((nonce) =>
-        wallet.writeContract({
-          chain,
-          account,
-          address: router,
-          abi: paymentRouterAbi,
-          functionName: "pay",
-          args: argList(a),
-          gas,
-          gasPrice,
-          nonce,
-        }),
-      );
+    signPay(a, gas, gasPrice) {
+      return nonces.run(async (nonce) => {
+        const data = encodeFunctionData({ abi: paymentRouterAbi, functionName: "pay", args: argList(a) });
+        const raw = await account.signTransaction({ type: "legacy", chainId: cfg.chainId, to: router, data, gas, gasPrice, nonce, value: 0n });
+        return { hash: keccak256(raw), raw, nonce };
+      });
+    },
+    sendRawTx(raw) {
+      return pub.sendRawTransaction({ serializedTransaction: raw });
+    },
+    resyncNonce() {
+      nonces.resync();
     },
     async waitForReceipt(hash) {
-      const r = await pub.waitForTransactionReceipt({ hash, timeout: 120_000 });
-      return {
-        status: r.status,
-        gasUsed: r.gasUsed,
-        effectiveGasPrice: r.effectiveGasPrice,
-        blockNumber: r.blockNumber,
-      };
+      return toReceipt(await pub.waitForTransactionReceipt({ hash, timeout: 120_000 }));
     },
+    async getReceipt(hash) {
+      try {
+        return toReceipt(await pub.getTransactionReceipt({ hash }));
+      } catch (e) {
+        if (e instanceof TransactionReceiptNotFoundError) return null;
+        throw e;
+      }
+    },
+    async hasTransaction(hash) {
+      try {
+        await pub.getTransaction({ hash });
+        return true;
+      } catch (e) {
+        if (e instanceof TransactionNotFoundError) return false;
+        throw e;
+      }
+    },
+    getConfirmedNonce: () => pub.getTransactionCount({ address: account.address, blockTag: "latest" }),
     getBlockNumber: () => pub.getBlockNumber(),
   };
 }

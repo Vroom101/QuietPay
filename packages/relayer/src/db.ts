@@ -1,13 +1,21 @@
 import Database from "better-sqlite3";
 import type { Order, OrderStatus } from "@quietpay/shared";
 
+/**
+ * Internal order status. `broadcast_unknown` means a signed tx was persisted and its send failed in a way
+ * that leaves it unknown whether the node accepted it; it is reported as `pending` publicly and only
+ * reconciliation (receipt found, nonce used, or max age) resolves it. It is never released as unpaid.
+ */
+export type DbStatus = OrderStatus | "broadcast_unknown";
+const UNRESOLVED = "('pending','broadcast_unknown')";
+
 export interface OrderRow {
   id: string;
   merchant_id: string;
   amount: string;
   fee: string;
   payout: string;
-  status: OrderStatus;
+  status: DbStatus;
   reference: string | null;
   webhook_url: string | null;
   nonce: string;
@@ -28,10 +36,20 @@ export interface OrderRow {
    * claim's transaction is broadcast.
    */
   claim_prev?: string | null;
+  /** Random per-process token of the relayer process that holds the current claim (null for legacy rows). */
+  claim_owner?: string | null;
+  /** The signed pay tx (raw RLP), persisted before it is sent so a crash or timeout cannot lose it. */
+  raw_tx?: string | null;
+  /** The relayer-account nonce of raw_tx. */
+  tx_nonce?: number | null;
+  /** When raw_tx was signed and persisted (unix seconds). */
+  tx_signed_at?: number | null;
+  /** When reconciliation re-sent raw_tx (it does so at most once per tx). */
+  rebroadcast_at?: number | null;
 }
 
 interface ClaimSnapshot {
-  status: OrderStatus;
+  status: DbStatus;
   payer: string | null;
   signature: string | null;
   valid_after: number | null;
@@ -39,6 +57,10 @@ interface ClaimSnapshot {
   tx_hash: string | null;
   relayed_at: number | null;
   failure_code: string | null;
+  raw_tx?: string | null;
+  tx_nonce?: number | null;
+  tx_signed_at?: number | null;
+  rebroadcast_at?: number | null;
 }
 
 export type ClaimResult = "ok" | "over_cap" | "unavailable";
@@ -80,7 +102,12 @@ export class Db {
         expires_at INTEGER NOT NULL,
         settled_at INTEGER,
         relayed_at INTEGER,
-        claim_prev TEXT
+        claim_prev TEXT,
+        claim_owner TEXT,
+        raw_tx TEXT,
+        tx_nonce INTEGER,
+        tx_signed_at INTEGER,
+        rebroadcast_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_orders_merchant ON orders(merchant_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_orders_payer ON orders(payer, created_at);
@@ -99,6 +126,16 @@ export class Db {
         delivered_at INTEGER
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS reverts (
+        tx_hash TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        payer TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        wei TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_reverts_payer ON reverts(payer, ts);
+      CREATE INDEX IF NOT EXISTS idx_reverts_order ON reverts(order_id, ts);
+      CREATE TABLE IF NOT EXISTS owners (token TEXT PRIMARY KEY, heartbeat INTEGER NOT NULL);
     `);
     this.migrate();
   }
@@ -115,7 +152,18 @@ export class Db {
         this.raw.exec("UPDATE orders SET relayed_at = COALESCE(settled_at, created_at) WHERE payer IS NOT NULL AND relayed_at IS NULL");
       })();
     }
-    if (!cols.includes("claim_prev")) this.raw.exec("ALTER TABLE orders ADD COLUMN claim_prev TEXT");
+    // Additive, nullable columns: safe on a live database and on every older schema.
+    for (const [name, type] of [
+      ["claim_prev", "TEXT"],
+      ["claim_owner", "TEXT"],
+      ["raw_tx", "TEXT"],
+      ["tx_nonce", "INTEGER"],
+      ["tx_signed_at", "INTEGER"],
+      ["rebroadcast_at", "INTEGER"],
+    ] as const) {
+      if (!cols.includes(name)) this.raw.exec(`ALTER TABLE orders ADD COLUMN ${name} ${type}`);
+    }
+    this.raw.exec("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)");
     this.raw.exec("CREATE INDEX IF NOT EXISTS idx_orders_payer_relayed ON orders(payer, relayed_at)");
   }
 
@@ -143,8 +191,23 @@ export class Db {
       .all(merchantId.toLowerCase(), limit) as OrderRow[];
   }
 
+  /** Orders pending on a broadcast tx (for receipt tracking). */
   pendingOrders(): OrderRow[] {
     return this.raw.prepare("SELECT * FROM orders WHERE status = 'pending' AND tx_hash IS NOT NULL").all() as OrderRow[];
+  }
+
+  /** Every order with a signed tx whose outcome is not known yet: pending or broadcast_unknown. */
+  unresolvedTxs(): OrderRow[] {
+    return this.raw.prepare(`SELECT * FROM orders WHERE status IN ${UNRESOLVED} AND tx_hash IS NOT NULL`).all() as OrderRow[];
+  }
+
+  /** Orders failed as `tx_not_mined` (signed since `since`): their tx may still land, so they are re-checked. */
+  notMinedFailures(since: number): OrderRow[] {
+    return this.raw
+      .prepare(
+        "SELECT * FROM orders WHERE status IN ('failed','expired') AND failure_code='tx_not_mined' AND tx_hash IS NOT NULL AND COALESCE(tx_signed_at, relayed_at, 0)>=?",
+      )
+      .all(since) as OrderRow[];
   }
 
   /**
@@ -153,9 +216,10 @@ export class Db {
    * and the claim run in one IMMEDIATE transaction, so concurrent relays (in this process or another one
    * on the same database) cannot both pass the cap.
    *
-   * The claim snapshots the previous relay fields into claim_prev and clears tx_hash (a failed order
-   * otherwise keeps its old, reverted hash), so `pending AND tx_hash IS NULL` always means "claimed, not
-   * yet broadcast", and revertClaim can restore the exact previous state.
+   * The claim snapshots the previous relay fields into claim_prev and clears tx_hash / raw_tx (a failed
+   * order otherwise keeps its old, reverted tx), so `pending AND tx_hash IS NULL` always means "claimed,
+   * not yet signed", and revertClaim can restore the exact previous state. `owner` is the claiming
+   * process's token; claims held by a live owner (`liveOwners`) keep counting toward the cap however old.
    */
   claimForRelay(
     id: string,
@@ -163,13 +227,13 @@ export class Db {
     signature: string,
     validAfter: number,
     validBefore: number,
-    limits: { now: number; payerCap: bigint; windowSeconds: number; claimGraceSeconds?: number },
+    limits: { now: number; payerCap: bigint; windowSeconds: number; claimGraceSeconds?: number; owner?: string; liveOwners?: string[] },
   ): ClaimResult {
     const tx = this.raw.transaction((): ClaimResult => {
       const row = this.getOrder(id);
       if (!row || (row.status !== "created" && row.status !== "failed") || limits.now >= row.expires_at) return "unavailable";
       const grace = limits.claimGraceSeconds ?? CLAIM_GRACE_SECONDS;
-      const vol = this.payerVolume(payer, limits.now - limits.windowSeconds, limits.now - grace);
+      const vol = this.payerVolume(payer, limits.now - limits.windowSeconds, limits.now - grace, limits.liveOwners ?? []);
       if (vol + BigInt(row.amount) > limits.payerCap) return "over_cap";
       const prev: ClaimSnapshot = {
         status: row.status,
@@ -180,28 +244,36 @@ export class Db {
         tx_hash: row.tx_hash,
         relayed_at: row.relayed_at,
         failure_code: row.failure_code,
+        raw_tx: row.raw_tx ?? null,
+        tx_nonce: row.tx_nonce ?? null,
+        tx_signed_at: row.tx_signed_at ?? null,
+        rebroadcast_at: row.rebroadcast_at ?? null,
       };
       const r = this.raw
         .prepare(
           `UPDATE orders SET status='pending', payer=?, signature=?, valid_after=?, valid_before=?, relayed_at=?,
-             tx_hash=NULL, failure_code=NULL, claim_prev=?
+             tx_hash=NULL, raw_tx=NULL, tx_nonce=NULL, tx_signed_at=NULL, rebroadcast_at=NULL, failure_code=NULL,
+             claim_prev=?, claim_owner=?
            WHERE id=? AND status IN ('created','failed')`,
         )
-        .run(payer.toLowerCase(), signature, validAfter, validBefore, limits.now, JSON.stringify(prev), id.toLowerCase());
+        .run(payer.toLowerCase(), signature, validAfter, validBefore, limits.now, JSON.stringify(prev), limits.owner ?? null, id.toLowerCase());
       return r.changes === 1 ? "ok" : "unavailable";
     });
     return tx.immediate();
   }
 
   /**
-   * Releases a claim that never reached broadcast, restoring the exact state from before the claim (a
-   * failed order goes back to failed with its old tx_hash, a created one to created). No-op once a tx
-   * hash has been recorded. Returns true if a claim was released.
+   * Releases a claim that never reached signing, restoring the exact state from before the claim (a
+   * failed order goes back to failed with its old tx, a created one to created). No-op once a tx has been
+   * persisted: a signed tx is never released as unpaid. With `expectOwner` (a token, or null for an
+   * ownerless legacy claim) the release only applies while that owner still holds the claim. Returns true
+   * if a claim was released.
    */
-  revertClaim(id: string): boolean {
+  revertClaim(id: string, expectOwner?: string | null): boolean {
     const tx = this.raw.transaction((): boolean => {
       const row = this.getOrder(id);
       if (!row || row.status !== "pending" || row.tx_hash !== null) return false;
+      if (expectOwner !== undefined && (row.claim_owner ?? null) !== expectOwner) return false;
       let prev: ClaimSnapshot | null = null;
       try {
         prev = row.claim_prev ? (JSON.parse(row.claim_prev) as ClaimSnapshot) : null;
@@ -219,70 +291,196 @@ export class Db {
         relayed_at: null,
         failure_code: row.failure_code,
       };
+      // Only created/failed can be restored; anything else in a snapshot is corrupt and falls back to created.
+      const status = p.status === "failed" ? "failed" : "created";
       const r = this.raw
         .prepare(
           `UPDATE orders SET status=?, payer=?, signature=?, valid_after=?, valid_before=?, tx_hash=?, relayed_at=?,
-             failure_code=?, claim_prev=NULL
-           WHERE id=? AND status='pending' AND tx_hash IS NULL`,
+             failure_code=?, raw_tx=?, tx_nonce=?, tx_signed_at=?, rebroadcast_at=?, claim_prev=NULL, claim_owner=NULL
+           WHERE id=? AND status='pending' AND tx_hash IS NULL AND claim_owner IS ?`,
         )
-        .run(p.status, p.payer, p.signature, p.valid_after, p.valid_before, p.tx_hash, p.relayed_at, p.failure_code, row.id);
+        .run(
+          status,
+          p.payer,
+          p.signature,
+          p.valid_after,
+          p.valid_before,
+          p.tx_hash,
+          p.relayed_at,
+          p.failure_code,
+          p.raw_tx ?? null,
+          p.tx_nonce ?? null,
+          p.tx_signed_at ?? null,
+          p.rebroadcast_at ?? null,
+          row.id,
+          row.claim_owner ?? null,
+        );
       return r.changes === 1;
     });
     return tx.immediate();
   }
 
-  /** Claims that never reached broadcast (pending, no tx_hash) made before `claimedBefore` (unix seconds). */
+  /** Claims that never reached signing (pending, no tx_hash) made before `claimedBefore` (unix seconds). */
   staleClaims(claimedBefore: number): OrderRow[] {
     return this.raw
       .prepare("SELECT * FROM orders WHERE status='pending' AND tx_hash IS NULL AND (relayed_at IS NULL OR relayed_at<?)")
       .all(claimedBefore) as OrderRow[];
   }
 
-  setTxHash(id: string, txHash: string) {
-    this.raw.prepare("UPDATE orders SET tx_hash=?, claim_prev=NULL WHERE id=?").run(txHash, id.toLowerCase());
+  /**
+   * Persists a locally signed tx on its claim BEFORE it is sent. Applies only while the order is still a
+   * pending, unsigned claim held by `owner` (null matches a legacy ownerless claim), so a process whose
+   * claim was released and taken over cannot attach (or then send) a second tx. Returns true on success.
+   */
+  persistSignedTx(id: string, owner: string | null, tx: { hash: string; raw: string; nonce: number }, now: number): boolean {
+    const r = this.raw
+      .prepare(
+        `UPDATE orders SET tx_hash=?, raw_tx=?, tx_nonce=?, tx_signed_at=?, rebroadcast_at=NULL, claim_prev=NULL
+         WHERE id=? AND status='pending' AND tx_hash IS NULL AND claim_owner IS ?`,
+      )
+      .run(tx.hash, tx.raw, tx.nonce, now, id.toLowerCase(), owner);
+    return r.changes === 1;
+  }
+
+  /** Records a tx hash on an owned, unsigned claim (no raw bytes). Prefer persistSignedTx. */
+  setTxHash(id: string, txHash: string, owner: string | null = null): boolean {
+    const r = this.raw
+      .prepare("UPDATE orders SET tx_hash=?, claim_prev=NULL WHERE id=? AND status='pending' AND tx_hash IS NULL AND claim_owner IS ?")
+      .run(txHash, id.toLowerCase(), owner);
+    return r.changes === 1;
+  }
+
+  /** pending -> broadcast_unknown for exactly this tx. */
+  markBroadcastUnknown(id: string, txHash: string): boolean {
+    return (
+      this.raw.prepare("UPDATE orders SET status='broadcast_unknown' WHERE id=? AND status='pending' AND tx_hash=?").run(id.toLowerCase(), txHash)
+        .changes === 1
+    );
+  }
+
+  /** broadcast_unknown -> pending once the node is known to have exactly this tx. */
+  markBroadcastKnown(id: string, txHash: string): boolean {
+    return (
+      this.raw.prepare("UPDATE orders SET status='pending' WHERE id=? AND status='broadcast_unknown' AND tx_hash=?").run(id.toLowerCase(), txHash)
+        .changes === 1
+    );
+  }
+
+  /** Records the single rebroadcast of an unresolved tx. Returns false if one was already recorded. */
+  markRebroadcast(id: string, txHash: string, now: number): boolean {
+    return (
+      this.raw
+        .prepare(`UPDATE orders SET rebroadcast_at=? WHERE id=? AND status IN ${UNRESOLVED} AND tx_hash=? AND rebroadcast_at IS NULL`)
+        .run(now, id.toLowerCase(), txHash).changes === 1
+    );
   }
 
   /**
-   * Records the receipt outcome of a broadcast tx. Applies only while the order is still pending on
-   * exactly this hash, so a stale or duplicate tracker cannot overwrite a newer attempt or emit a second
-   * event. Returns true if this call made the transition.
+   * Records the outcome of a signed tx. Applies only while the order is still unresolved (pending or
+   * broadcast_unknown) on exactly this hash, so a stale or duplicate tracker / reconciler cannot overwrite a
+   * newer attempt or emit a second event. Returns true if this call made the transition.
    */
   finishTx(id: string, txHash: string, outcome: "settled" | "failed", extra: { failureCode?: string; settledAt?: number } = {}): boolean {
     const r = this.raw
       .prepare(
         `UPDATE orders SET status=?, failure_code=COALESCE(?, failure_code), settled_at=COALESCE(?, settled_at)
-         WHERE id=? AND status='pending' AND tx_hash=?`,
+         WHERE id=? AND status IN ${UNRESOLVED} AND tx_hash=?`,
       )
       .run(outcome, extra.failureCode ?? null, extra.settledAt ?? null, id.toLowerCase(), txHash);
     return r.changes === 1;
   }
 
-  setStatus(id: string, status: OrderStatus, extra?: { failureCode?: string; settledAt?: number }) {
-    this.raw
-      .prepare("UPDATE orders SET status=?, failure_code=COALESCE(?, failure_code), settled_at=COALESCE(?, settled_at) WHERE id=?")
-      .run(status, extra?.failureCode ?? null, extra?.settledAt ?? null, id.toLowerCase());
+  /** A tx we gave up on as `tx_not_mined` was mined after all: failed/expired -> settled, once. */
+  lateSettle(id: string, txHash: string, settledAt: number): boolean {
+    const r = this.raw
+      .prepare(
+        `UPDATE orders SET status='settled', failure_code=NULL, settled_at=?
+         WHERE id=? AND status IN ('failed','expired') AND failure_code='tx_not_mined' AND tx_hash=?`,
+      )
+      .run(settledAt, id.toLowerCase(), txHash);
+    return r.changes === 1;
+  }
+
+  /**
+   * Compare-and-set status change: applies only if the order is currently in one of `from`. Returns true
+   * if this call made the transition. Every status change outside the claim/tx paths goes through here.
+   */
+  transition(id: string, from: DbStatus[], to: DbStatus, extra?: { failureCode?: string; settledAt?: number }): boolean {
+    if (from.length === 0) return false;
+    const r = this.raw
+      .prepare(
+        `UPDATE orders SET status=?,
+           failure_code=CASE WHEN ?='settled' THEN NULL ELSE COALESCE(?, failure_code) END,
+           settled_at=COALESCE(?, settled_at)
+         WHERE id=? AND status IN (${from.map(() => "?").join(",")})`,
+      )
+      .run(to, to, extra?.failureCode ?? null, extra?.settledAt ?? null, id.toLowerCase(), ...from);
+    return r.changes === 1;
   }
 
   /**
    * Sum of amounts this payer has moved or is moving, relayed since `since` (unix seconds): settled
-   * orders, pending orders with a broadcast tx, and in-flight claims (pending, no tx yet) made at or after
-   * `inflightSince`. In-flight claims must count so concurrent relays cannot both pass the cap; an older
-   * claim with no tx is a crashed attempt that moved nothing and is ignored (releaseStaleClaims frees it).
+   * orders, orders with a signed tx still unresolved (pending / broadcast_unknown), and claims not yet
+   * signed that are either younger than `inflightSince` or held by a live owner (`liveOwners`). A claim
+   * still being worked on must keep counting however slow the RPC is; only a claim with no live owner and
+   * older than the grace is a crashed attempt that moved nothing (releaseStaleClaims frees it).
    * Rejected attempts are reverted to their previous state, so they never count.
    */
-  payerVolume(payer: string, since: number, inflightSince: number = since): bigint {
+  payerVolume(payer: string, since: number, inflightSince: number = since, liveOwners: string[] = []): bigint {
+    const owners = liveOwners.length ? `OR claim_owner IN (${liveOwners.map(() => "?").join(",")})` : "";
     const rows = this.raw
       .prepare(
         `SELECT amount FROM orders WHERE payer=? AND relayed_at>=? AND (
-           status='settled' OR (status='pending' AND (tx_hash IS NOT NULL OR relayed_at>=?)))`,
+           status='settled' OR (status IN ${UNRESOLVED} AND (tx_hash IS NOT NULL OR relayed_at>=? ${owners})))`,
       )
-      .all(payer.toLowerCase(), since, inflightSince) as { amount: string }[];
+      .all(payer.toLowerCase(), since, inflightSince, ...liveOwners) as { amount: string }[];
     return rows.reduce((a, r) => a + BigInt(r.amount), 0n);
+  }
+
+  // ---- reverts (payer-caused on-chain failures)
+  recordRevert(r: { txHash: string; orderId: string; payer: string; ts: number; wei: bigint }) {
+    this.raw
+      .prepare("INSERT OR IGNORE INTO reverts (tx_hash, order_id, payer, ts, wei) VALUES (?, ?, ?, ?, ?)")
+      .run(r.txHash, r.orderId.toLowerCase(), r.payer.toLowerCase(), r.ts, r.wei.toString());
+  }
+
+  /** Reverts caused by this payer since `since`: count, most recent time, and gas burnt (wei). */
+  revertStats(payer: string, since: number): { count: number; last: number | null; wei: bigint } {
+    const rows = this.raw.prepare("SELECT ts, wei FROM reverts WHERE payer=? AND ts>=?").all(payer.toLowerCase(), since) as { ts: number; wei: string }[];
+    return {
+      count: rows.length,
+      last: rows.length ? Math.max(...rows.map((r) => r.ts)) : null,
+      wei: rows.reduce((a, r) => a + BigInt(r.wei), 0n),
+    };
+  }
+
+  orderRevertCount(orderId: string, since: number): number {
+    return (this.raw.prepare("SELECT COUNT(*) c FROM reverts WHERE order_id=? AND ts>=?").get(orderId.toLowerCase(), since) as { c: number }).c;
+  }
+
+  // ---- process ownership (claims)
+  heartbeat(token: string, now: number) {
+    this.raw.prepare("INSERT INTO owners (token, heartbeat) VALUES (?, ?) ON CONFLICT(token) DO UPDATE SET heartbeat=excluded.heartbeat").run(token, now);
+  }
+
+  /** Owner tokens that heartbeated at or after `since`. */
+  liveOwners(since: number): string[] {
+    return (this.raw.prepare("SELECT token FROM owners WHERE heartbeat>=?").all(since) as { token: string }[]).map((r) => r.token);
+  }
+
+  removeOwner(token: string) {
+    this.raw.prepare("DELETE FROM owners WHERE token=?").run(token);
   }
 
   countByStatus(): Record<string, number> {
     const rows = this.raw.prepare("SELECT status, COUNT(*) c FROM orders GROUP BY status").all() as { status: string; c: number }[];
-    return Object.fromEntries(rows.map((r) => [r.status, r.c]));
+    const out: Record<string, number> = {};
+    // broadcast_unknown is internal; it is reported as pending.
+    for (const r of rows) {
+      const k = r.status === "broadcast_unknown" ? "pending" : r.status;
+      out[k] = (out[k] ?? 0) + r.c;
+    }
+    return out;
   }
 
   // ---- gas spend (loss budget)
@@ -330,6 +528,11 @@ export class Db {
 export const MAX_DELIVERY_ATTEMPTS = 7;
 /** A claim still without a tx hash after this many seconds is a dead attempt (crashed before broadcast). */
 export const CLAIM_GRACE_SECONDS = 120;
+/**
+ * A process whose heartbeat is older than this is presumed dead; its unsigned claims may be released.
+ * Live processes heartbeat on every relay and every reconcile tick (30 s by default).
+ */
+export const OWNER_TIMEOUT_SECONDS = 300;
 /** Backoff seconds after the Nth failed attempt (1-indexed). */
 export const DELIVERY_BACKOFF_SECONDS = [5, 30, 120, 600, 1800, 3600, 7200];
 
@@ -338,7 +541,7 @@ export function rowToOrder(r: OrderRow, ctx: { router: string; token: string; ch
     id: r.id as `0x${string}`,
     merchantId: r.merchant_id as `0x${string}`,
     amount: r.amount,
-    status: r.status,
+    status: r.status === "broadcast_unknown" ? "pending" : r.status,
     reference: r.reference ?? undefined,
     payout: r.payout,
     fee: r.fee,

@@ -1,7 +1,7 @@
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
 import { buildCheckoutAuthorization, type Order } from "@quietpay/shared";
-import type { ChainPort, MerchantRegistry, PayArgs, TxReceipt } from "../src/chain.js";
+import type { ChainPort, MerchantRegistry, PayArgs, SignedTx, TxReceipt } from "../src/chain.js";
 import type { Config } from "../src/config.js";
 import { Db } from "../src/db.js";
 import { RelayerService } from "../src/service.js";
@@ -23,8 +23,25 @@ export class FakeChain implements ChainPort {
   gas = 150_000n;
   receiptStatus: "success" | "reverted" = "success";
   holdReceipt = false;
+  /** Pay calls the node accepted (one entry per distinct tx, however often its bytes are re-sent). */
   sent: PayArgs[] = [];
+  /** Every tx signed (accepted or not). */
+  signed: SignedTx[] = [];
   simulations = 0;
+  /**
+   * How sendRawTx behaves: "ok"; "reject" (throws, the node never saw the tx); "accept-then-throw" (the
+   * node accepted it but the client errored, e.g. a timeout); "hang" (never returns: a crash mid-send).
+   */
+  sendMode: "ok" | "reject" | "accept-then-throw" | "hang" = "ok";
+  sendCalls = 0;
+  /** Hashes the node knows (mempool or mined). */
+  known = new Set<Hex>();
+  /** Per-hash receipt overrides. */
+  receipts = new Map<Hex, TxReceipt>();
+  nextNonce = 0;
+  confirmedNonce = 0;
+  resyncs = 0;
+  private byRaw = new Map<Hex, { hash: Hex; args: PayArgs; nonce: number }>();
   private resolveReceipt: ((r: TxReceipt) => void) | null = null;
 
   async getMerchant() {
@@ -36,7 +53,7 @@ export class FakeChain implements ChainPort {
   async isSettled() {
     return this.settledOnChain;
   }
-  async simulatePay() {
+  async simulatePay(_args?: PayArgs) {
     this.simulations += 1;
     if (this.simulateFails) throw new Error("execution reverted: invalid signature");
     return this.gas;
@@ -44,14 +61,64 @@ export class FakeChain implements ChainPort {
   async getGasPrice() {
     return this.gasPrice;
   }
-  async sendPay(args: PayArgs) {
-    this.sent.push(args);
-    return ("0x" + this.sent.length.toString(16).padStart(64, "0")) as Hex;
+  async signPay(args: PayArgs): Promise<SignedTx> {
+    const nonce = this.nextNonce++;
+    const i = this.signed.length + 1;
+    const hash = ("0x" + i.toString(16).padStart(64, "0")) as Hex;
+    const raw = ("0xf0" + i.toString(16).padStart(8, "0")) as Hex;
+    this.byRaw.set(raw, { hash, args, nonce });
+    const s = { hash, raw, nonce };
+    this.signed.push(s);
+    return s;
   }
-  waitForReceipt(): Promise<TxReceipt> {
-    const r: TxReceipt = { status: this.receiptStatus, gasUsed: this.gas, effectiveGasPrice: this.gasPrice, blockNumber: 1n };
+  async sendRawTx(raw: Hex): Promise<Hex> {
+    this.sendCalls += 1;
+    const t = this.byRaw.get(raw);
+    if (!t) throw new Error("rlp: invalid transaction");
+    switch (this.sendMode) {
+      case "reject":
+        throw new Error("ECONNRESET rpc");
+      case "accept-then-throw":
+        this.accept(t);
+        throw new Error("The request took too long to respond.");
+      case "hang":
+        return new Promise<Hex>(() => undefined);
+      default:
+        this.accept(t);
+        return t.hash;
+    }
+  }
+  private accept(t: { hash: Hex; args: PayArgs }) {
+    if (this.known.has(t.hash)) return;
+    this.known.add(t.hash);
+    this.sent.push(t.args);
+  }
+  /** The node forgets a tx (evicted from the mempool). */
+  drop(hash: Hex) {
+    this.known.delete(hash);
+  }
+  resyncNonce() {
+    this.resyncs += 1;
+  }
+  private receiptFor(hash?: Hex): TxReceipt {
+    return (hash && this.receipts.get(hash)) || { status: this.receiptStatus, gasUsed: this.gas, effectiveGasPrice: this.gasPrice, blockNumber: 1n };
+  }
+  waitForReceipt(hash?: Hex): Promise<TxReceipt> {
+    // A hash the node never saw times out (a real node would after 120 s).
+    if (hash && !this.known.has(hash)) return Promise.reject(new Error("Timed out while waiting for transaction"));
+    const r = this.receiptFor(hash);
     if (!this.holdReceipt) return Promise.resolve(r);
     return new Promise((res) => (this.resolveReceipt = () => res(r)));
+  }
+  async getReceipt(hash: Hex): Promise<TxReceipt | null> {
+    if (this.holdReceipt || !this.known.has(hash)) return null;
+    return this.receiptFor(hash);
+  }
+  async hasTransaction(hash: Hex) {
+    return this.known.has(hash);
+  }
+  async getConfirmedNonce() {
+    return this.confirmedNonce;
   }
   release() {
     this.resolveReceipt?.({} as TxReceipt);
@@ -81,6 +148,14 @@ export function makeCfg(over: Partial<Config> = {}): Config {
     tokenDomain: { name: "Tether USD", version: "1" },
     explorerBaseUrl: "https://explorer.test",
     port: 0,
+    // Production default is 60 (MIN_VALID_SECONDS). Tests default to 0 so the other guards can be
+    // exercised in isolation; the minimum window has its own tests with the production value.
+    minValidSeconds: 0,
+    revertedPayerMinValidSeconds: 120,
+    maxRevertsPerDay: 2,
+    payerLossSharePercent: 25,
+    txMaxAgeSeconds: 1800,
+    reconcileIntervalSeconds: 30,
     ...over,
   };
 }
@@ -90,7 +165,7 @@ export function makeEnv(cfgOver: Partial<Config> = {}) {
   const chain = new FakeChain();
   const db = new Db(":memory:");
   const cfg = makeCfg(cfgOver);
-  const svc = new RelayerService({ cfg, db, chain, now: () => clock.t });
+  const svc = new RelayerService({ cfg, db, chain, now: () => clock.t, broadcastRetryMs: 0 });
   return { clock, chain, db, cfg, svc };
 }
 

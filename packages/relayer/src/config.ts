@@ -40,6 +40,21 @@ const EnvSchema = z.object({
   TOKEN_DOMAIN_VERSION: z.string().default("1"),
   EXPLORER_BASE_URL: z.string().url().default("https://testnet.whitechain.io"),
   PORT: z.coerce.number().int().default(8787),
+  /**
+   * Seconds that must remain before the payer's validBefore when the relayer broadcasts. A window that
+   * ends sooner can expire before inclusion and revert at the relayer's cost.
+   */
+  MIN_VALID_SECONDS: z.coerce.number().int().nonnegative().default(60),
+  /** A payer who caused an on-chain revert in the last 24h must leave at least this many seconds. */
+  REVERTED_PAYER_MIN_VALID_SECONDS: z.coerce.number().int().nonnegative().default(120),
+  /** Refuse a payer, and separately an order, after this many on-chain reverts in a rolling 24h. */
+  MAX_REVERTS_PER_DAY: z.coerce.number().int().positive().default(2),
+  /** Percent of LOSS_BUDGET_WBT_PER_HOUR one payer's reverted transactions may consume in a rolling hour. */
+  PAYER_LOSS_SHARE_PERCENT: z.coerce.number().int().min(1).max(100).default(25),
+  /** A broadcast tx with no receipt after this long is rebroadcast once from its persisted bytes, then failed. */
+  TX_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(1800),
+  /** How often the reconciliation loop re-checks every broadcast, unresolved transaction. */
+  RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
 });
 
 export interface Config {
@@ -61,6 +76,12 @@ export interface Config {
   tokenDomain: { name: string; version: string };
   explorerBaseUrl: string;
   port: number;
+  minValidSeconds: number;
+  revertedPayerMinValidSeconds: number;
+  maxRevertsPerDay: number;
+  payerLossSharePercent: number;
+  txMaxAgeSeconds: number;
+  reconcileIntervalSeconds: number;
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -92,5 +113,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     tokenDomain: { name: e.TOKEN_DOMAIN_NAME, version: e.TOKEN_DOMAIN_VERSION },
     explorerBaseUrl: e.EXPLORER_BASE_URL.replace(/\/$/, ""),
     port: e.PORT,
+    minValidSeconds: e.MIN_VALID_SECONDS,
+    revertedPayerMinValidSeconds: e.REVERTED_PAYER_MIN_VALID_SECONDS,
+    maxRevertsPerDay: e.MAX_REVERTS_PER_DAY,
+    payerLossSharePercent: e.PAYER_LOSS_SHARE_PERCENT,
+    txMaxAgeSeconds: e.TX_MAX_AGE_SECONDS,
+    reconcileIntervalSeconds: e.RECONCILE_INTERVAL_SECONDS,
   };
 }
