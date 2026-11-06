@@ -20,3 +20,4 @@ Earlier rounds on the relayer, widget and demo store are in `pentest-round-1.md`
 | L-R11 | operator | first-refund.mjs, fund guard, qualify-check | Opus | refund script accepted any router; fund guard allowed contract recipients; qualify-check missed .env.* and `KEY: "0x.."` | Low x4 | fixed |
 | T1a-c | logic | indexer, verifier | finish run | RefundSignerChanged absent from hash; lax CSV; --rpc2 logs-only | Low x3 | fixed (hashVersion 2, strict cells, rpc2 covers head/timestamps/transfers) |
 | L2-R2 | economics, gas | PaymentRouter | Opus read-only | payer can make relayer burn >2x gas via post-simulation transfer/cancel; dust refunds; no maxRelayFee setter | Medium/Low | accepted, pinned in ExpectedLimitations.t.sol, off-chain bounds |
+| T3-R2 | economics, DoS | indexer, verifier | Opus | page never regrows; catch-up loses progress; per-row header calls; quadratic compare; forged range scan; non-atomic export | Medium x3, Low x3 | fixed |
