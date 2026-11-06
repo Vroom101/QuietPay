@@ -51,8 +51,25 @@ const EnvSchema = z.object({
   MAX_REVERTS_PER_DAY: z.coerce.number().int().positive().default(2),
   /** Percent of LOSS_BUDGET_WBT_PER_HOUR one payer's reverted transactions may consume in a rolling hour. */
   PAYER_LOSS_SHARE_PERCENT: z.coerce.number().int().min(1).max(100).default(25),
-  /** A broadcast tx with no receipt after this long is rebroadcast once from its persisted bytes, then failed. */
+  /**
+   * Fallback age limit for a broadcast tx with no receipt (rebroadcast once while its authorization is still
+   * valid, then failed). Normally a tx is resolved at its authorization's validBefore first. Must be at least
+   * MIN_TX_MAX_AGE_SECONDS (600, the longest authorization window): a shorter value can fail an order whose
+   * tx is still valid and may still land.
+   */
   TX_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(1800),
+  /**
+   * Percent of LOSS_BUDGET_WBT_PER_HOUR that reverts by first-time payers (no prior successful settlement)
+   * may consume of the budget shared with everyone else. Losses above it never pause other payers.
+   */
+  FIRST_TIME_PAYER_LOSS_SHARE_PERCENT: z.coerce.number().int().min(0).max(100).default(5),
+  /**
+   * Hard ceiling, in percent of LOSS_BUDGET_WBT_PER_HOUR, on gas lost to reverts by first-time payers in a
+   * rolling hour. Once reached, first-time payers are refused (repeat payers are unaffected) until it frees up.
+   */
+  FIRST_TIME_PAYER_LOSS_CAP_PERCENT: z.coerce.number().int().min(0).max(1000).default(100),
+  /** Distinct first-time payer addresses one client IP may relay for in a rolling hour. */
+  MAX_NEW_PAYERS_PER_IP_PER_HOUR: z.coerce.number().int().positive().default(10),
   /** How often the reconciliation loop re-checks every broadcast, unresolved transaction. */
   RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
 });
@@ -82,10 +99,21 @@ export interface Config {
   payerLossSharePercent: number;
   txMaxAgeSeconds: number;
   reconcileIntervalSeconds: number;
+  firstTimePayerLossSharePercent: number;
+  firstTimePayerLossCapPercent: number;
+  maxNewPayersPerIpPerHour: number;
 }
+
+/** Lower bound for TX_MAX_AGE_SECONDS: the longest authorization window (10 min). */
+export const MIN_TX_MAX_AGE_SECONDS = 600;
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const e = EnvSchema.parse(env);
+  if (e.TX_MAX_AGE_SECONDS < MIN_TX_MAX_AGE_SECONDS) {
+    throw new Error(
+      `TX_MAX_AGE_SECONDS must be at least ${MIN_TX_MAX_AGE_SECONDS} (got ${e.TX_MAX_AGE_SECONDS}): a shorter value fails orders whose tx is still valid and may still be mined.`,
+    );
+  }
   const apiKeys = new Map<string, `0x${string}`>();
   for (const pair of e.MERCHANT_API_KEYS.split(",")) {
     const [k, m] = pair.trim().split(":");
@@ -119,5 +147,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     payerLossSharePercent: e.PAYER_LOSS_SHARE_PERCENT,
     txMaxAgeSeconds: e.TX_MAX_AGE_SECONDS,
     reconcileIntervalSeconds: e.RECONCILE_INTERVAL_SECONDS,
+    firstTimePayerLossSharePercent: e.FIRST_TIME_PAYER_LOSS_SHARE_PERCENT,
+    firstTimePayerLossCapPercent: e.FIRST_TIME_PAYER_LOSS_CAP_PERCENT,
+    maxNewPayersPerIpPerHour: e.MAX_NEW_PAYERS_PER_IP_PER_HOUR,
   };
 }

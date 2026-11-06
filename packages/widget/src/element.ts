@@ -1,7 +1,18 @@
 import { LitElement, css, html, nothing } from "lit";
 import { formatUsdt, parseUsdt, type Order } from "@quietpay/shared";
 import type { PrivateKeyAccount } from "viem/accounts";
-import { WidgetError, fetchOrder, pollOrder, relayPay, signCheckout, verifyCheckout, type ExpectedCheckout } from "./client.js";
+import {
+  WidgetError,
+  fetchOrder,
+  pinDisplayedOrder,
+  pollOrder,
+  relayPay,
+  signCheckout,
+  verifyCheckout,
+  verifyDisplayedOrder,
+  type DisplayedOrder,
+  type ExpectedCheckout,
+} from "./client.js";
 import { KeystoreError, getOrCreateAccount } from "./keystore.js";
 import { GENERIC_MESSAGE, TIMEOUT_MESSAGE, messageForCode } from "./messages.js";
 
@@ -64,6 +75,14 @@ export class QuietpayCheckout extends LitElement {
   declare step: string;
   declare errorMessage: string;
   declare errorCode: string;
+
+  /**
+   * The order exactly as it was first loaded and shown to the payer. Set by load() only, never from host attributes
+   * or from the fetch made at Pay time; pay() refuses to sign anything that differs from it.
+   */
+  #displayed: Readonly<DisplayedOrder> | undefined;
+  /** Increments on every load() so a slow, superseded load cannot pin or display a stale order. */
+  #loadSeq = 0;
 
   constructor() {
     super();
@@ -163,11 +182,18 @@ export class QuietpayCheckout extends LitElement {
 
   async load() {
     if (!this.orderId || !this.relayerUrl) return;
+    const seq = ++this.#loadSeq;
+    this.#displayed = undefined;
     this.view = "loading";
     try {
       this.account = await getOrCreateAccount();
-      this.showOrder(await fetchOrder(this.relayerUrl, this.orderId));
+      const order = await fetchOrder(this.relayerUrl, this.orderId);
+      if (seq !== this.#loadSeq) return;
+      // Pin what is about to be displayed; this is what the payer agrees to when clicking Pay.
+      this.#displayed = pinDisplayedOrder(order);
+      this.showOrder(order);
     } catch (e) {
+      if (seq !== this.#loadSeq) return;
       this.fail(e);
     }
   }
@@ -179,10 +205,13 @@ export class QuietpayCheckout extends LitElement {
       this.step = "sending";
       const account = this.account ?? (await getOrCreateAccount());
       this.account = account;
-      // Fresh copy of the order so the amount we sign is what the relayer holds now.
+      // The order the payer saw and clicked Pay on. Without it there is nothing the payer agreed to.
+      const displayed = this.#displayed;
+      if (!displayed) throw new WidgetError("checkout_display_mismatch", "checkout refused: no displayed order to pay");
+      // Fresh copy of the order so the status is current. Its identity must still be the displayed one (below).
       const order = await fetchOrder(this.relayerUrl, this.orderId);
-      this.order = order;
       if (order.status === "pending") {
+        this.order = order;
         this.step = "confirming";
         this.showOrder(await pollOrder(this.relayerUrl, this.orderId, { onUpdate: (o) => (this.order = o) }));
         return;
@@ -191,12 +220,16 @@ export class QuietpayCheckout extends LitElement {
         this.showOrder(order);
         return;
       }
+      // The relayer may change status/expiry, but never what was displayed: id, merchant, amount, fee, payout, nonce,
+      // chain, token, router, domain. Any difference is refused before signing and before the screen is updated.
+      verifyDisplayedOrder(order, displayed);
+      this.order = order;
       // Never sign what the relayer hands us without checking it: chain, token, router, domain, amount, fee, payout
       // and the nonce recomputed locally. A refusal throws WidgetError("checkout_*") and nothing is signed.
       const expected = this.expectedCheckout();
       verifyCheckout(order, expected);
       this.step = "signing";
-      const req = await signCheckout(account, order, undefined, { expected });
+      const req = await signCheckout(account, order, undefined, { expected, displayed });
       this.step = "sending";
       await relayPay(this.relayerUrl, req);
       this.step = "confirming";

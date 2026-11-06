@@ -34,6 +34,11 @@ export interface TxReceipt {
   gasUsed: bigint;
   effectiveGasPrice: bigint;
   blockNumber: bigint;
+  /**
+   * Unix seconds of the block that included the tx. The viem port fills it for reverted receipts (used to
+   * tell a payer-caused revert from an Expired revert caused by the relayer delaying the tx). Optional.
+   */
+  blockTimestamp?: bigint;
 }
 
 /** A pay transaction signed locally. Nothing has been sent yet; `nonce` is reserved by the NonceManager. */
@@ -75,7 +80,17 @@ export interface ChainPort {
   /** Number of transactions from the relayer account included in the latest block (its mined nonce). */
   getConfirmedNonce(): Promise<number>;
   getBlockNumber(): Promise<bigint>;
+  /**
+   * Signs (does not send) a zero-value self-transfer at an EXPLICIT nonce, outside the NonceManager: used
+   * to fill a nonce whose pay tx never reached the node, or to replace (cancel) a pay tx whose
+   * authorization has expired. `gasPrice` must beat the tx it replaces by the node's replacement bump.
+   * Optional: without it the relayer can only wait for the nonce to be consumed or time out.
+   */
+  signCancel?(nonce: number, gasPrice: bigint): Promise<SignedTx>;
 }
+
+/** Gas of a plain value transfer (the cancel / gap-filling self-transfer). */
+export const CANCEL_GAS = 21_000n;
 
 /**
  * Hands out sequential nonces. A nonce is consumed when `fn` resolves (the tx was signed and handed to
@@ -129,12 +144,18 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
   const router = cfg.router;
   const argList = (a: PayArgs) =>
     [a.merchantId, a.orderId, a.payer, a.value, a.fee, a.validAfter, a.validBefore, a.signature] as const;
-  const toReceipt = (r: { status: "success" | "reverted"; gasUsed: bigint; effectiveGasPrice: bigint; blockNumber: bigint }): TxReceipt => ({
-    status: r.status,
-    gasUsed: r.gasUsed,
-    effectiveGasPrice: r.effectiveGasPrice,
-    blockNumber: r.blockNumber,
-  });
+  const toReceipt = async (r: { status: "success" | "reverted"; gasUsed: bigint; effectiveGasPrice: bigint; blockNumber: bigint }): Promise<TxReceipt> => {
+    const out: TxReceipt = { status: r.status, gasUsed: r.gasUsed, effectiveGasPrice: r.effectiveGasPrice, blockNumber: r.blockNumber };
+    if (r.status === "reverted") {
+      // Only reverts need the block time (revert attribution); a failed lookup just leaves it unknown.
+      try {
+        out.blockTimestamp = (await pub.getBlock({ blockNumber: r.blockNumber })).timestamp;
+      } catch {
+        /* unknown */
+      }
+    }
+    return out;
+  };
 
   return {
     relayerAddress: account.address,
@@ -180,12 +201,16 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
     resyncNonce() {
       nonces.resync();
     },
+    async signCancel(nonce, gasPrice) {
+      const raw = await account.signTransaction({ type: "legacy", chainId: cfg.chainId, to: account.address, value: 0n, gas: CANCEL_GAS, gasPrice, nonce });
+      return { hash: keccak256(raw), raw, nonce };
+    },
     async waitForReceipt(hash) {
       return toReceipt(await pub.waitForTransactionReceipt({ hash, timeout: 120_000 }));
     },
     async getReceipt(hash) {
       try {
-        return toReceipt(await pub.getTransactionReceipt({ hash }));
+        return await toReceipt(await pub.getTransactionReceipt({ hash }));
       } catch (e) {
         if (e instanceof TransactionReceiptNotFoundError) return null;
         throw e;

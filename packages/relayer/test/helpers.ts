@@ -41,7 +41,9 @@ export class FakeChain implements ChainPort {
   nextNonce = 0;
   confirmedNonce = 0;
   resyncs = 0;
-  private byRaw = new Map<Hex, { hash: Hex; args: PayArgs; nonce: number }>();
+  /** Zero-value self-transfers signed to fill or cancel a nonce (signCancel). */
+  cancels: (SignedTx & { gasPrice: bigint })[] = [];
+  private byRaw = new Map<Hex, { hash: Hex; args?: PayArgs; nonce: number }>();
   private resolveReceipt: ((r: TxReceipt) => void) | null = null;
 
   async getMerchant() {
@@ -71,6 +73,15 @@ export class FakeChain implements ChainPort {
     this.signed.push(s);
     return s;
   }
+  async signCancel(nonce: number, gasPrice: bigint): Promise<SignedTx> {
+    const i = this.cancels.length + 1;
+    const hash = ("0xcc" + i.toString(16).padStart(62, "0")) as Hex;
+    const raw = ("0xcc" + i.toString(16).padStart(8, "0")) as Hex;
+    this.byRaw.set(raw, { hash, nonce });
+    const s = { hash, raw, nonce };
+    this.cancels.push({ ...s, gasPrice });
+    return s;
+  }
   async sendRawTx(raw: Hex): Promise<Hex> {
     this.sendCalls += 1;
     const t = this.byRaw.get(raw);
@@ -88,10 +99,10 @@ export class FakeChain implements ChainPort {
         return t.hash;
     }
   }
-  private accept(t: { hash: Hex; args: PayArgs }) {
+  private accept(t: { hash: Hex; args?: PayArgs }) {
     if (this.known.has(t.hash)) return;
     this.known.add(t.hash);
-    this.sent.push(t.args);
+    if (t.args) this.sent.push(t.args);
   }
   /** The node forgets a tx (evicted from the mempool). */
   drop(hash: Hex) {
@@ -156,6 +167,9 @@ export function makeCfg(over: Partial<Config> = {}): Config {
     payerLossSharePercent: 25,
     txMaxAgeSeconds: 1800,
     reconcileIntervalSeconds: 30,
+    firstTimePayerLossSharePercent: 5,
+    firstTimePayerLossCapPercent: 100,
+    maxNewPayersPerIpPerHour: 10,
     ...over,
   };
 }

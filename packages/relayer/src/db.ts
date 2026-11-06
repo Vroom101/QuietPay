@@ -46,7 +46,30 @@ export interface OrderRow {
   tx_signed_at?: number | null;
   /** When reconciliation re-sent raw_tx (it does so at most once per tx). */
   rebroadcast_at?: number | null;
+  /**
+   * Hash of the zero-value self-transfer signed at tx_nonce to fill the nonce (the pay tx never reached the
+   * node) or to cancel the pay tx (its authorization expired). Its bytes are in tx_attempts.
+   */
+  cancel_hash?: string | null;
+  /** When the cancel was first sent (unix seconds). */
+  cancel_at?: number | null;
+  /** failure_code applied once the cancel has consumed the nonce (tx_not_sent or tx_not_mined). */
+  cancel_code?: string | null;
 }
+
+/** One signed tx of an order: every pay attempt (also earlier, superseded ones) and every cancel. */
+export interface TxAttemptRow {
+  tx_hash: string;
+  order_id: string;
+  kind: "pay" | "cancel";
+  nonce: number | null;
+  gas_price: string | null;
+  raw: string | null;
+  signed_at: number | null;
+}
+
+/** Failure codes of orders whose tx was never seen to execute: re-checked for a late receipt. */
+export const LATE_CHECK_CODES = ["tx_not_mined", "tx_dropped", "tx_not_sent"] as const;
 
 interface ClaimSnapshot {
   status: DbStatus;
@@ -61,6 +84,9 @@ interface ClaimSnapshot {
   tx_nonce?: number | null;
   tx_signed_at?: number | null;
   rebroadcast_at?: number | null;
+  cancel_hash?: string | null;
+  cancel_at?: number | null;
+  cancel_code?: string | null;
 }
 
 export type ClaimResult = "ok" | "over_cap" | "unavailable";
@@ -136,6 +162,17 @@ export class Db {
       CREATE INDEX IF NOT EXISTS idx_reverts_payer ON reverts(payer, ts);
       CREATE INDEX IF NOT EXISTS idx_reverts_order ON reverts(order_id, ts);
       CREATE TABLE IF NOT EXISTS owners (token TEXT PRIMARY KEY, heartbeat INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS tx_attempts (
+        tx_hash TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'pay',
+        nonce INTEGER,
+        gas_price TEXT,
+        raw TEXT,
+        signed_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_attempts_order ON tx_attempts(order_id);
+      CREATE INDEX IF NOT EXISTS idx_attempts_nonce ON tx_attempts(nonce);
     `);
     this.migrate();
   }
@@ -160,9 +197,25 @@ export class Db {
       ["tx_nonce", "INTEGER"],
       ["tx_signed_at", "INTEGER"],
       ["rebroadcast_at", "INTEGER"],
+      ["cancel_hash", "TEXT"],
+      ["cancel_at", "INTEGER"],
+      ["cancel_code", "TEXT"],
     ] as const) {
       if (!cols.includes(name)) this.raw.exec(`ALTER TABLE orders ADD COLUMN ${name} ${type}`);
     }
+    const revertCols = (this.raw.prepare("PRAGMA table_info(reverts)").all() as { name: string }[]).map((c) => c.name);
+    if (!revertCols.includes("first_time")) this.raw.exec("ALTER TABLE reverts ADD COLUMN first_time INTEGER NOT NULL DEFAULT 0");
+    // Every order's current tx is part of its attempt history (rows written before tx_attempts existed).
+    if (this.getSetting("tx_attempts_backfilled") !== "1") {
+      this.raw.transaction(() => {
+        this.raw.exec(
+          `INSERT OR IGNORE INTO tx_attempts (tx_hash, order_id, kind, nonce, raw, signed_at)
+           SELECT tx_hash, id, 'pay', tx_nonce, raw_tx, COALESCE(tx_signed_at, relayed_at) FROM orders WHERE tx_hash IS NOT NULL`,
+        );
+        this.setSetting("tx_attempts_backfilled", "1");
+      })();
+    }
+    this.raw.exec("CREATE INDEX IF NOT EXISTS idx_reverts_first ON reverts(first_time, ts)");
     this.raw.exec("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)");
     this.raw.exec("CREATE INDEX IF NOT EXISTS idx_orders_payer_relayed ON orders(payer, relayed_at)");
   }
@@ -199,6 +252,14 @@ export class Db {
   /** Every order with a signed tx whose outcome is not known yet: pending or broadcast_unknown. */
   unresolvedTxs(): OrderRow[] {
     return this.raw.prepare(`SELECT * FROM orders WHERE status IN ${UNRESOLVED} AND tx_hash IS NOT NULL`).all() as OrderRow[];
+  }
+
+  /** True if some order is unresolved on a tx signed at a nonce above `nonce` (it is queued behind it). */
+  hasUnresolvedAbove(nonce: number): boolean {
+    return (
+      this.raw.prepare(`SELECT 1 FROM orders WHERE status IN ${UNRESOLVED} AND tx_hash IS NOT NULL AND tx_nonce > ? LIMIT 1`).get(nonce) !==
+      undefined
+    );
   }
 
   /** Orders failed as `tx_not_mined` (signed since `since`): their tx may still land, so they are re-checked. */
@@ -248,11 +309,16 @@ export class Db {
         tx_nonce: row.tx_nonce ?? null,
         tx_signed_at: row.tx_signed_at ?? null,
         rebroadcast_at: row.rebroadcast_at ?? null,
+        cancel_hash: row.cancel_hash ?? null,
+        cancel_at: row.cancel_at ?? null,
+        cancel_code: row.cancel_code ?? null,
       };
+      // The previous attempt's hash stays in tx_attempts, so a late-landing earlier tx still settles the order.
       const r = this.raw
         .prepare(
           `UPDATE orders SET status='pending', payer=?, signature=?, valid_after=?, valid_before=?, relayed_at=?,
              tx_hash=NULL, raw_tx=NULL, tx_nonce=NULL, tx_signed_at=NULL, rebroadcast_at=NULL, failure_code=NULL,
+             cancel_hash=NULL, cancel_at=NULL, cancel_code=NULL,
              claim_prev=?, claim_owner=?
            WHERE id=? AND status IN ('created','failed')`,
         )
@@ -296,7 +362,8 @@ export class Db {
       const r = this.raw
         .prepare(
           `UPDATE orders SET status=?, payer=?, signature=?, valid_after=?, valid_before=?, tx_hash=?, relayed_at=?,
-             failure_code=?, raw_tx=?, tx_nonce=?, tx_signed_at=?, rebroadcast_at=?, claim_prev=NULL, claim_owner=NULL
+             failure_code=?, raw_tx=?, tx_nonce=?, tx_signed_at=?, rebroadcast_at=?, cancel_hash=?, cancel_at=?, cancel_code=?,
+             claim_prev=NULL, claim_owner=NULL
            WHERE id=? AND status='pending' AND tx_hash IS NULL AND claim_owner IS ?`,
         )
         .run(
@@ -312,6 +379,9 @@ export class Db {
           p.tx_nonce ?? null,
           p.tx_signed_at ?? null,
           p.rebroadcast_at ?? null,
+          p.cancel_hash ?? null,
+          p.cancel_at ?? null,
+          p.cancel_code ?? null,
           row.id,
           row.claim_owner ?? null,
         );
@@ -332,14 +402,23 @@ export class Db {
    * pending, unsigned claim held by `owner` (null matches a legacy ownerless claim), so a process whose
    * claim was released and taken over cannot attach (or then send) a second tx. Returns true on success.
    */
-  persistSignedTx(id: string, owner: string | null, tx: { hash: string; raw: string; nonce: number }, now: number): boolean {
-    const r = this.raw
-      .prepare(
-        `UPDATE orders SET tx_hash=?, raw_tx=?, tx_nonce=?, tx_signed_at=?, rebroadcast_at=NULL, claim_prev=NULL
-         WHERE id=? AND status='pending' AND tx_hash IS NULL AND claim_owner IS ?`,
-      )
-      .run(tx.hash, tx.raw, tx.nonce, now, id.toLowerCase(), owner);
-    return r.changes === 1;
+  persistSignedTx(
+    id: string,
+    owner: string | null,
+    tx: { hash: string; raw: string; nonce: number; gasPrice?: bigint },
+    now: number,
+  ): boolean {
+    return this.raw.transaction((): boolean => {
+      const r = this.raw
+        .prepare(
+          `UPDATE orders SET tx_hash=?, raw_tx=?, tx_nonce=?, tx_signed_at=?, rebroadcast_at=NULL, claim_prev=NULL
+           WHERE id=? AND status='pending' AND tx_hash IS NULL AND claim_owner IS ?`,
+        )
+        .run(tx.hash, tx.raw, tx.nonce, now, id.toLowerCase(), owner);
+      if (r.changes !== 1) return false;
+      this.insertAttempt({ tx_hash: tx.hash, order_id: id, kind: "pay", nonce: tx.nonce, gas_price: tx.gasPrice?.toString() ?? null, raw: tx.raw, signed_at: now });
+      return true;
+    }).immediate();
   }
 
   /** Records a tx hash on an owned, unsigned claim (no raw bytes). Prefer persistSignedTx. */
@@ -347,7 +426,87 @@ export class Db {
     const r = this.raw
       .prepare("UPDATE orders SET tx_hash=?, claim_prev=NULL WHERE id=? AND status='pending' AND tx_hash IS NULL AND claim_owner IS ?")
       .run(txHash, id.toLowerCase(), owner);
+    if (r.changes === 1) this.insertAttempt({ tx_hash: txHash, order_id: id, kind: "pay", nonce: null, gas_price: null, raw: null, signed_at: null });
     return r.changes === 1;
+  }
+
+  // ---- tx attempt history (pay attempts and cancels)
+  private insertAttempt(a: TxAttemptRow) {
+    this.raw
+      .prepare("INSERT OR IGNORE INTO tx_attempts (tx_hash, order_id, kind, nonce, gas_price, raw, signed_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(a.tx_hash, a.order_id.toLowerCase(), a.kind, a.nonce, a.gas_price, a.raw, a.signed_at);
+  }
+
+  getAttempt(txHash: string): TxAttemptRow | undefined {
+    return this.raw.prepare("SELECT * FROM tx_attempts WHERE tx_hash=?").get(txHash) as TxAttemptRow | undefined;
+  }
+
+  /** Every pay tx ever signed for this order, oldest first (includes superseded earlier attempts). */
+  payAttempts(orderId: string): TxAttemptRow[] {
+    return this.raw
+      .prepare("SELECT * FROM tx_attempts WHERE order_id=? AND kind='pay' ORDER BY COALESCE(signed_at, 0), rowid")
+      .all(orderId.toLowerCase()) as TxAttemptRow[];
+  }
+
+  /**
+   * True if another tx of ours (a pay attempt of a different hash, on an order that is still unresolved)
+   * was signed at this nonce: after a nonce resync that tx may be the one filling it, and a cancel at the
+   * same nonce would replace an innocent payment.
+   */
+  nonceTakenByOther(nonce: number, exceptHash: string): boolean {
+    const r = this.raw
+      .prepare(
+        `SELECT 1 FROM tx_attempts a JOIN orders o ON o.id = a.order_id
+         WHERE a.nonce=? AND a.tx_hash<>? AND a.kind='pay' AND o.status IN ${UNRESOLVED} AND o.tx_hash = a.tx_hash LIMIT 1`,
+      )
+      .get(nonce, exceptHash);
+    return r !== undefined;
+  }
+
+  /**
+   * Persists a signed cancel / gap-filling tx for an unresolved order on exactly `txHash` (before it is
+   * sent). Applies once per order attempt. Returns true if recorded.
+   */
+  recordCancel(id: string, txHash: string, cancel: { hash: string; raw: string; nonce: number; gasPrice: bigint }, code: string, now: number): boolean {
+    return this.raw.transaction((): boolean => {
+      const r = this.raw
+        .prepare(`UPDATE orders SET cancel_hash=?, cancel_at=?, cancel_code=? WHERE id=? AND status IN ${UNRESOLVED} AND tx_hash=? AND cancel_hash IS NULL`)
+        .run(cancel.hash, now, code, id.toLowerCase(), txHash);
+      if (r.changes !== 1) return false;
+      this.insertAttempt({ tx_hash: cancel.hash, order_id: id, kind: "cancel", nonce: cancel.nonce, gas_price: cancel.gasPrice.toString(), raw: cancel.raw, signed_at: now });
+      return true;
+    }).immediate();
+  }
+
+  /**
+   * Settles an order on one of its own pay attempts (`txHash` must be the current tx or an earlier attempt of
+   * this order), from any not-yet-settled state: a receipt with status success for a pay tx of this order
+   * proves it was paid on chain. The order's tx_hash becomes the settling hash. Returns true once.
+   */
+  settleAttempt(id: string, txHash: string, settledAt: number): boolean {
+    const r = this.raw
+      .prepare(
+        `UPDATE orders SET status='settled', tx_hash=?, failure_code=NULL, settled_at=?
+         WHERE id=? AND status IN ('pending','broadcast_unknown','failed','expired')
+           AND (tx_hash=? OR EXISTS (SELECT 1 FROM tx_attempts a WHERE a.order_id=orders.id AND a.tx_hash=? AND a.kind='pay'))`,
+      )
+      .run(txHash, settledAt, id.toLowerCase(), txHash, txHash);
+    return r.changes === 1;
+  }
+
+  /** Orders failed (or since expired) because their tx was not seen to execute, signed since `since`. */
+  lateCheckFailures(since: number): OrderRow[] {
+    return this.raw
+      .prepare(
+        `SELECT * FROM orders WHERE status IN ('failed','expired') AND failure_code IN (${LATE_CHECK_CODES.map(() => "?").join(",")})
+           AND tx_hash IS NOT NULL AND COALESCE(tx_signed_at, relayed_at, 0)>=?`,
+      )
+      .all(...LATE_CHECK_CODES, since) as OrderRow[];
+  }
+
+  /** True if this payer has at least one settled order (a repeat payer). */
+  hasSettlement(payer: string): boolean {
+    return this.raw.prepare("SELECT 1 FROM orders WHERE payer=? AND status='settled' LIMIT 1").get(payer.toLowerCase()) !== undefined;
   }
 
   /** pending -> broadcast_unknown for exactly this tx. */
@@ -438,10 +597,18 @@ export class Db {
   }
 
   // ---- reverts (payer-caused on-chain failures)
-  recordRevert(r: { txHash: string; orderId: string; payer: string; ts: number; wei: bigint }) {
+  /** `firstTime`: the payer had no settled order when the revert happened (defaults to looking it up now). */
+  recordRevert(r: { txHash: string; orderId: string; payer: string; ts: number; wei: bigint; firstTime?: boolean }) {
+    const firstTime = r.firstTime ?? !this.hasSettlement(r.payer);
     this.raw
-      .prepare("INSERT OR IGNORE INTO reverts (tx_hash, order_id, payer, ts, wei) VALUES (?, ?, ?, ?, ?)")
-      .run(r.txHash, r.orderId.toLowerCase(), r.payer.toLowerCase(), r.ts, r.wei.toString());
+      .prepare("INSERT OR IGNORE INTO reverts (tx_hash, order_id, payer, ts, wei, first_time) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(r.txHash, r.orderId.toLowerCase(), r.payer.toLowerCase(), r.ts, r.wei.toString(), firstTime ? 1 : 0);
+  }
+
+  /** Gas burnt (wei) since `since` by reverts of payers who had no settled order at the time. */
+  firstTimeRevertWei(since: number): bigint {
+    const rows = this.raw.prepare("SELECT wei FROM reverts WHERE first_time=1 AND ts>=?").all(since) as { wei: string }[];
+    return rows.reduce((a, r) => a + BigInt(r.wei), 0n);
   }
 
   /** Reverts caused by this payer since `since`: count, most recent time, and gas burnt (wei). */

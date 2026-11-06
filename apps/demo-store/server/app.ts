@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import type * as SdkApi from "@quietpay/merchant-sdk";
+import { formatUsdt } from "@quietpay/shared";
 import { CartError, priceCart } from "./catalog.js";
 
 /** The frozen merchant-SDK surface this server relies on. */
@@ -11,6 +12,12 @@ export interface StoreConfig {
   baseUrl: string;
   apiKey: string;
   merchantId: `0x${string}`;
+  /**
+   * The store's own payout address (where the PaymentRouter sends its USDT), from QUIETPAY_PAYOUT_ADDRESS.
+   * When set, an order the relayer creates with any other payout is refused, and this address is handed to the
+   * widget as expected-payout. When unset, the payout from the relayer's authenticated createOrder answer is pinned.
+   */
+  payout?: `0x${string}`;
   webhookSecret: string;
   /** Public URL the relayer should POST webhooks to (optional in dev). */
   webhookUrl?: string;
@@ -152,7 +159,19 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
         reference: `demo-${Date.now()}`,
         webhookUrl: config.webhookUrl,
       });
-      return { orderId: order.id };
+      // Only hand the browser an order that is exactly what this store asked for: our merchant, the amount we just
+      // priced, and (when configured) our payout address.
+      const payout = config.payout ?? order.payout;
+      if (
+        order.merchantId.toLowerCase() !== merchantId ||
+        order.amount !== amount.toString() ||
+        order.payout.toLowerCase() !== payout.toLowerCase()
+      ) {
+        app.log.error({ orderId: order.id }, "relayer created an order that does not match the cart; refused");
+        return reply.code(502).send({ error: "could not start checkout" });
+      }
+      // The widget pins these too (expected-amount / expected-payout) and refuses to sign anything else.
+      return { orderId: order.id, amount: formatUsdt(amount), payout };
     } catch (e) {
       app.log.error(e);
       return reply.code(502).send({ error: "could not start checkout" });

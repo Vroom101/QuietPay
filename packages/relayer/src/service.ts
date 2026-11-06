@@ -15,7 +15,7 @@ import {
 } from "@quietpay/shared";
 import type { WebhookEvent } from "@quietpay/shared/webhook";
 import { CLAIM_GRACE_SECONDS, OWNER_TIMEOUT_SECONDS, rowToOrder, type Db, type DbStatus, type OrderRow } from "./db.js";
-import type { ChainPort, PayArgs, SignedTx, TxReceipt } from "./chain.js";
+import { CANCEL_GAS, type ChainPort, type PayArgs, type SignedTx, type TxReceipt } from "./chain.js";
 import type { Config } from "./config.js";
 import { RateLimiter } from "./ratelimit.js";
 import { webhookUrlProblem } from "./webhooks.js";
@@ -25,12 +25,30 @@ const DAY = 86_400;
 const ZERO = "0x0000000000000000000000000000000000000000";
 /** After the single rebroadcast of a stuck tx, wait this long for it to be mined before failing the order. */
 export const REBROADCAST_GRACE_SECONDS = 120;
-/** Failed-as-not-mined orders are re-checked for a late receipt for this long. */
+/** Orders failed because their tx was not seen to execute are re-checked for a late receipt for this long. */
 const LATE_RECEIPT_WINDOW_SECONDS = 2 * DAY;
+/** An unresolved tx is resolved (cancelled, never rebroadcast) this long after its authorization's validBefore. */
+export const VALID_BEFORE_MARGIN_SECONDS = 30;
+/** A pending tx the node does not know is re-sent once it is this old (younger ones may still be propagating). */
+export const STUCK_RESEND_SECONDS = 60;
+/**
+ * An Expired revert is blamed on the relayer (not the payer) only if at least this much of the authorization
+ * window was left when the tx was signed: a block lands well within it unless the relayer delayed the tx.
+ */
+export const EXPIRY_EXEMPT_MIN_HEADROOM_SECONDS = 60;
+/** After a cancel is sent, wait this long (and past validBefore) before failing the order without it mined. */
+export const CANCEL_GRACE_SECONDS = REBROADCAST_GRACE_SECONDS;
 
 /** Failure codes set by reconciliation (stored in failure_code; webhook failureCode). */
 export const FAILURE_TX_DROPPED = "tx_dropped"; // no receipt, and the relayer nonce was used by another tx
-export const FAILURE_TX_NOT_MINED = "tx_not_mined"; // no receipt after max age and one rebroadcast
+export const FAILURE_TX_NOT_MINED = "tx_not_mined"; // accepted by the node, never mined; cancelled / timed out
+export const FAILURE_TX_NOT_SENT = "tx_not_sent"; // never reached the node; its nonce was filled by a self-transfer
+export const FAILURE_TX_EXPIRED = "tx_expired"; // mined after validBefore because the relayer delayed it (not the payer's fault)
+
+/** Send errors after which the signed tx can never use its nonce, or the node's nonce view differs: resync. */
+const NONCE_UNUSED_ERRORS = /nonce too low|nonce has already been used|already been used|underpriced|replacement|nonce too high|insufficient funds/i;
+/** Send errors that mean the node already has exactly this tx. */
+const ALREADY_KNOWN_ERRORS = /already known|known transaction|already imported/i;
 
 export interface ServiceDeps {
   cfg: Config;
@@ -85,6 +103,7 @@ export class RelayerService {
   /** Orders this process has claimed and not yet signed or released; never treated as stale. */
   private readonly inflight = new Set<string>();
   private reconciling = false;
+  private readonly newPayersByIp = new Map<string, Map<string, number>>();
 
   constructor(d: ServiceDeps) {
     this.cfg = d.cfg;
@@ -347,6 +366,20 @@ export class RelayerService {
       this.reject("rate_limited", "This order failed too many times. Please start a new payment.");
     }
 
+    // 4d. first-time payers (no settled order yet) are the cheap way to burn gas: fresh keys cost nothing.
+    //     Their reverts draw on a separate pool (capped), and one client IP may only bring a few new keys an hour.
+    const firstTime = !this.db.hasSettlement(req.payer);
+    if (firstTime) {
+      const ftCap = (this.cfg.lossBudgetWei * BigInt(this.cfg.firstTimePayerLossCapPercent)) / 100n;
+      const ftLost = this.db.firstTimeRevertWei(nowS - HOUR);
+      if (ftLost > 0n && ftLost >= ftCap) {
+        this.reject("rate_limited", "Too many failed payments from new wallets right now. Please try again later.");
+      }
+      if (!this.newPayerAllowed(ctx.ip, req.payer, nowS)) {
+        this.reject("rate_limited", "Too many new wallets from this connection. Please try again later.");
+      }
+    }
+
     // 5. merchant registered, fee within cap, payout unchanged since the order was created
     const merchant = await this.chain.getMerchant(row.merchant_id as Hex);
     if (merchant.payout === ZERO) this.reject("simulation_failed", "This merchant is not registered.");
@@ -421,7 +454,12 @@ export class RelayerService {
         //     everyone. Successful payments (which pay the relay fee) do not count toward the share.
         const gasLimit = (gas * 12n) / 10n;
         const estimate = gasLimit * gasPrice;
-        if (this.db.spentSince(nowS - HOUR) + estimate > this.cfg.lossBudgetWei) {
+        // Reverts by first-time payers count toward the shared budget only up to their share: losses above
+        // it (fresh keys reverting on purpose) are bounded by the first-time cap in 4d and never pause others.
+        const ftShare = (this.cfg.lossBudgetWei * BigInt(this.cfg.firstTimePayerLossSharePercent)) / 100n;
+        const ftLost = this.db.firstTimeRevertWei(nowS - HOUR);
+        const ftExcess = ftLost > ftShare ? ftLost - ftShare : 0n;
+        if (this.db.spentSince(nowS - HOUR) - ftExcess + estimate > this.cfg.lossBudgetWei) {
           this.reject("relayer_paused", "Payments are paused briefly. Please try again later.");
         }
         const share = (this.cfg.lossBudgetWei * BigInt(this.cfg.payerLossSharePercent)) / 100n;
@@ -437,7 +475,7 @@ export class RelayerService {
         const signed = await this.chain.signPay(args, gasLimit, gasPrice);
         let ok = false;
         try {
-          ok = this.db.persistSignedTx(row.id, this.owner, signed, this.now());
+          ok = this.db.persistSignedTx(row.id, this.owner, { ...signed, gasPrice }, this.now());
         } catch (e) {
           this.log("could not persist signed tx", { order: row.id, err: errText(e) });
         }
@@ -452,6 +490,7 @@ export class RelayerService {
         const sent = await this.broadcast(row.id, signed);
         return { hash: signed.hash, sent };
       });
+      if (firstTime) this.recordNewPayer(ctx.ip, req.payer, nowS);
       if (out.sent) void this.track(row.id, out.hash);
       return { orderId: row.id as Hex, status: "pending", txHash: out.hash };
     } catch (e) {
@@ -471,6 +510,30 @@ export class RelayerService {
       throw e;
     } finally {
       this.inflight.delete(row.id);
+    }
+  }
+
+  /** Distinct first-time payers relayed per client IP in the last hour (in memory, per process). */
+  private newPayersFor(ip: string, nowS: number): Map<string, number> {
+    let m = this.newPayersByIp.get(ip);
+    if (!m) {
+      m = new Map();
+      this.newPayersByIp.set(ip, m);
+    }
+    for (const [p, ts] of m) if (ts < nowS - HOUR) m.delete(p);
+    return m;
+  }
+
+  private newPayerAllowed(ip: string, payerAddr: string, nowS: number): boolean {
+    const m = this.newPayersFor(ip, nowS);
+    return m.has(payerAddr.toLowerCase()) || m.size < this.cfg.maxNewPayersPerIpPerHour;
+  }
+
+  private recordNewPayer(ip: string, payerAddr: string, nowS: number) {
+    const m = this.newPayersFor(ip, nowS);
+    if (!m.has(payerAddr.toLowerCase())) m.set(payerAddr.toLowerCase(), nowS);
+    if (this.newPayersByIp.size > 10_000) {
+      for (const [k, v] of this.newPayersByIp) if (v.size === 0) this.newPayersByIp.delete(k);
     }
   }
 
@@ -523,19 +586,69 @@ export class RelayerService {
    * restart recovery) goes through here, so settled_at is always set and exactly one webhook is queued.
    * A revert is recorded against the payer and the order. Returns true if this call made the transition.
    */
-  private applyReceipt(orderId: string, hash: Hex, r: TxReceipt): boolean {
+  private async applyReceipt(orderId: string, hash: Hex, r: TxReceipt): Promise<boolean> {
     const row = this.db.getOrder(orderId);
     if (!row) return false;
     const wei = r.gasUsed * r.effectiveGasPrice;
     this.db.recordSpend(hash, this.now(), wei);
     if (r.status === "success") {
-      if (!this.db.finishTx(orderId, hash, "settled", { settledAt: this.now() })) return false;
+      // A success receipt for any pay tx of this order proves it was paid, whatever local state it is in.
+      if (!this.db.finishTx(orderId, hash, "settled", { settledAt: this.now() }) && !this.db.settleAttempt(orderId, hash, this.now())) {
+        return false;
+      }
       this.enqueueWebhook(orderId, "payment.settled");
       return true;
     }
-    if (!this.db.finishTx(orderId, hash, "failed", { failureCode: "simulation_failed" })) return false;
-    if (row.payer) this.db.recordRevert({ txHash: hash, orderId, payer: row.payer, ts: this.now(), wei });
+    // Reverted. If an earlier attempt of this order paid it (the revert is then AlreadySettled), settle on that
+    // attempt: the payer did nothing wrong and the merchant was paid.
+    if (row.status !== "settled" && (await this.settleFromOtherAttempt(orderId, hash, { checkRouter: true }))) return true;
+    // Mined at or after validBefore (the router's Expired check) although the payer left ample headroom when
+    // the tx was signed: the relayer held it back (e.g. queued behind a nonce gap), so it is not counted as the
+    // payer's revert. A payer who signed a window too short to survive inclusion is still charged the revert.
+    const signedAt = row.tx_signed_at ?? row.relayed_at ?? null;
+    const headroom = row.valid_before !== null && signedAt !== null ? row.valid_before - signedAt : 0;
+    const expired =
+      r.blockTimestamp !== undefined &&
+      row.valid_before !== null &&
+      r.blockTimestamp >= BigInt(row.valid_before) &&
+      headroom >= Math.max(this.cfg.minValidSeconds, EXPIRY_EXEMPT_MIN_HEADROOM_SECONDS);
+    if (!this.db.finishTx(orderId, hash, "failed", { failureCode: expired ? FAILURE_TX_EXPIRED : "simulation_failed" })) return false;
+    if (row.payer && !expired) this.db.recordRevert({ txHash: hash, orderId, payer: row.payer, ts: this.now(), wei });
     this.enqueueWebhook(orderId, "payment.failed");
+    return true;
+  }
+
+  /**
+   * Looks for a success receipt among this order's other pay attempts (a retry may supersede a tx that still
+   * lands). Found: settles the order on that attempt (once, with one payment.settled) and returns true. With
+   * `checkRouter`, an order the router already shows as settled is also settled. Lookup errors are skipped.
+   */
+  private async settleFromOtherAttempt(orderId: string, exceptHash: string, opts: { checkRouter: boolean }): Promise<boolean> {
+    for (const a of this.db.payAttempts(orderId)) {
+      if (a.tx_hash.toLowerCase() === exceptHash.toLowerCase()) continue;
+      let r: TxReceipt | null = null;
+      try {
+        r = await this.chain.getReceipt(a.tx_hash as Hex);
+      } catch {
+        continue;
+      }
+      if (r?.status !== "success") continue;
+      this.db.recordSpend(a.tx_hash, this.now(), r.gasUsed * r.effectiveGasPrice);
+      if (this.db.settleAttempt(orderId, a.tx_hash, this.now())) {
+        this.enqueueWebhook(orderId, "payment.settled");
+        this.log("order settled by an earlier attempt", { order: orderId, hash: a.tx_hash });
+      }
+      return true;
+    }
+    if (!opts.checkRouter) return false;
+    const row = this.db.getOrder(orderId);
+    if (!row) return false;
+    try {
+      if (!(await this.chain.isSettled(row.merchant_id as Hex, row.id as Hex))) return false;
+    } catch {
+      return false;
+    }
+    this.observeSettled(orderId);
     return true;
   }
 
@@ -573,7 +686,7 @@ export class RelayerService {
     this.tracking.add(orderId);
     try {
       const r = await this.chain.waitForReceipt(hash);
-      this.applyReceipt(orderId, hash, r);
+      await this.applyReceipt(orderId, hash, r);
     } catch (e) {
       this.log("tracking stopped; reconciliation will pick it up", { order: orderId, err: errText(e, 200) });
     } finally {
@@ -638,16 +751,13 @@ export class RelayerService {
           this.log("reconcile: order skipped", { order: row.id, err: errText(e) });
         }
       }
-      for (const row of this.db.notMinedFailures(this.now() - LATE_RECEIPT_WINDOW_SECONDS)) {
+      // Orders failed because their tx was not seen to execute (not mined, dropped, not sent): any of their pay
+      // attempts may still turn up mined (a lagging RPC backend, a reorg, a late mempool), so keep checking.
+      for (const row of this.db.lateCheckFailures(this.now() - LATE_RECEIPT_WINDOW_SECONDS)) {
         try {
-          const hash = row.tx_hash as Hex;
-          const r = await this.chain.getReceipt(hash);
-          if (r?.status !== "success") continue;
-          this.db.recordSpend(hash, this.now(), r.gasUsed * r.effectiveGasPrice);
-          if (this.db.lateSettle(row.id, hash, this.now())) {
-            this.enqueueWebhook(row.id, "payment.settled");
+          if (await this.settleFromOtherAttempt(row.id, "", { checkRouter: false })) {
             out.settled += 1;
-            this.log("late receipt: order settled after all", { order: row.id, hash });
+            this.log("late receipt: order settled after all", { order: row.id });
           }
         } catch (e) {
           this.log("reconcile: late check skipped", { order: row.id, err: errText(e) });
@@ -668,7 +778,12 @@ export class RelayerService {
     const count = (r: TxReceipt) => (r.status === "success" ? (out.settled += 1) : (out.failed += 1));
     const r = await this.chain.getReceipt(hash);
     if (r) {
-      if (this.applyReceipt(row.id, hash, r)) count(r);
+      if (await this.applyReceipt(row.id, hash, r)) count(r);
+      return;
+    }
+    // A superseded earlier attempt of this order (failed, then retried) may have landed after all.
+    if (this.db.payAttempts(row.id).length > 1 && (await this.settleFromOtherAttempt(row.id, hash, { checkRouter: false }))) {
+      out.settled += 1;
       return;
     }
     if (row.tx_nonce !== null && row.tx_nonce !== undefined) {
@@ -677,10 +792,21 @@ export class RelayerService {
         // Mined between the two reads? Check once more before declaring it replaced or dropped.
         const again = await this.chain.getReceipt(hash);
         if (again) {
-          if (this.applyReceipt(row.id, hash, again)) count(again);
-        } else if (this.failUnmined(row.id, hash, FAILURE_TX_DROPPED, { zeroSpend: true })) {
-          out.failed += 1;
+          if (await this.applyReceipt(row.id, hash, again)) count(again);
+          return;
         }
+        // Our own cancel / gap-filling transfer consumed the nonce: the code chosen when it was signed applies.
+        let code = FAILURE_TX_DROPPED;
+        if (row.cancel_hash) {
+          code = row.cancel_code ?? FAILURE_TX_DROPPED;
+          try {
+            const cr = await this.chain.getReceipt(row.cancel_hash as Hex);
+            if (cr) this.db.recordSpend(row.cancel_hash, this.now(), cr.gasUsed * cr.effectiveGasPrice);
+          } catch {
+            /* the estimate recorded at signing stays */
+          }
+        }
+        if (this.failUnmined(row.id, hash, code, { zeroSpend: true })) out.failed += 1;
         return;
       }
     }
@@ -691,6 +817,7 @@ export class RelayerService {
     }
     const now = this.now();
     const signedAt = row.tx_signed_at ?? row.relayed_at ?? now;
+    if (await this.recoverNonceGap(row, hash, now - signedAt, confirmedNonce, out)) return;
     if (now - signedAt < this.cfg.txMaxAgeSeconds) return;
     if (row.rebroadcast_at === null || row.rebroadcast_at === undefined) {
       if (!this.db.markRebroadcast(row.id, hash, now)) return;
@@ -708,6 +835,93 @@ export class RelayerService {
     }
     if (now - row.rebroadcast_at < REBROADCAST_GRACE_SECONDS) return;
     if (this.failUnmined(row.id, hash, FAILURE_TX_NOT_MINED, { zeroSpend: false })) out.failed += 1;
+  }
+
+  /**
+   * Nonce-gap recovery for an unresolved tx with no receipt whose nonce is not used yet. A tx the node does not
+   * have (it never arrived, or was evicted) leaves a hole at its nonce, and every later tx from the relayer
+   * queues behind it, so it is not left for txMaxAgeSeconds:
+   *  - while its authorization is still valid, its persisted bytes (same hash) are re-sent once it is
+   *    STUCK_RESEND_SECONDS old, on every pass the node still lacks it;
+   *  - once the authorization has expired, if it is the relayer's next nonce and other txs are queued behind it,
+   *    the nonce is filled with a zero-value self-transfer (signCancel), never by re-sending a pay that would
+   *    revert. The order then fails as tx_not_sent when that nonce is consumed.
+   * Returns true if it acted (the caller stops for this pass).
+   */
+  private async recoverNonceGap(
+    row: OrderRow,
+    hash: Hex,
+    age: number,
+    confirmedNonce: () => Promise<number | null>,
+    out: { settled: number; failed: number; rebroadcast: number },
+  ): Promise<boolean> {
+    if (age < STUCK_RESEND_SECONDS || row.valid_before === null) return false;
+    const now = this.now();
+    if (row.cancel_hash) {
+      // A cancel is out for this nonce: keep it in the node's pool until the nonce is consumed.
+      const cancel = this.db.getAttempt(row.cancel_hash);
+      if (cancel?.raw && !(await this.nodeHas(row.cancel_hash as Hex))) {
+        try {
+          await this.chain.sendRawTx(cancel.raw as Hex);
+        } catch (e) {
+          this.log("cancel resend failed", { order: row.id, hash: row.cancel_hash, err: errText(e) });
+        }
+      }
+      // A cancel that never gets mined falls back to the max-age path in the end.
+      return now - (row.cancel_at ?? now) < this.cfg.txMaxAgeSeconds;
+    }
+    const unknown = row.status === "broadcast_unknown" || !(await this.nodeHas(hash));
+    if (!unknown) return false;
+
+    if (now < row.valid_before && row.raw_tx) {
+      out.rebroadcast += 1;
+      try {
+        await this.chain.sendRawTx(row.raw_tx as Hex);
+        this.log("re-sent a tx the node did not have", { order: row.id, hash, nonce: row.tx_nonce });
+      } catch (e) {
+        const msg = errText(e);
+        if (!ALREADY_KNOWN_ERRORS.test(msg)) {
+          this.log("re-send of a stuck tx failed", { order: row.id, hash, err: msg });
+          if (NONCE_UNUSED_ERRORS.test(msg)) this.chain.resyncNonce();
+          return true;
+        }
+      }
+      if (row.status === "broadcast_unknown") this.db.markBroadcastKnown(row.id, hash);
+      void this.track(row.id, hash);
+      return true;
+    }
+
+    // Expired: fill the hole only if it is the next nonce and something is actually queued behind it.
+    const nonce = row.tx_nonce;
+    if (nonce === null || nonce === undefined || !this.chain.signCancel) return false;
+    if (now < row.valid_before + VALID_BEFORE_MARGIN_SECONDS) return false; // may still be mining: not yet
+    const c = await confirmedNonce();
+    if (c === null || c !== nonce) return false;
+    if (!this.db.hasUnresolvedAbove(nonce) || this.db.nonceTakenByOther(nonce, hash)) return false;
+    let gasPrice: bigint;
+    try {
+      gasPrice = await this.chain.getGasPrice();
+    } catch (e) {
+      this.log("gap fill: could not read gas price", { order: row.id, err: errText(e) });
+      return true;
+    }
+    const prev = this.db.getAttempt(hash)?.gas_price;
+    if (prev) {
+      // Beat the pay tx at this nonce in case some node still holds it (replacement needs a price bump).
+      const bumped = (BigInt(prev) * 115n) / 100n + 1n;
+      if (bumped > gasPrice) gasPrice = bumped;
+    }
+    if (this.cfg.maxGasPrice !== null && gasPrice > this.cfg.maxGasPrice) return true;
+    const cancel = await this.chain.signCancel(nonce, gasPrice);
+    if (!this.db.recordCancel(row.id, hash, { ...cancel, gasPrice }, FAILURE_TX_NOT_SENT, now)) return true;
+    this.db.recordSpend(cancel.hash, now, CANCEL_GAS * gasPrice);
+    try {
+      await this.chain.sendRawTx(cancel.raw);
+      this.log("filled a nonce gap with a self-transfer", { order: row.id, hash, nonce, cancel: cancel.hash });
+    } catch (e) {
+      this.log("gap fill send failed; retried next pass", { order: row.id, cancel: cancel.hash, err: errText(e) });
+    }
+    return true;
   }
 
   private enqueueWebhook(orderId: string, type: WebhookEvent["type"]) {

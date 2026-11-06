@@ -4,11 +4,13 @@ export type { KeystoreErrorCode, KeystoreOptions, ExportBackupOptions, ImportAcc
 export {
   signCheckout,
   verifyCheckout,
+  pinDisplayedOrder,
+  verifyDisplayedOrder,
   fetchOrder,
   relayPay,
   pollOrder,
   WidgetError,
   MAX_WIDGET_WINDOW_SECONDS,
 } from "./client.js";
-export type { ExpectedCheckout, SignCheckoutOptions } from "./client.js";
+export type { DisplayedOrder, ExpectedCheckout, SignCheckoutOptions } from "./client.js";
 export { messageForCode, CHECKOUT_MISMATCH_MESSAGE, WALLET_UNREADABLE_MESSAGE } from "./messages.js";

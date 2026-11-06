@@ -52,6 +52,8 @@ describe("demo-store server", () => {
     expect(orderId).toMatch(/^0x[0-9a-f]{64}$/);
     const order = await sdk.getOrder({ baseUrl: relayerUrl(), orderId });
     expect(order.amount).toBe("58500000");
+    // The values the checkout page hands the widget as expected-amount / expected-payout.
+    expect(res.json()).toEqual({ orderId, amount: "58.500000", payout: order.payout });
   });
 
   it("rejects a bad cart", async () => {

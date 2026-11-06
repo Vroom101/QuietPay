@@ -167,9 +167,73 @@ export function verifyCheckout(order: Order, expected: ExpectedCheckout = {}): v
   }
 }
 
+/**
+ * Identity of the order the payer was shown, captured by the widget itself when it first displays the order (never
+ * taken from host attributes or a later relayer answer). Everything that ends up in the signed authorization, or
+ * that the payer reads on screen as "who" and "how much", is here. Status and expiry are deliberately absent: they
+ * may legitimately change between display and signing.
+ */
+export interface DisplayedOrder {
+  readonly id: string;
+  readonly merchantId: string;
+  readonly amount: string;
+  readonly fee: string;
+  readonly payout: string;
+  readonly nonce: string;
+  readonly chainId: number;
+  readonly token: string;
+  readonly router: string;
+  readonly domainName: string;
+  readonly domainVersion: string;
+}
+
+/** Snapshot of what is displayed. Throws WidgetError("checkout_order_mismatch") if the order has no checkout. */
+export function pinDisplayedOrder(order: Order): Readonly<DisplayedOrder> {
+  const c = order?.checkout;
+  if (!c || !c.domain) refuse("checkout_order_mismatch", "missing checkout");
+  return Object.freeze({
+    id: String(order.id),
+    merchantId: String(order.merchantId),
+    amount: String(order.amount),
+    fee: String(order.fee),
+    payout: String(order.payout),
+    nonce: String(c.nonce),
+    chainId: c.chainId,
+    token: String(c.token),
+    router: String(c.router),
+    domainName: String(c.domain.name),
+    domainVersion: String(c.domain.version),
+  });
+}
+
+const sameHex = (a: unknown, b: string) => typeof a === "string" && a.toLowerCase() === b.toLowerCase();
+
+/**
+ * Refuses (WidgetError "checkout_display_mismatch", nothing signed) unless the freshly fetched order is the very
+ * order the payer was shown: same id, merchant, amount, fee, payout, nonce, chain, token, router and token domain.
+ * verifyCheckout only checks an order against itself and the host's expectations; this ties it to the screen.
+ */
+export function verifyDisplayedOrder(order: Order, displayed: DisplayedOrder): void {
+  const c = order?.checkout;
+  const differs = (field: string): never => refuse("checkout_display_mismatch", `${field} differs from what was displayed`);
+  if (!c || !c.domain) refuse("checkout_order_mismatch", "missing checkout");
+  if (!sameHex(order.id, displayed.id)) differs("order id");
+  if (!sameHex(order.merchantId, displayed.merchantId)) differs("merchant");
+  if (order.amount !== displayed.amount || c.value !== displayed.amount) differs("amount");
+  if (order.fee !== displayed.fee || c.fee !== displayed.fee) differs("fee");
+  if (!sameHex(order.payout, displayed.payout) || !sameHex(c.payout, displayed.payout)) differs("payout");
+  if (!sameHex(c.nonce, displayed.nonce)) differs("nonce");
+  if (c.chainId !== displayed.chainId) differs("chain");
+  if (!sameHex(c.token, displayed.token)) differs("token");
+  if (!sameHex(c.router, displayed.router)) differs("router");
+  if (c.domain.name !== displayed.domainName || c.domain.version !== displayed.domainVersion) differs("token domain");
+}
+
 export interface SignCheckoutOptions {
   /** Checked with verifyCheckout before signing. Defaults to the qualifying values. */
   expected?: ExpectedCheckout;
+  /** When set, the order must match what the payer was shown (verifyDisplayedOrder) before anything is signed. */
+  displayed?: DisplayedOrder;
   /** Seconds from now until validBefore. At most MAX_WIDGET_WINDOW_SECONDS. */
   windowSeconds?: number;
 }
@@ -188,6 +252,7 @@ export async function signCheckout(
   if (!Number.isInteger(windowSeconds) || windowSeconds <= 0 || windowSeconds > MAX_WIDGET_WINDOW_SECONDS) {
     refuse("checkout_window_invalid", "validity window must be 1..300 seconds");
   }
+  if (opts.displayed !== undefined) verifyDisplayedOrder(order, opts.displayed);
   verifyCheckout(order, opts.expected);
   const validAfter = nowSeconds - BACKDATE_SECONDS;
   const validBefore = nowSeconds + windowSeconds;
