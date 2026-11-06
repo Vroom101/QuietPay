@@ -26,7 +26,7 @@ Nothing here uses a stand-in token. Funding is never simulated on the public tes
 
 **pending: unfunded.** The payer holds no official USDT (the token has no public faucet and we do not mint a stand-in).
 Needed: a small amount (for example 5 USDT) of `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` sent to the payer address above, with the payer's WBT balance kept at zero.
-When it arrives the payment is made with `packages/shared/scripts/first-payment.mjs` (nonce v2 with the fee) and the link goes here.
+When it arrives the payment is made with `packages/shared/scripts/live-payment.mjs` (nonce v2 with the signed fee; the payer signs, the relayer wallet submits; it refuses a payer that holds any WBT and any chain or token but the qualifying pair). The script was proven end to end on anvil first. The link goes here.
 
 ## Refund with the official USDT
 
