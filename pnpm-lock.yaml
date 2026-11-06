@@ -10,6 +10,9 @@ importers:
 
   apps/demo-store:
     dependencies:
+      '@quietpay/merchant-sdk':
+        specifier: workspace:*
+        version: link:../../packages/merchant-sdk
       '@quietpay/shared':
         specifier: workspace:*
         version: link:../../packages/shared

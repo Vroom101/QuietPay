@@ -1,6 +1,6 @@
 import { merchantIdFromSlug } from "@quietpay/shared";
-// To use the real SDK, replace this one line with: import * as sdk from "@quietpay/merchant-sdk";
-import * as sdk from "./sdk-stub.js";
+// Uses the real merchant SDK (the local stub in sdk-stub.ts is kept only for reference).
+import * as sdk from "@quietpay/merchant-sdk";
 import { buildApp } from "./app.js";
 
 const port = Number(process.env.PORT ?? 3001);

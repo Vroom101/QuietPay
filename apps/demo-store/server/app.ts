@@ -1,9 +1,9 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { parseUsdt } from "@quietpay/shared";
-import type * as SdkStub from "./sdk-stub.js";
+import type * as SdkApi from "@quietpay/merchant-sdk";
 
 /** The frozen merchant-SDK surface this server relies on. */
-export type MerchantSdk = Pick<typeof SdkStub, "createOrder" | "getOrder" | "verifyWebhook">;
+export type MerchantSdk = Pick<typeof SdkApi, "createOrder" | "getOrder" | "verifyWebhook">;
 
 export interface StoreConfig {
   baseUrl: string;

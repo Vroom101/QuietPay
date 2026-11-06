@@ -83,7 +83,7 @@ export async function signCheckout(
     domainVersion: c.domain.version,
   });
   const signature = await account.signTypedData(td);
-  return { orderId: order.id, payer: account.address, validAfter, validBefore, signature };
+  return { orderId: order.id, payer: account.address, validAfter, validBefore, signature, amount: order.amount };
 }
 
 export interface PollOptions {
