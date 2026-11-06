@@ -77,7 +77,12 @@ export async function signInWithWallet(opts: {
 
   const verifyRes = await postJson(fetchFn, `${base}/auth/verify`, { nonce: challenge.nonce, signature });
   const session = (await verifyRes.json().catch(() => undefined)) as Partial<WalletSession> | undefined;
-  if (verifyRes.status === 401) throw new WalletLoginError("This wallet was not accepted for the merchant dashboard (sign-in failed).");
+  // The server answers every failure the same way (no way to probe which wallets are allowed). The wallet shown here is
+  // the user's OWN connected account, so naming it leaks nothing and tells them exactly what to add.
+  if (verifyRes.status === 401)
+    throw new WalletLoginError(
+      `This wallet (${address}) was not accepted for the merchant dashboard (sign-in failed). If it should have access, ask the store owner to add this address to QUIETPAY_MERCHANT_WALLETS. Otherwise switch to the merchant account in your wallet.`,
+    );
   if (!verifyRes.ok || typeof session?.token !== "string" || typeof session.address !== "string" || typeof session.expiresAt !== "number")
     throw new WalletLoginError("The merchant server returned an unexpected answer.");
   return { token: session.token, address: session.address, expiresAt: session.expiresAt };

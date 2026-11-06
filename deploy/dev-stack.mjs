@@ -86,6 +86,10 @@ console.log("  Store UI   http://localhost:5173   (customers)");
 console.log("  Dashboard  http://localhost:5174   (merchant: sign in with MetaMask)");
 console.log(`  Store API  http://127.0.0.1:3001   Relayer http://127.0.0.1:${RELAYER_PORT}`);
 console.log(`  Dashboard access token for merchant refunds: kept in memory only; print it with --show-token`);
+const allowed = (process.env.MERCHANT_WALLETS || need("MERCHANT_PAYOUT_ADDRESS")).split(",").map((x) => x.trim()).filter(Boolean);
+console.log(`  Merchant wallets allowed to sign in to the dashboard: ${allowed.join(", ")}`);
+console.log(`  Customer payments are paid out to: ${process.env.MERCHANT_PAYOUT_ADDRESS} (the registered merchant payout)`);
+console.log("  To allow another MetaMask account, put MERCHANT_WALLETS=0xAddress in the env file and restart.");
 if (process.argv.includes("--show-token")) console.log(`  token: ${dashboardToken}`);
 
 const stop = () => {

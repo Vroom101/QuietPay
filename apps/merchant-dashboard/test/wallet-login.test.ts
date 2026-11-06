@@ -66,3 +66,22 @@ describe("signOut / shortAddress", () => {
     expect(shortAddress("0xabcdef0123456789abcdef0123456789abcdef01")).toBe("0xabc…ef01");
   });
 });
+
+describe("Feature: a rejected wallet is told which wallet it was and what to do", () => {
+  const ADDR = "0x0bC8E3a4C0b1f9D2e5A7c6B8d4F1a2E3c4D56f8f".replace(/[^0-9a-fA-Fx]/g, "0").slice(0, 42);
+  it("Scenario: the message names the connected wallet and the setting that allows it", async () => {
+    const provider = { request: vi.fn(async ({ method }: { method: string }) => (method === "eth_requestAccounts" ? [ADDR] : "0xsig")) };
+    const fetchFn = vi.fn().mockResolvedValueOnce(json(200, { nonce: "n", message: "m" })).mockResolvedValueOnce(json(401, { error: "sign-in failed" }));
+    const err = await signInWithWallet({ merchantUrl: "/m", provider: provider as never, fetch: fetchFn as never }).catch((e: Error) => e);
+    expect((err as Error).message).toContain(ADDR); // the payer's OWN address, copyable
+    expect((err as Error).message).toMatch(/QUIETPAY_MERCHANT_WALLETS/);
+    expect((err as Error).message).toMatch(/not accepted/i);
+  });
+
+  it("the message never contains a token or the server's own text", async () => {
+    const provider = { request: vi.fn(async ({ method }: { method: string }) => (method === "eth_requestAccounts" ? [ADDR] : "0xsig")) };
+    const fetchFn = vi.fn().mockResolvedValueOnce(json(200, { nonce: "n", message: "m" })).mockResolvedValueOnce(json(401, { error: "sign-in failed", token: "SECRET-TOKEN" }));
+    const err = (await signInWithWallet({ merchantUrl: "/m", provider: provider as never, fetch: fetchFn as never }).catch((e: Error) => e)) as Error;
+    expect(err.message).not.toContain("SECRET-TOKEN");
+  });
+});
