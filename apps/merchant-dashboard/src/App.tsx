@@ -6,6 +6,8 @@ import { LedgerExport } from "./LedgerExport";
 import { TransactionsExport } from "./TransactionsExport";
 import { formatWbt } from "./lib/csv";
 import { BillingWorkspace } from "./BillingWorkspace";
+import { SubscriptionsPanel } from "./SubscriptionsPanel";
+import { AgentPayments } from "./AgentPayments";
 import {
   useCallback,
   useEffect,
@@ -254,7 +256,7 @@ export function App() {
           </button>
         </div>
         <nav id="md-dock-nav" aria-label="Merchant navigation">
-          {views.filter((item) => item !== "Billing" || DEMO_MODE).map((item) => (
+          {views.map((item) => (
             <button key={item} type="button" aria-label={item} title={dockExpanded ? undefined : item} aria-current={view === item ? "page" : undefined} onClick={() => changeView(item)}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d={viewIcons[item]} /></svg>
               {dockExpanded && <span>{item}</span>}
@@ -290,6 +292,8 @@ export function App() {
         {loading && <p role="status" className="md-notice">Loading orders…</p>}
         {(view === "Overview" || view === "Analytics") && <DashboardMetrics orders={periodOrders} demo={DEMO_MODE} />}
         {view === "Analytics" && <LedgerExport useFixtures={DEMO_MODE} merchantUrl={MERCHANT_URL} token={apiKey} />}
+        {!DEMO_MODE && (view === "Analytics" || view === "Transactions") && hasAccess && <AgentPayments merchantUrl={MERCHANT_URL} token={apiKey} />}
+        {!DEMO_MODE && view === "Billing" && hasAccess && <SubscriptionsPanel merchantUrl={MERCHANT_URL} token={apiKey} />}
         {DEMO_MODE && (view === "Billing" || view === "Refunds") && <BillingWorkspace key={view} onRefundRecorded={load} />}
         {showTable && <section className="md-glass md-orders" aria-labelledby="orders-title">
           <div className="md-orders-heading">

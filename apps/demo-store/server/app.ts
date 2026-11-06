@@ -10,9 +10,10 @@ import { registerCustomerRefunds, setPrivateHeaders, type CustomerRefundConfig }
 import { createMerchantAuth, type MerchantAuthConfig } from "./merchant-auth.js";
 import { REDACTED_HEADERS } from "./customer-refunds.js";
 import { registerLedgerProxy } from "./ledger-proxy.js";
+import { registerSubscriptions, type BillingMode } from "./subscriptions.js";
 
 /** The frozen merchant-SDK surface this server relies on. */
-export type MerchantSdk = Pick<typeof SdkApi, "createOrder" | "getOrder" | "verifyWebhook"> & Partial<RefundSdk>;
+export type MerchantSdk = Pick<typeof SdkApi, "createOrder" | "getOrder" | "verifyWebhook"> & Partial<RefundSdk> & { createQuietPay?: typeof SdkApi.createQuietPay };
 
 export interface StoreConfig extends Partial<Pick<CustomerRefundConfig, "customerRefundDatabasePath" | "customerRefundRateLimit" | "now">> {
   /** Enable the Fastify logger; the order token and Authorization headers are always redacted. */
@@ -42,6 +43,12 @@ export interface StoreConfig extends Partial<Pick<CustomerRefundConfig, "custome
    * When omitted (tests), state is in memory only.
    */
   stateFile?: string;
+  /** Which billing models this store offers. Default "both". */
+  billing?: BillingMode;
+  /** JSON file that persists subscription plans and subscriptions. In memory when omitted. */
+  subscriptionsFile?: string;
+  /** Test hook: fetch used by the subscription client to reach the relayer. */
+  subscriptionsFetch?: typeof fetch;
   /** Max POST /api/checkout calls per IP per window (default 20). */
   checkoutRateLimit?: number;
   /** Length of the checkout rate-limit window in ms (default 60 000). */
@@ -168,8 +175,13 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   }
 
   const customer = registerCustomerRefunds(app, sdk, config);
+  const readLimiter = createIpLimiter(
+    (config.checkoutRateLimit ?? DEFAULT_CHECKOUT_LIMIT) * 10,
+    config.checkoutRateWindowMs ?? DEFAULT_CHECKOUT_WINDOW_MS,
+  );
 
   app.post("/api/checkout", async (req, reply) => {
+    if (config.billing === "subscription") return reply.code(503).send({ error: "One-time checkout is turned off for this store." });
     // Every accepted call creates a relayer order under the store's API key, so the public endpoint is per-IP limited.
     if (!checkoutLimiter.allow(req.ip)) return reply.code(429).send({ error: "too many checkout requests, try again shortly" });
     // SECURITY: the browser sends only product ids and quantities. The total is computed here from the
@@ -268,6 +280,13 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
             seenEvents.delete(event.id);
             return reply.code(500).send({ error: "could not record settlement" });
           }
+          try {
+            await subscriptions.applyWebhook(event);
+          } catch (e) {
+            app.log.error(e);
+            seenEvents.delete(event.id);
+            return reply.code(500).send({ error: "could not record subscription payment" });
+          }
           paid.set(orderId.toLowerCase(), {
             orderId: order.id,
             amount: order.amount,
@@ -278,6 +297,15 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
           });
         } else {
           app.log.warn({ eventId: event.id, orderId }, "payment.settled webhook did not match the relayer's order; ignored");
+        }
+      }
+      if (event.type === "payment.failed") {
+        try {
+          await subscriptions.applyWebhook(event);
+        } catch (e) {
+          app.log.error(e);
+          seenEvents.delete(event.id);
+          return reply.code(500).send({ error: "could not record subscription failure" });
         }
       }
       if (event.type === "payment.refunded") {
@@ -337,6 +365,13 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   registerLedgerProxy(app, {
     ledgerUrl: config.ledgerUrl, apiKey: config.apiKey, dashboardToken: config.refunds?.dashboardToken,
     ...(merchantAuth?.enabled ? { acceptSession: merchantAuth.isSession } : {}), ...(config.ledgerFetch ? { fetch: config.ledgerFetch } : {}),
+  });
+  const subscriptions = registerSubscriptions(app, {
+    baseUrl: config.baseUrl, apiKey: config.apiKey, merchantId: config.merchantId, payout: config.payout, webhookUrl: config.webhookUrl,
+    billing: config.billing, subscriptionsFile: config.subscriptionsFile, dashboardToken: config.refunds?.dashboardToken,
+    ...(merchantAuth?.enabled ? { acceptSession: merchantAuth.isSession } : {}),
+    sdk, ...(config.subscriptionsFetch ? { fetch: config.subscriptionsFetch } : {}),
+    limiter: checkoutLimiter, readLimiter, customer, log: app.log,
   });
   return app;
 }

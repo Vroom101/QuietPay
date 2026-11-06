@@ -90,6 +90,7 @@ start("store", "apps/demo-store", ["--import", "tsx", "server/index.ts"], {
   // MERCHANT_WALLETS=0xYourMetaMaskAddress[,0x...] in the env file to allow your own.
   ...(process.env.MERCHANT_WALLETS ? { QUIETPAY_MERCHANT_WALLETS: process.env.MERCHANT_WALLETS } : {}),
   QUIETPAY_LEDGER_URL: `http://127.0.0.1:${LEDGER_PORT}`,
+  QUIETPAY_BILLING: process.env.QUIETPAY_BILLING || "both", QUIETPAY_SUBSCRIPTIONS_FILE: resolve(state, "store-subscriptions.json"),
   QUIETPAY_AUTH_DOMAIN: "localhost:5174", QUIETPAY_AUTH_URI: "http://localhost:5174",
 });
 
@@ -103,7 +104,7 @@ start("web", "apps/demo-store", [resolve(root, "apps/demo-store/node_modules/vit
   VITE_RELAYER_URL: `http://127.0.0.1:${RELAYER_PORT}`,
 });
 
-start("dashboard", "apps/merchant-dashboard", [resolve(root, "apps/merchant-dashboard/node_modules/vite/bin/vite.js"), "--host", "127.0.0.1", "--port", "5174"], {});
+start("dashboard", "apps/merchant-dashboard", [resolve(root, "apps/merchant-dashboard/node_modules/vite/bin/vite.js"), "--host", "127.0.0.1", "--port", "5174"], { VITE_STORE_URL: "http://localhost:5173" });
 
 writeFileSync(resolve(tmp, "pids.json"), JSON.stringify(children.map((c) => c.pid)));
 console.log(`\nQuietPay demo starting (logs: ${resolve(tmp, "logs")})`);

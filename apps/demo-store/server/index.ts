@@ -34,6 +34,13 @@ if (merchantWallets.some((w) => !/^0x[0-9a-fA-F]{40}$/.test(w))) {
 }
 if (merchantWallets.length === 0 && payoutEnv) merchantWallets.push(payoutEnv);
 
+const billingRaw = process.env.QUIETPAY_BILLING?.trim() || "both";
+const billingEnv = billingRaw === "product" ? "one_time" : billingRaw; // "product" = one-time payments
+if (!["one_time", "subscription", "both"].includes(billingEnv)) {
+  console.error("demo-store: QUIETPAY_BILLING must be product (one_time), subscription or both.");
+  process.exit(1);
+}
+
 const port = Number(process.env.PORT ?? 3001);
 const app = buildApp(sdk, {
   baseUrl: process.env.QUIETPAY_BASE_URL || "http://localhost:8787",
@@ -41,6 +48,8 @@ const app = buildApp(sdk, {
   merchantId: (process.env.QUIETPAY_MERCHANT_ID || merchantIdFromSlug("demo-store")) as `0x${string}`,
   payout: payoutEnv as `0x${string}` | undefined,
   webhookSecret,
+  billing: billingEnv as "one_time" | "subscription" | "both",
+  subscriptionsFile: process.env.QUIETPAY_SUBSCRIPTIONS_FILE || undefined,
   webhookUrl: process.env.QUIETPAY_WEBHOOK_URL || undefined,
   // Paid orders and processed webhook ids survive restarts here.
   stateFile: process.env.QUIETPAY_STATE_FILE || ".data/demo-store-state.json",
