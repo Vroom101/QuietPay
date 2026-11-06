@@ -11,7 +11,8 @@
     "simulate-webhook": "tsx --env-file-if-exists=.env scripts/simulate-webhook.ts",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@quietpay/merchant-sdk": "workspace:*",
@@ -25,6 +26,7 @@
     "viem": "^2.21.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.0",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",

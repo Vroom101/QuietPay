@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { orderSettled } from "@quietpay/shared/fixtures";
 import { DashboardError, fixtureOrders, listOrders } from "../src/lib/api";
-import { toRow } from "../src/lib/view";
+import { demoOrderToDashboard, toRow } from "../src/lib/view";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -10,11 +10,12 @@ describe("listOrders", () => {
     const f = vi.fn();
     vi.stubGlobal("fetch", f);
     const orders = await listOrders({
-      relayerUrl: "http://x",
+      merchantUrl: "http://x",
       apiKey: "",
       useFixtures: true,
     });
     expect(orders).toEqual(fixtureOrders());
+    expect(new Set(orders.map((order) => order.id)).size).toBe(orders.length);
     expect(orders.map((o) => o.status)).toEqual(
       expect.arrayContaining([
         "created",
@@ -22,6 +23,8 @@ describe("listOrders", () => {
         "settled",
         "failed",
         "expired",
+        "partially_refunded",
+        "refunded",
       ]),
     );
     expect(f).not.toHaveBeenCalled();
@@ -36,12 +39,12 @@ describe("listOrders", () => {
     );
     vi.stubGlobal("fetch", f);
     const orders = await listOrders({
-      relayerUrl: "http://relayer/",
+      merchantUrl: "http://relayer/",
       apiKey: "secret",
     });
     expect(orders).toHaveLength(1);
     const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("http://relayer/v1/orders");
+    expect(url).toBe("http://relayer/orders");
     expect((init.headers as Record<string, string>).authorization).toBe(
       "Bearer secret",
     );
@@ -50,19 +53,31 @@ describe("listOrders", () => {
   it("reports a rejected key and a malformed body in plain words", async () => {
     vi.stubGlobal("fetch", async () => new Response("{}", { status: 401 }));
     await expect(
-      listOrders({ relayerUrl: "http://r", apiKey: "bad" }),
+      listOrders({ merchantUrl: "http://r", apiKey: "bad" }),
     ).rejects.toThrow("dashboard access token was not accepted");
     vi.stubGlobal(
       "fetch",
       async () => new Response(JSON.stringify({ nope: 1 }), { status: 200 }),
     );
     await expect(
-      listOrders({ relayerUrl: "http://r", apiKey: "k" }),
+      listOrders({ merchantUrl: "http://r", apiKey: "k" }),
     ).rejects.toBeInstanceOf(DashboardError);
   });
 });
 
 describe("toRow", () => {
+  it("converts recorded demo payments and cumulative refunds to dashboard base units", () => {
+    const order = { id: "demo-order", amount: "8.50", placedAt: 1800000000000, refunds: [{ id: "refund-1", amount: "1.25", createdAt: 1800000000000 }] };
+    const mapped = demoOrderToDashboard(order);
+    expect(mapped).toMatchObject({ amount: "8500000", refunded: "1250000", createdAt: 1800000000, status: "partially_refunded" });
+    expect(toRow(mapped).refund).toMatchObject({ remaining: "7.25 USDT", count: 1 });
+  });
+  it("uses the backend's cumulative amount and count for refunded orders", () => {
+    expect(toRow({ ...orderSettled, status: "partially_refunded", refunded: "5000000", refundCount: 1 }).refund).toEqual({
+      label: "Partially refunded", refunded: "5.00 USDT", remaining: "20.00 USDT", count: 1,
+    });
+    expect(toRow({ ...orderSettled, status: "refunded", refunded: "25000000", refundCount: 2 }).refund).toMatchObject({ remaining: "0.00 USDT", count: 2 });
+  });
   it("formats amount and fee, keeps payer and receipt link", () => {
     const r = toRow(orderSettled);
     expect(r.amount).toBe("25.000000 USDT");

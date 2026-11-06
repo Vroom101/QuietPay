@@ -20,22 +20,37 @@ export function fixtureOrders(): Order[] {
   const id = (n: number) =>
     ("0x" + n.toString(16).padStart(64, "0")) as `0x${string}`;
   const base = orderSettled.createdAt;
+  const sample = ({ checkout: _checkout, ...order }: Order, number: number) =>
+    makeOrder({ ...order, id: id(number), reference: `order-${1040 + number}` });
   return [
-    orderSettled,
-    orderPending,
-    orderCreated,
-    orderFailed,
-    orderExpired,
+    { ...orderSettled, status: "partially_refunded" as const, refunded: "10000000", refundCount: 1 },
+    sample(orderPending, 1),
+    sample(orderCreated, 2),
+    sample(orderFailed, 3),
+    makeOrder({
+      id: id(9),
+      status: "refunded",
+      payer: FIXTURE_PAYER,
+      amount: "8500000",
+      refunded: "8500000",
+      refundCount: 1,
+      reference: "order-1044",
+      createdAt: base + 2 * 86400,
+      settledAt: base + 2 * 86400 + 10,
+    }),
+    sample(orderExpired, 5),
     makeOrder({
       id: id(7),
       amount: "125500000",
       fee: "50000",
+      refunded: "0",
+      refundCount: 0,
       status: "settled",
       payer: FIXTURE_PAYER,
       txHash: ("0x" + "ef".repeat(32)) as `0x${string}`,
       explorerUrl: "https://sepolia.whitechain.io/tx/0x" + "ef".repeat(32),
-      createdAt: base + 3600,
-      settledAt: base + 3610,
+      createdAt: base + 86400,
+      settledAt: base + 86410,
       reference: "order-1042",
     }),
   ].sort((a, b) => b.createdAt - a.createdAt);
@@ -136,6 +151,8 @@ async function merchantRequest<T>(
   }
   const body = (await response.json().catch(() => undefined)) as
     { error?: { message?: string; code?: string } } | undefined;
+  if (response.status === 401 || response.status === 403)
+    throw new DashboardError("The dashboard access token was not accepted.", body?.error?.code, response.status);
   if (!response.ok)
     throw new DashboardError(
       body?.error?.message ??
