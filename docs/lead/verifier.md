@@ -145,3 +145,10 @@ the facilitator.
 - **`test/live-sample.test.ts`**: verifies `docs/lead/samples/live-sample.csv` against chain 1874 through the public RPC.
   It runs only when `RPC_URL` is set in the environment (read-only). Set `VERIFY_PAYTO` if the sample was exported
   with a pay-to address; otherwise the test passes `--no-payto`.
+
+## Added in the finish run (2026-11-06)
+- `unsupported_hash_version`: exports made before `hashVersion: 2` (which adds `RefundSignerChanged`) are reported as unsupported, not tampered; re-export them.
+- `rpc_disagreement` with `--rpc2` now covers head depth, block timestamps, settlement Transfer logs and the chain id.
+- `range_before_deploy`: on chain 1874 a sidecar `fromBlock` below the router's deploy block is rejected before any scan.
+- `quoted_cell`, `formula_cell`, `control_char`: strict CSV cells. The human report escapes control and bidi characters; RPC URLs (including `--rpc2`) are redacted from every error.
+- Report files are written atomically and never through a symlink or over the CSV/sidecar under test.
