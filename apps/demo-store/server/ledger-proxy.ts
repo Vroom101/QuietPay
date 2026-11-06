@@ -19,14 +19,22 @@ const digest = (v: string) => createHash("sha256").update(v).digest();
 const fail = (code: string, message: string) => ({ error: { code, message } });
 const BLOCK = /^\d{1,15}$/;
 
+/** True when the request carries the dashboard access token or a live wallet sign-in session. */
+export function merchantAuthorized(
+  authorization: string | undefined,
+  config: { dashboardToken?: string; acceptSession?: (token: string) => boolean },
+): boolean {
+  const provided = authorization?.match(/^Bearer (.+)$/)?.[1] ?? "";
+  const staticOk = !!config.dashboardToken && timingSafeEqual(digest(provided), digest(config.dashboardToken));
+  const sessionOk = !!provided && (config.acceptSession?.(provided) ?? false);
+  return staticOk || sessionOk;
+}
+
 export function registerLedgerProxy(app: FastifyInstance, config: LedgerProxyConfig) {
   const doFetch = config.fetch ?? fetch;
   app.get<{ Querystring: { fromBlock?: string; toBlock?: string } }>("/api/merchant/ledger/export", async (req, reply) => {
     reply.header("cache-control", "no-store");
-    const provided = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1] ?? "";
-    const staticOk = !!config.dashboardToken && timingSafeEqual(digest(provided), digest(config.dashboardToken));
-    const sessionOk = !!provided && (config.acceptSession?.(provided) ?? false);
-    if (!staticOk && !sessionOk) return reply.code(401).send(fail("unauthorized", "Dashboard access token was not accepted."));
+    if (!merchantAuthorized(req.headers.authorization, config)) return reply.code(401).send(fail("unauthorized", "Dashboard access token was not accepted."));
     if (!config.ledgerUrl) return reply.code(503).send(fail("ledger_not_configured", "The ledger service is not connected to this store (set QUIETPAY_LEDGER_URL)."));
 
     const params = new URLSearchParams();

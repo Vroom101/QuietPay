@@ -237,3 +237,18 @@ export async function listOrders(opts: { baseUrl: string; apiKey: string; fetch?
   const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/orders`, { headers: { authorization: `Bearer ${opts.apiKey}` } });
   return (await parse(res, ListOrdersResponse)).orders;
 }
+
+export {
+  createQuietPay,
+  memorySubscriptionStore,
+  addInterval,
+  QuietpayConfigError,
+  type QuietPayConfig,
+  type QuietPayClient,
+  type BillingMode,
+  type Interval,
+  type Plan,
+  type Subscription,
+  type SubscriptionStatus,
+  type SubscriptionStore,
+} from "./client.js";
