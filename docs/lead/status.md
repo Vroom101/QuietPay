@@ -15,3 +15,10 @@
 - Merchant-authenticated context, relay and status endpoints, SDK signing, durable recovery and signed refund webhooks implemented.
 - Anvil integration proves payment, partial refund and remaining refund through the SDK, with payer and refundSigner both holding zero native currency.
 - New ABI is generated from the Solidity build. Live deployment and dashboard refund controls remain pending.
+
+## Ledger/export/verifier: implemented locally
+- Read-only packages/indexer polls confirmed router/merchant events in pages of at most 1,000 blocks, persists progress and repairs reorgs.
+- Merchant-scoped ledger APIs, event CSV plus metadata, and independent RPC verification are available through HTTP and CLI.
+- Optional direct-transfer accounting is supported for an explicitly configured payTo/merchant pair; this is not an x402 facilitator implementation.
+- The verifier reports altered, missing, extra and duplicate rows and a repeatable chain checkpoint; pre-range history supports refund-only exports.
+- Live exports, hosting and a verifier/dashboard UI remain pending deployment.

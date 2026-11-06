@@ -21,6 +21,7 @@ Merchant server --createOrder--> Relayer ----- signed webhook ---> Merchant serv
   `keccak256(PAY_TAG, merchantId, orderId, payout, value)`, so changing the payout, amount or order
   invalidates the signature. One receipt per (merchant, order).
 - `packages/shared`: zod schemas, error codes, typed-data builders, fixtures, mock relayer, generated ABI, token facts.
+- `packages/indexer`: persisted event polling, merchant ledger, exact CSV exports and independent completeness verification. See [the ledger guide](packages/indexer/README.md).
 - `packages/relayer`: Fastify service with a guard pipeline, nonce manager, SQLite and signed webhooks with retry.
 - `packages/merchant-sdk`: `createOrder`, `getOrder`, `verifyWebhook`, server-signed `refund`, and refund context/status reads.
 - `packages/widget`: Lit `<quietpay-checkout>` plus a React wrapper.
@@ -61,4 +62,4 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 - Not done yet: live deployment and first real payment, hosted relayer, explorer verification, a browser run of the widget.
 - Gasless partial/full refunds work locally. The merchant refundSigner supplies the full refund amount; the operator absorbs refund gas.
 - Refunds require this branch's router build; an older non-upgradeable deployment must be replaced and its addresses synchronized.
-- Ledger/verifier and x402 remain unimplemented.
+- Ledger/export/verifier work locally; live exports need the deployed router and its deployment block. x402 facilitator/paid API remain unimplemented.

@@ -21,6 +21,9 @@ import { RelayerService } from "../src/service.js";
 import { buildServer } from "../src/server.js";
 import { WebhookWorker } from "../src/webhooks.js";
 import { refund as sdkRefund } from "../../merchant-sdk/src/index.js";
+import * as merchantSdk from "../../merchant-sdk/src/index.js";
+import { buildApp as buildStore } from "../../../apps/demo-store/server/app.js";
+import { preflight } from "../src/preflight.js";
 import { makeCfg } from "./helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,6 +45,9 @@ const RPC = `http://127.0.0.1:${PORT}`;
 describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT payer, real router, signed webhook", () => {
   let anvil: ChildProcess;
   let hookServer: Server;
+  let relayerApp: ReturnType<typeof buildServer> | undefined;
+  let storeApp: ReturnType<typeof buildStore> | undefined;
+  let merchantHookUrl: string | undefined;
   const hooks: { body: string; sig: string }[] = [];
 
   beforeAll(async () => {
@@ -57,19 +63,27 @@ describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT pay
     hookServer = createServer((req, res) => {
       let b = "";
       req.on("data", (c) => (b += c));
-      req.on("end", () => {
+      req.on("end", async () => {
         hooks.push({ body: b, sig: String(req.headers["quietpay-signature"]) });
-        res.writeHead(200).end("ok");
+        try {
+          if (merchantHookUrl) {
+            const delivered = await fetch(merchantHookUrl, { method: "POST", headers: {
+              "content-type": "application/json", "quietpay-signature": String(req.headers["quietpay-signature"]),
+            }, body: b });
+            res.writeHead(delivered.status).end(await delivered.text());
+          } else res.writeHead(503).end("merchant not ready");
+        } catch { res.writeHead(502).end("merchant unreachable"); }
       });
     }).listen(18546);
   }, 30_000);
 
-  afterAll(() => {
+  afterAll(async () => {
+    await Promise.all([relayerApp?.close(), storeApp?.close()]);
     anvil?.kill();
     hookServer?.close();
   });
 
-  it("settles a zero-WBT payment, partial/full refunds and signed webhooks", async () => {
+  it("checks every HTTP route and settles store checkout, partial/full refunds and verified webhooks", async () => {
     const deployer = privateKeyToAccount(DEPLOYER_KEY);
     const relayer = privateKeyToAccount(RELAYER_KEY);
     const chainDef = { id: 31337, name: "anvil", nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [RPC] } } } as const;
@@ -122,16 +136,64 @@ describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT pay
     const worker = new WebhookWorker(db, cfg.webhookSecret);
     const app = buildServer(svc);
 
-    // Merchant creates the order over HTTP with its API key.
-    const created = await app.inject({
-      method: "POST",
-      url: "/v1/orders",
-      headers: { authorization: "Bearer test-key" },
-      payload: { merchantId, amount: "25000000", reference: "e2e-1", webhookUrl: "http://127.0.0.1:18546/hook" },
-    });
+    relayerApp = app;
+    expect(await preflight(cfg)).toMatchObject({ ok: true, chainId: 31337, paused: false });
+    const baseUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    const request = async (opts: { method?: "GET" | "POST" | "OPTIONS"; url: string;
+      headers?: Record<string, string>; payload?: unknown }) => {
+      const res = await fetch(baseUrl + opts.url, { method: opts.method ?? "GET",
+        headers: { ...(opts.payload === undefined ? {} : { "content-type": "application/json" }), ...opts.headers },
+        body: opts.payload === undefined ? undefined : JSON.stringify(opts.payload) });
+      const body = await res.text();
+      return { statusCode: res.status, headers: res.headers, body, json: () => JSON.parse(body) };
+    };
+    const auth = { authorization: "Bearer test-key" };
+    const op = { authorization: `Bearer ${cfg.operatorToken}` };
+    const unknown = "0x" + "ee".repeat(32);
+    for (const url of ["/v1/orders", "/v1/metrics", `/v1/orders/${unknown}/refund-context`,
+      `/v1/orders/${unknown}/refunds`, `/v1/refunds/${unknown}`]) {
+      expect((await request({ url })).statusCode, url).toBe(401);
+      expect((await request({ url, headers: { authorization: "Bearer wrong" } })).statusCode, url).toBe(401);
+    }
+    for (const url of ["/v1/orders", "/v1/admin/pause", "/v1/relay/refund"]) {
+      expect((await request({ method: "POST", url, payload: {} })).statusCode, url).toBe(401);
+    }
+    expect((await request({ url: `/v1/orders/${unknown}` })).statusCode).toBe(404);
+    expect((await request({ method: "POST", url: "/v1/orders", headers: auth,
+      payload: { merchantId: unknown, amount: "1000000" } })).statusCode).toBe(403);
+    const created = await request({ method: "POST", url: "/v1/orders", headers: auth,
+      payload: { merchantId, amount: "1000000", reference: "api-smoke" } });
     expect(created.statusCode).toBe(201);
-    const order = created.json() as Order;
+    expect(created.json()).toMatchObject({ status: "created", amount: "1000000" });
+    expect((await request({ method: "POST", url: "/v1/relay/pay", payload: {} })).statusCode).toBe(400);
+    expect((await request({ method: "POST", url: "/v1/relay/refund", headers: auth, payload: {} })).statusCode).toBe(400);
+    const options = await request({ method: "OPTIONS", url: "/v1/relay/pay" });
+    expect(options.statusCode).toBe(204);
+    expect(options.headers.get("access-control-allow-origin")).toBe("*");
+
+    // A running demo store calls the real SDK, which calls the running relayer.
+    const store = buildStore(merchantSdk, { baseUrl, apiKey: "test-key", merchantId,
+      webhookSecret: cfg.webhookSecret, webhookUrl: "http://127.0.0.1:18546/hook" });
+    storeApp = store;
+    const storeUrl = await store.listen({ host: "127.0.0.1", port: 0 });
+    merchantHookUrl = `${storeUrl}/webhooks/quietpay`;
+    expect((await fetch(`${storeUrl}/api/checkout`, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cartTotal: "-1" }) })).status).toBe(400);
+    const checkout = await fetch(`${storeUrl}/api/checkout`, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cartTotal: "25.00" }) });
+    expect(checkout.status).toBe(200);
+    const { orderId } = await checkout.json() as { orderId: Hex };
+    const orderRead = await request({ url: `/v1/orders/${orderId}` });
+    expect(orderRead.statusCode).toBe(200);
+    const order = orderRead.json() as Order;
+    expect(order.amount).toBe("25000000");
     expect(order.fee).toBe("50000");
+    const orders = await request({ url: "/v1/orders", headers: auth });
+    expect(orders.statusCode).toBe(200);
+    expect(orders.json().orders.some((o: Order) => o.id === order.id)).toBe(true);
+    expect((await fetch(`${storeUrl}/api/orders/${order.id}/paid`)).status).toBe(200);
+    expect(await (await fetch(`${storeUrl}/api/orders/${order.id}/paid`)).json()).toMatchObject({ paid: false });
+    expect((await request({ url: `/v1/orders/${order.id}/refund-context`, headers: auth })).statusCode).toBe(422);
 
     // Payer signs once.
     const now = Math.floor(Date.now() / 1000);
@@ -150,7 +212,19 @@ describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT pay
       }),
     );
 
-    const relay = await app.inject({
+    const payPayload = { orderId: order.id, payer: payer.address, validAfter, validBefore, signature, amount: order.amount };
+    const nonceBefore = await pub.getTransactionCount({ address: relayer.address, blockTag: "pending" });
+    expect((await request({ method: "POST", url: "/v1/admin/pause", headers: op, payload: { paused: true } })).statusCode).toBe(200);
+    const blocked = await request({ method: "POST", url: "/v1/relay/pay", payload: payPayload });
+    expect(blocked.statusCode).toBe(503);
+    expect(blocked.json().error.code).toBe("relayer_paused");
+    expect(await pub.getTransactionCount({ address: relayer.address, blockTag: "pending" })).toBe(nonceBefore);
+    expect((await request({ method: "POST", url: "/v1/admin/pause", headers: op, payload: { paused: false } })).statusCode).toBe(200);
+    const mismatched = await request({ method: "POST", url: "/v1/relay/pay", payload: { ...payPayload, amount: "1" } });
+    expect(mismatched.statusCode).toBe(400);
+    expect(mismatched.json().error.code).toBe("amount_mismatch");
+
+    const relay = await request({
       method: "POST",
       url: "/v1/relay/pay",
       payload: { orderId: order.id, payer: payer.address, validAfter, validBefore, signature, amount: order.amount },
@@ -164,7 +238,7 @@ describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT pay
       body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "evm_mine", params: [] }) });
 
     // Repeating returns the same hash.
-    const repeat = await app.inject({
+    const repeat = await request({
       method: "POST",
       url: "/v1/relay/pay",
       payload: { orderId: order.id, payer: payer.address, validAfter, validBefore, signature },
@@ -174,7 +248,7 @@ describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT pay
     // Poll until settled.
     let settled: Order | undefined;
     for (let i = 0; i < 40; i++) {
-      const o = (await app.inject({ method: "GET", url: `/v1/orders/${order.id}` })).json() as Order;
+      const o = (await request({ method: "GET", url: `/v1/orders/${order.id}` })).json() as Order;
       if (o.status === "settled") {
         settled = o;
         break;
@@ -206,7 +280,7 @@ describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT pay
         token: usdt,
       }),
     );
-    const again = await app.inject({
+    const again = await request({
       method: "POST",
       url: "/v1/relay/pay",
       payload: { orderId: order.id, payer: payer.address, validAfter, validBefore: vb2, signature: signature2 },
@@ -215,7 +289,7 @@ describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT pay
     expect(again.json().error.code).toBe("already_settled");
 
     // Health reflects the router and the unpaused state.
-    const health = (await app.inject({ method: "GET", url: "/v1/health" })).json();
+    const health = (await request({ method: "GET", url: "/v1/health" })).json();
     expect(health.router.toLowerCase()).toBe(router.toLowerCase());
     expect(health.paused).toBe(false);
 
@@ -226,20 +300,20 @@ describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT pay
     const event = WebhookEvent.parse(JSON.parse(hooks[0]!.body));
     expect(event.type).toBe("payment.settled");
     expect(event.data.txHash).toBe(txHash);
+    expect(await (await fetch(`${storeUrl}/api/orders/${order.id}/paid`)).json()).toMatchObject({ paid: true, orderId: order.id, txHash });
+    const delivered = hooks[0]!;
+    const replay = await fetch(merchantHookUrl, { method: "POST", headers: { "content-type": "application/json", "quietpay-signature": delivered.sig }, body: delivered.body });
+    expect(await replay.json()).toMatchObject({ received: true, duplicate: true });
+    expect((await fetch(merchantHookUrl, { method: "POST", headers: { "content-type": "application/json", "quietpay-signature": delivered.sig },
+      body: delivered.body.replace("25000000", "25000001") })).status).toBe(400);
     expect(await worker.tick()).toBe(0); // delivered once, not redelivered
 
     // Fund a separate, zero-native-balance refund signer. Payout remains unchanged.
     await pub.waitForTransactionReceipt({ hash: await wallet.writeContract({ address: usdt,
       abi: usdtJson.abi, functionName: "mint", args: [refundSigner.address, 25_000_000n] }) });
-    const localFetch: typeof fetch = async (url, init) => {
-      const res = await app.inject({ method: (init?.method ?? "GET") as "GET" | "POST",
-        url: new URL(String(url)).pathname, headers: init?.headers as Record<string, string>,
-        payload: init?.body ? String(init.body) : undefined });
-      return new Response(res.body, { status: res.statusCode, headers: { "content-type": "application/json" } });
-    };
-    const refundOptions = { baseUrl: "http://relayer.test", apiKey: "test-key", merchantId,
+    const refundOptions = { baseUrl, apiKey: "test-key", merchantId,
       orderId: order.id as Hex, router, refundSignerPrivateKey: refundKey, chainId: 31337,
-      tokenAddress: usdt, fetch: localFetch };
+      tokenAddress: usdt };
     for (const [index, amount] of [[0, "5000000"], [1, "20000000"]] as const) {
       const refund = await sdkRefund({ ...refundOptions, refundIndex: index, amount });
       await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" },
@@ -248,8 +322,15 @@ describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT pay
         if (svc.refunds.get(merchantId, refund.id).status === "settled") break;
         await new Promise(r => setTimeout(r, 100));
       }
-      expect(svc.refunds.get(merchantId, refund.id).status).toBe("settled");
-      expect(svc.getOrder(order.id).status).toBe(index === 0 ? "partially_refunded" : "refunded");
+      const refundRead = await request({ url: `/v1/refunds/${refund.id}`, headers: auth });
+      expect(refundRead.statusCode).toBe(200);
+      expect(refundRead.json()).toMatchObject({ id: refund.id, amount, status: "settled" });
+      const history = await request({ url: `/v1/orders/${order.id}/refunds`, headers: auth });
+      expect(history.statusCode).toBe(200);
+      expect(history.json().refunds).toHaveLength(index + 1);
+      const finalOrder = (await request({ url: `/v1/orders/${order.id}` })).json();
+      expect(finalOrder.status).toBe(index === 0 ? "partially_refunded" : "refunded");
+      expect(finalOrder.refundCount).toBe(index + 1);
       expect(await worker.tick()).toBe(1);
       const delivery = hooks.at(-1)!;
       expect(verifyWebhookSignature(cfg.webhookSecret, delivery.body, delivery.sig)).toBe(true);
@@ -267,6 +348,14 @@ describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT pay
     expect(await pub.getBalance({ address: payer.address })).toBe(0n);
     expect(await pub.getBalance({ address: refundSigner.address })).toBe(0n);
     expect(svc.getOrder(order.id).txHash).toBe(txHash);
+    const metrics = await request({ url: "/v1/metrics", headers: op });
+    expect(metrics.statusCode).toBe(200);
+    expect(metrics.json()).toMatchObject({ paused: false, lowBalance: false, orders: { refunded: 1 } });
+    expect(Number(metrics.json().balanceWbt)).toBeGreaterThan(0);
+    const finalContext = await request({ url: `/v1/orders/${order.id}/refund-context`, headers: auth });
+    expect(finalContext.statusCode).toBe(200);
+    expect(finalContext.json()).toMatchObject({ refunded: "25000000", refundIndex: 2, refundBalance: "0" });
+    await store.close();
     await app.close();
     db.close();
 
