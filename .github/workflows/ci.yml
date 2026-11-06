@@ -29,3 +29,5 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Build the SDK and check the packaged output
+        run: pnpm --filter @quietpay/merchant-sdk build && node packages/merchant-sdk/scripts/check-dist.mjs

@@ -60,7 +60,8 @@ export interface CreateOrderOptions {
 
 export interface GetOrderOptions {
   baseUrl: string;
-  orderId: Hex;
+  /** `Order.id` as returned by createOrder (0x + 64 hex). Validated at runtime, so a plain string is accepted. */
+  orderId: string;
   fetch?: typeof fetch;
 }
 

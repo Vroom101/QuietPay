@@ -43,7 +43,7 @@ export async function createOrder(opts: {
   return parse(res, CreateOrderResponse);
 }
 
-export async function getOrder(opts: { baseUrl: string; orderId: `0x${string}` }): Promise<Order> {
+export async function getOrder(opts: { baseUrl: string; orderId: string }): Promise<Order> {
   const res = await fetch(`${trim(opts.baseUrl)}/v1/orders/${opts.orderId}`);
   return parse(res, GetOrderResponse);
 }

@@ -1,7 +1,7 @@
 {
   "name": "@quietpay/merchant-sdk",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -9,18 +9,45 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:dist": "vitest run --config vitest.dist.config.ts",
+    "prepack": "pnpm build"
   },
   "dependencies": {
-    "@quietpay/shared": "workspace:*",
     "viem": "^2.21.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "fast-check": "3.23.2",
+    "tsup": "8.3.5",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "@quietpay/shared": "workspace:*"
+  },
+  "description": "QuietPay merchant SDK: create gasless USDT orders, read status, refund, and verify signed webhooks.",
+  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      }
+    }
   }
 }
