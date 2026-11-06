@@ -1,7 +1,5 @@
 #!/usr/bin/env tsx
-import { writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import { mkdirSync } from "node:fs";
+import { writeFilesAtomic } from "./atomic.js";
 import { assertQualifyingConfig, getDeployment, getQualifyingDeployment, QUALIFYING_CHAIN_ID } from "@quietpay/shared";
 import { IndexerDb } from "./db.js";
 import { buildExport, indexOnce, rebuild, type IndexerConfig } from "./indexer.js";
@@ -108,9 +106,10 @@ async function main() {
         to: to ? Number(to) : undefined,
         generatedAt: process.env.GENERATED_AT,
       });
-      mkdirSync(dirname(out), { recursive: true });
-      writeFileSync(out, res.csv);
-      writeFileSync(`${out}.meta.json`, JSON.stringify(res.meta, null, 2) + "\n");
+      writeFilesAtomic([
+        { path: out, data: res.csv },
+        { path: `${out}.meta.json`, data: JSON.stringify(res.meta, null, 2) + "\n" },
+      ]);
       log(`wrote ${res.rows.length} rows to ${out} (blocks ${res.meta.fromBlock}-${res.meta.toBlock}, finalized head ${db.getCursor()?.block})`);
     } else {
       console.log(USAGE);

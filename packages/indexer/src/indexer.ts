@@ -28,6 +28,9 @@ export interface Deps {
   onRequest?: (from: number, to: number) => void;
 }
 
+/** Upper bound on blocks read and held in memory per committed chunk. */
+export const CHUNK_BLOCKS = 20_000;
+
 const lc = (s: string) => s.toLowerCase();
 
 export interface IndexResult {
@@ -67,51 +70,59 @@ export async function indexOnce(d: Deps): Promise<IndexResult> {
   if (finalized < start) return { from: start, to: finalized, newEvents: 0, head, finalized };
 
   const paging = { pageSize: cfg.pageSize, sleep: d.sleep, onRequest: d.onRequest };
-  const routerLogs = await getLogsPaged(src, { address: cfg.router }, start, finalized, paging);
-  const decoded: { log: ChainLog; kind: RawEvent["kind"]; args: Record<string, string> }[] = [];
-  for (const log of routerLogs) {
-    const ev = decodeRouterLog(log);
-    if (ev) decoded.push({ log, ...ev });
-  }
-  if (cfg.facilitatorPayTo) {
-    const toTopic = pad(cfg.facilitatorPayTo as Hex, { size: 32 }).toLowerCase();
-    const transfers = await getLogsPaged(src, { address: cfg.usdt, topics: [TRANSFER_TOPIC, null, toTopic] }, start, finalized, paging);
-    for (const log of transfers) {
-      const ev = decodeTransferLog(log);
+  let total = 0;
+  let count = 0;
+  // Bounded chunks: each one is committed together with the cursor, so a late failure keeps earlier progress,
+  // memory is bounded by the chunk, and a restart resumes from the last committed chunk.
+  for (let cs = start; cs <= finalized; cs = Math.min(cs + CHUNK_BLOCKS - 1, finalized) + 1) {
+    const ce = Math.min(cs + CHUNK_BLOCKS - 1, finalized);
+    const routerLogs = await getLogsPaged(src, { address: cfg.router }, cs, ce, paging);
+    const decoded: { log: ChainLog; kind: RawEvent["kind"]; args: Record<string, string> }[] = [];
+    for (const log of routerLogs) {
+      const ev = decodeRouterLog(log);
       if (ev) decoded.push({ log, ...ev });
     }
-  }
+    if (cfg.facilitatorPayTo) {
+      const toTopic = pad(cfg.facilitatorPayTo as Hex, { size: 32 }).toLowerCase();
+      const transfers = await getLogsPaged(src, { address: cfg.usdt, topics: [TRANSFER_TOPIC, null, toTopic] }, cs, ce, paging);
+      for (const log of transfers) {
+        const ev = decodeTransferLog(log);
+        if (ev) decoded.push({ log, ...ev });
+      }
+    }
 
-  const blocks = new Map<number, number>(); // block -> timestamp
-  for (const { log } of decoded) {
-    if (!blocks.has(log.blockNumber)) blocks.set(log.blockNumber, (await src.getBlock(log.blockNumber)).timestamp);
-  }
-  const events: RawEvent[] = decoded.map(({ log, kind, args }) => ({
-    txHash: lc(log.transactionHash),
-    logIndex: log.logIndex,
-    block: log.blockNumber,
-    blockHash: lc(log.blockHash),
-    timestamp: blocks.get(log.blockNumber)!,
-    address: lc(log.address),
-    kind,
-    args,
-  }));
+    const blocks = new Map<number, number>(); // block -> timestamp
+    for (const { log } of decoded) {
+      if (!blocks.has(log.blockNumber)) blocks.set(log.blockNumber, (await src.getBlock(log.blockNumber)).timestamp);
+    }
+    const events: RawEvent[] = decoded.map(({ log, kind, args }) => ({
+      txHash: lc(log.transactionHash),
+      logIndex: log.logIndex,
+      block: log.blockNumber,
+      blockHash: lc(log.blockHash),
+      timestamp: blocks.get(log.blockNumber)!,
+      address: lc(log.address),
+      kind,
+      args,
+    }));
 
-  const finalizedHash = (await src.getBlock(finalized)).hash;
-  const newEvents = db.transaction(() => {
-    const n = db.insertEvents(events);
-    db.setCursor(finalized, finalizedHash);
-    // Recompute rows for everything touched by this batch (orders whose Paid/Refunded arrived, new transfers).
-    const all = buildLedgerRows(db.events(), ledgerCfg(cfg));
-    const touchedOrders = new Set(
-      events.filter((e) => e.kind === "Paid" || e.kind === "Refunded").map((e) => `${e.args.merchantId}:${e.args.orderId}`),
-    );
-    const touchedTxs = new Set(events.map((e) => `${e.txHash}:${e.logIndex}`));
-    db.upsertLedger(all.filter((r) => touchedOrders.has(r.key) || touchedTxs.has(r.key)));
-    return n;
-  });
-  d.log?.(`indexed blocks ${start}-${finalized}: ${events.length} events (${newEvents} new)`);
-  return { from: start, to: finalized, newEvents, head, finalized };
+    const chunkHash = (await src.getBlock(ce)).hash;
+    total += db.transaction(() => {
+      const n = db.insertEvents(events);
+      db.setCursor(ce, chunkHash);
+      // Recompute rows for everything touched by this chunk (orders whose Paid/Refunded arrived, new transfers).
+      const all = buildLedgerRows(db.events(), ledgerCfg(cfg));
+      const touchedOrders = new Set(
+        events.filter((e) => e.kind === "Paid" || e.kind === "Refunded").map((e) => `${e.args.merchantId}:${e.args.orderId}`),
+      );
+      const touchedTxs = new Set(events.map((e) => `${e.txHash}:${e.logIndex}`));
+      db.upsertLedger(all.filter((r) => touchedOrders.has(r.key) || touchedTxs.has(r.key)));
+      return n;
+    });
+    count += events.length;
+  }
+  d.log?.(`indexed blocks ${start}-${finalized}: ${count} events (${total} new)`);
+  return { from: start, to: finalized, newEvents: total, head, finalized };
 }
 
 /** Wipes the derived ledger and recomputes it from raw events. Raw events are untouched. */

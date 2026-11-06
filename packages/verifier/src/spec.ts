@@ -216,6 +216,8 @@ const tooWide = (e: unknown) =>
 
 const isRateLimit = (e: unknown) => /429|rate.?limit|too many requests|exceeded/i.test(String((e as { message?: string })?.message ?? e));
 
+const REGROW_AFTER = 24;
+
 /** Pages eth_getLogs in <= `page` blocks, halving the page when the node says the range is too wide. */
 export async function fetchPaged(
   src: SpecLogSource,
@@ -227,7 +229,9 @@ export async function fetchPaged(
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let retries = 0;
   const out: SpecLog[] = [];
-  let size = Math.min(opts.page ?? 1000, 1000);
+  const maxSize = Math.min(opts.page ?? 1000, 1000);
+  let size = maxSize;
+  let okRun = 0;
   let a = from;
   while (a <= to) {
     const b = Math.min(a + size - 1, to);
@@ -236,8 +240,16 @@ export async function fetchPaged(
       for (const l of got) if (!(l as { removed?: boolean }).removed) out.push(l);
       a = b + 1;
       retries = 0;
+      // Regrow after a run of successes so one dense block does not shrink the rest of the scan.
+      if (++okRun >= REGROW_AFTER && size < maxSize) {
+        size = Math.min(maxSize, size * 4);
+        okRun = 0;
+      }
     } catch (e) {
-      if (tooWide(e) && size > 1) size = Math.max(1, Math.floor(size / 2));
+      if (tooWide(e) && size > 1) {
+        size = Math.max(1, Math.floor(size / 2));
+        okRun = 0;
+      }
       else if (isRateLimit(e) && retries < 6) {
         await sleep(Math.min(30_000, 500 * 2 ** retries));
         retries += 1;

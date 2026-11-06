@@ -202,6 +202,8 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
       });
     }
   }
+  // The reader's anchor bounds the work: a contradicting sidecar range is already a FAIL, do not scan it.
+  if (issues.some((i) => i.code === "range_mismatch")) return finish();
 
   // 2. Finality: refuse a range that reaches past head - confirmations.
   ran.add("finality");
@@ -309,10 +311,13 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
   ran.add("invariants");
   issues.push(...(await checkInvariants(csvRows, events, { src, usdt, router, decimals })));
 
-  // 6. Block timestamps.
+  // 6. Block timestamps. Only blocks that hold a chain event are read: any other row is already an extra_row or
+  // wrong_block, and fetching its header would let the CSV size drive the RPC bill.
   ran.add("timestamps");
+  const eventBlocks = new Set(events.map((e) => e.block));
   for (const r of csvRows) {
     if (r.block < meta.fromBlock || r.block > meta.toBlock) continue; // already reported; do not read non-final blocks
+    if (!eventBlocks.has(r.block)) continue;
     const want = new Date((await timestamp(r.block)) * 1000).toISOString();
     if (r.cells.date_utc !== want) {
       issues.push({ check: "timestamps", code: "wrong_date", line: r.line, key: r.key, field: "date_utc", expected: want, actual: r.cells.date_utc, message: `date_utc ${r.cells.date_utc} is not the timestamp of block ${r.block} (${want})` });
@@ -328,7 +333,7 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
     if (head2 - meta.confirmations < meta.toBlock) {
       disagree(`the second node's head ${head2} does not finalise toBlock ${meta.toBlock} with ${meta.confirmations} confirmations (first node head ${head})`, `>= ${meta.toBlock + meta.confirmations}`, String(head2));
     }
-    const blocks = new Set<number>([...csvRows.map((r) => r.block), ...events.filter((e) => e.kind === "Paid").map((e) => e.block)]);
+    const blocks = new Set<number>([...csvRows.map((r) => r.block).filter((b) => eventBlocks.has(b)), ...events.filter((e) => e.kind === "Paid").map((e) => e.block)]);
     for (const b of [...blocks].sort((x, y) => x - y)) {
       if (b < meta.fromBlock || b > meta.toBlock) continue;
       const t2 = (await n2.getBlock(b)).timestamp;
@@ -397,18 +402,39 @@ export function compareRows(csvRows: CsvRow[], expected: SpecRow[]): Issue[] {
       used.add(e);
     } else extra.push(c);
   }
-  const left = () => expected.filter((e) => !used.has(e));
+  // Indexes (in expected order) so each leftover is paired in O(1) amortised; consumed entries are skipped lazily.
+  type Queue = { items: SpecRow[]; at: number };
+  const index = (keyOf: (x: SpecRow) => string) => {
+    const m = new Map<string, Queue>();
+    for (const x of expected) {
+      const k = keyOf(x);
+      const q = m.get(k);
+      if (q) q.items.push(x);
+      else m.set(k, { items: [x], at: 0 });
+    }
+    return m;
+  };
+  const take = (m: Map<string, Queue>, k: string): SpecRow | undefined => {
+    const q = m.get(k);
+    if (!q) return undefined;
+    while (q.at < q.items.length && used.has(q.items[q.at]!)) q.at += 1;
+    return q.items[q.at];
+  };
+  const byTxSource = index((x) => `${x.txHash} ${x.source}`);
+  const byTx = index((x) => x.txHash);
+  const byBlockLog = index((x) => `${x.block}:${x.logIndex}`);
   const stillExtra: CsvRow[] = [];
   for (const c of extra) {
     const e =
-      left().find((x) => x.txHash === c.cells.tx_hash && x.source === c.cells.source) ??
-      left().find((x) => x.txHash === c.cells.tx_hash) ??
-      left().find((x) => x.block === c.block && x.logIndex === c.logIndex);
+      take(byTxSource, `${c.cells.tx_hash} ${c.cells.source}`) ??
+      take(byTx, c.cells.tx_hash as string) ??
+      take(byBlockLog, `${c.block}:${c.logIndex}`);
     if (e) {
       pairs.push([c, e]);
       used.add(e);
     } else stillExtra.push(c);
   }
+  const left = () => expected.filter((e) => !used.has(e));
 
   for (const [c, e] of pairs) {
     const want = expectedCells(e);
