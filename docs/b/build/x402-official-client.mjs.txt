@@ -1,0 +1,19 @@
+import { x402Client } from "@x402/core/client";
+import { wrapFetchWithPayment } from "@x402/fetch";
+import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { privateKeyToAccount } from "viem/accounts";
+const out = {};
+try {
+  const signer = privateKeyToAccount(process.env.PAYER_KEY);
+  const client = new x402Client();
+  client.register("eip155:*", new ExactEvmScheme(signer));
+if (process.env.OPT_IN === "1") client.setSpendControls({ allowedAssets: [{ network: process.env.NETWORK, asset: process.env.TOKEN, maxAmountPerPayment: "1000000" }] });
+  const f = wrapFetchWithPayment(fetch, client);
+  const res = await f(process.env.URL);
+  out.status = res.status;
+  out.body = (await res.text()).slice(0, 300);
+  out.paymentResponse = res.headers.get("payment-response") ? "present" : "absent";
+} catch (e) {
+  out.error = String(e && e.message ? e.message : e).slice(0, 500);
+}
+console.log("RESULT " + JSON.stringify(out));

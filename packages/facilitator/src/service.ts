@@ -229,6 +229,20 @@ export class FacilitatorService {
       };
     }
   }
+  /** Read-only status for the payer-facing lookup. Never returns lease, fingerprint, request or merchant data. */
+  paymentStatus(payer: string, nonce: string): { status: "settled" | "pending" | "failed" | "unknown"; transaction?: string } {
+    const id = keccak256(
+      stringToHex(
+        JSON.stringify([this.relayer.cfg.chainId, this.relayer.cfg.usdt.toLowerCase(), payer.toLowerCase(), nonce.toLowerCase()]),
+      ),
+    );
+    const row = this.store.get(id);
+    if (!row) return { status: "unknown" };
+    if (row.status === "settled" && row.tx_hash) return { status: "settled", transaction: row.tx_hash };
+    if (row.status === "settling") return { status: "pending" };
+    if (row.status === "failed") return { status: "failed" };
+    return { status: "unknown" };
+  }
   private newRow(data: ReturnType<FacilitatorService["inspect"]>): PaymentRow {
     const { req, policy, auth, id } = data;
     return {
