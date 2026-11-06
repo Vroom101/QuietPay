@@ -13,7 +13,17 @@ export function buildPaidApi(options: {
   fetch?: typeof fetch;
   timeoutMs?: number;
 }) {
-  const app = Fastify({ logger: false });
+  // The routes are GET-only and read no body, so the body limit is small; the timeouts stop slow clients holding sockets.
+  const app = Fastify({ logger: false, bodyLimit: 16 * 1024, requestTimeout: 30_000, connectionTimeout: 60_000 });
+  app.server.headersTimeout = 15_000;
+  // Fixed bodies: Fastify's defaults would echo the requested method and path, or an internal error message.
+  app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: { code: "not_found", message: "Not found." } }));
+  app.setErrorHandler((err, _req, reply) => {
+    const status = (err as { statusCode?: number }).statusCode;
+    if (typeof status === "number" && status >= 400 && status <= 499)
+      return reply.code(status).send({ error: { code: "invalid_request", message: "The request was not valid." } });
+    return reply.code(500).send({ error: { code: "resource_unavailable", message: "Something went wrong on our side." } });
+  });
   app.addHook("onRequest", async (req, reply) => {
     reply.header("access-control-allow-origin", "*");
     reply.header(

@@ -192,6 +192,7 @@ export function makeCfg(over: Partial<Config> = {}): Config {
     payerCap: 100_000_000n, // 100 USDT
     relayFee: 50_000n,
     settleConfirmations: 1,
+    corsOrigins: [],
     rateLimitPerMinute: 1000,
     tokenDomain: { name: "Tether USD", version: "1" },
     explorerBaseUrl: "https://explorer.test",

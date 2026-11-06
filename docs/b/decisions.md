@@ -10,3 +10,7 @@
 
 - B2.3 relayer anvil suites: fixed ports (18545/18546 etc.) kept but guarded by `assertPortFree` (fails with a clear message on a stale anvil) and `waitForRpc` (throws on timeout). Full port-0 conversion deferred: the e2e suite hands the port to child processes and config, so the guard gives the same safety for less churn.
 - B2.3 `pentest-round9`: the wall-clock `<350ms` assertion is replaced by a count of worker passes (<=2), which tests the same fairness property without timing.
+
+- B2.4 CORS: public routes keep `*` (the browser widget calls order status and relay/pay). Authenticated routes get no CORS headers unless the origin is listed in the new `CORS_ORIGINS` env. This protects the bearer-token routes by default; the merchant dashboard (Person A) calls `GET /v1/orders` from the browser and now needs its origin listed (see needs-from-others.md).
+- B2.4 unknown routes return `{error:{code:"not_found"}}`; `not_found` is not one of the frozen shared ErrorCodes, so it is sent as a raw body outside the shared schema. The widget never produces unknown routes, so the contract is unaffected.
+- B2.4 `GET /v1/orders/:id` still has no route-level limiter (it returns only public order data and ids are 32 random bytes); recorded, not changed.

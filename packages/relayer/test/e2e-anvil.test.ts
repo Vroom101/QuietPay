@@ -29,7 +29,8 @@ const routerArtifact = resolve(out, "PaymentRouter.sol/PaymentRouter.json");
 const usdtArtifact = resolve(out, "MockAuthToken.sol/MockAuthToken.json");
 const haveArtifacts = existsSync(routerArtifact) && existsSync(usdtArtifact);
 requireInCi(haveArtifacts, "compiled contracts (forge build)");
-requireInCi(spawnSync("anvil", ["--version"], { stdio: "ignore" }).status === 0, "anvil");
+const hasAnvil = spawnSync("anvil", ["--version"], { stdio: "ignore" }).status === 0;
+requireInCi(hasAnvil, "anvil");
 
 // Standard anvil dev keys (public, test-only).
 const DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
@@ -39,7 +40,7 @@ const PORT = 18545;
 const RPC = `http://127.0.0.1:${PORT}`;
 const HOOK_PORT = 18546;
 
-describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real router, signed webhook", () => {
+describe.skipIf(!haveArtifacts || !hasAnvil)("end to end on anvil: zero-WBT payer, real router, signed webhook", () => {
   let anvil: ChildProcess;
   let hookServer: Server;
   const hooks: { body: string; sig: string }[] = [];

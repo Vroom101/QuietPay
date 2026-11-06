@@ -36,16 +36,21 @@ export async function registerFacilitator(
     });
     const merchant = (auth?: string) =>
       service.relayer.cfg.apiKeys.get(auth!.slice(7).trim())!;
-    api.setErrorHandler((e, _req, reply) =>
-      reply
-        .code(400)
-        .send({
-          error: {
-            code: e instanceof PaymentError ? e.reason : "invalid_payload",
-            message: "Invalid facilitator request.",
-          },
-        }),
-    );
+    // Client errors raised by Fastify itself (oversized body, wrong content type, malformed JSON) keep their own
+    // 4xx status with a fixed message; everything else from the payment code is a 400 carrying the reason code.
+    api.setErrorHandler((e, _req, reply) => {
+      const status = (e as { statusCode?: number }).statusCode;
+      if (typeof status === "number" && status >= 400 && status <= 499 && !(e instanceof PaymentError)) {
+        const code = status === 413 ? "payload_too_large" : status === 415 ? "unsupported_media_type" : "invalid_payload";
+        return reply.code(status).send({ error: { code, message: "Invalid facilitator request." } });
+      }
+      return reply.code(400).send({
+        error: {
+          code: e instanceof PaymentError ? e.reason : "invalid_payload",
+          message: "Invalid facilitator request.",
+        },
+      });
+    });
     api.get("/supported", async () => ({
       kinds: [
         {

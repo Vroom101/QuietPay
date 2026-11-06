@@ -25,17 +25,39 @@ function bearer(req: FastifyRequest): string | undefined {
 }
 
 export function buildServer(svc: RelayerService): FastifyInstance {
-  const app = Fastify({ logger: false, bodyLimit: 16 * 1024 });
+  // Request timeouts: a client that trickles bytes cannot hold a socket open forever (slowloris).
+  const app = Fastify({ logger: false, bodyLimit: 16 * 1024, requestTimeout: 30_000, connectionTimeout: 60_000 });
+  app.server.headersTimeout = 15_000;
 
   // X-Forwarded-For is only read when TRUST_PROXY_HOPS > 0 (explicit opt-in for a known proxy chain).
   const ipOf = (req: FastifyRequest): string => resolveClientIp(req.ip, req.headers["x-forwarded-for"], svc.cfg.trustProxyHops ?? 0);
 
+  // CORS. Public routes (health, order status, the relay endpoint the browser widget calls, /supported) answer any origin.
+  // Authenticated routes carry a bearer key and are called server to server, so they never get a wildcard: they only
+  // answer origins listed in CORS_ORIGINS (for example a merchant dashboard), echoed back with Vary: Origin.
+  const publicPath = (url: string): boolean => {
+    const path = url.split("?")[0] ?? "";
+    return path === "/v1/health" || path === "/supported" || path === "/v1/relay/pay" || /^\/v1\/orders\/[^/]+$/.test(path);
+  };
+  const corsOrigins = new Set(svc.cfg.corsOrigins ?? []);
   app.addHook("onRequest", async (req, reply) => {
-    reply.header("access-control-allow-origin", "*");
-    reply.header("access-control-allow-headers", "content-type, authorization");
-    reply.header("access-control-allow-methods", "GET, POST, OPTIONS");
+    const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+    const allowListed = origin !== undefined && corsOrigins.has(origin);
+    if (allowListed) {
+      reply.header("access-control-allow-origin", origin);
+      reply.header("vary", "Origin");
+    } else if (publicPath(req.url)) {
+      reply.header("access-control-allow-origin", "*");
+    }
+    if (allowListed || publicPath(req.url)) {
+      reply.header("access-control-allow-headers", "content-type, authorization");
+      reply.header("access-control-allow-methods", "GET, POST, OPTIONS");
+    }
     if (req.method === "OPTIONS") return reply.code(204).send();
   });
+
+  // One fixed body for unknown routes: Fastify's default would echo the requested method and path back.
+  app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: { code: "not_found", message: "Not found." } }));
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof QuietpayError) return reply.code(err.status).send(err.toBody());
