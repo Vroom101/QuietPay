@@ -23,3 +23,4 @@
 07:02 Final | report written | phases 1,2,4 done; phase 3 live payment/refund pending: unfunded; poller running
 - 08:30 fix(relayer): fee in pay nonce, stand-in case removed (CI typecheck)
 - 08:35 test(dashboard): exact six-decimal expectations (CI)
+- 09:36 live payment + refund done on qualifying router; demo-store 400 fix
