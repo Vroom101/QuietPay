@@ -161,3 +161,28 @@ describe("route matrix: timeouts", () => {
     expect(app.server.headersTimeout).toBeGreaterThan(0);
   });
 });
+
+describe("route matrix: facilitator rate limit follows the trusted-proxy setting (round B finding RB-8)", () => {
+  async function limited(hops: number) {
+    const e = setup({ rateLimitPerMinute: 3, trustProxyHops: hops });
+    const a = buildServer(e.svc);
+    await registerFacilitator(a, e.service);
+    await a.ready();
+    const hit = (xff: string) =>
+      a.inject({ method: "POST", url: "/verify", remoteAddress: "10.0.0.1", headers: { authorization: "Bearer test-key", "x-forwarded-for": xff, "content-type": "application/json" }, payload: "{}" });
+    return { a, hit };
+  }
+  it("behind one trusted proxy, one noisy client does not exhaust the limit of other clients", async () => {
+    const { a, hit } = await limited(1);
+    for (let i = 0; i < 6; i++) await hit("198.51.100.1");
+    expect((await hit("198.51.100.1")).statusCode).toBe(429);
+    expect((await hit("198.51.100.2")).statusCode).not.toBe(429);
+    await a.close();
+  });
+  it("with no trusted proxy, a spoofed X-Forwarded-For buys no extra budget", async () => {
+    const { a, hit } = await limited(0);
+    for (let i = 0; i < 3; i++) await hit(`203.0.113.${i}`);
+    expect((await hit("203.0.113.99")).statusCode).toBe(429);
+    await a.close();
+  });
+});

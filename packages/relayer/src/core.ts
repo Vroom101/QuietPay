@@ -6,4 +6,4 @@ export { RelayerService } from "./service.js";
 export { buildServer } from "./server.js";
 export { preflight } from "./preflight.js";
 export { WebhookWorker } from "./webhooks.js";
-export { RateLimiter } from "./ratelimit.js";
+export { RateLimiter, clientKey, resolveClientIp } from "./ratelimit.js";
