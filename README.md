@@ -21,8 +21,11 @@ Merchant server --createOrder--> Relayer ----- signed webhook ---> Merchant serv
   `keccak256(PAY_TAG, merchantId, orderId, payout, value)`, so changing the payout, amount or order
   invalidates the signature. One receipt per (merchant, order).
 - `packages/shared`: zod schemas, error codes, typed-data builders, fixtures, mock relayer, generated ABI, token facts.
+- `packages/facilitator`: x402 v2 verification and settlement in a combined relayer process; [operations guide](packages/facilitator/README.md).
+- `apps/paid-api`: two settlement-gated demo endpoints using SDK `paywall()` middleware.
+- `packages/indexer`: persisted event polling, merchant ledger, exact CSV exports and independent completeness verification. See [the ledger guide](packages/indexer/README.md).
 - `packages/relayer`: Fastify service with a guard pipeline, nonce manager, SQLite and signed webhooks with retry.
-- `packages/merchant-sdk`: `createOrder`, `getOrder`, `verifyWebhook`, and a `refund` stub (P1).
+- `packages/merchant-sdk`: `createOrder`, `getOrder`, `verifyWebhook`, server-signed `refund`, and refund context/status reads.
 - `packages/widget`: Lit `<quietpay-checkout>` plus a React wrapper.
 - `apps/demo-store`, `apps/merchant-dashboard`: the demo shop and the orders view.
 
@@ -36,7 +39,7 @@ compromised relayer can refuse service but cannot redirect funds or exceed the f
 
 ```
 pnpm install
-cd contracts && forge install && forge test       # 25 tests
+cd contracts && forge install && forge test       # 37 tests
 forge build                                       # needed once for the anvil end-to-end test
 cd .. && pnpm -r typecheck && pnpm -r test
 pnpm --filter @quietpay/shared mock               # mock relayer on :8787 for frontend work
@@ -56,6 +59,12 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 - Testnet demo uses `DemoUSDT`, a valueless stand-in with a public faucet, because the official test USDT has no
   faucet. It is not Tether. Mainnet is a config change to the real USDT. USDT only, testnet only, no audit. No INR conversion or production custody is claimed.
 - The relayer is a trusted gas sponsor: it can censor or pause, but cannot redirect funds or exceed the fee cap.
-- The rate limiter is in memory; the gas loss budget is persisted.
+- The rate limiter is in memory; signed transactions and gas reservations persist in SQLite.
+- Run one relayer process per gas wallet/database. Pending payments recover after restart and use bounded same-nonce replacements.
+- P0 operations, safety settings and read-only deployment checks: [`docs/b/p0-backend.md`](docs/b/p0-backend.md).
 - Not done yet: live deployment and first real payment, hosted relayer, explorer verification, a browser run of the widget.
-- P1 (refunds, ledger and verifier, x402) is not started.
+- Gasless partial/full refunds work locally. The merchant refundSigner supplies the full refund amount; the operator absorbs refund gas.
+- Refunds require this branch's router build; an older non-upgradeable deployment must be replaced and its addresses synchronized.
+- Ledger/export/verifier work locally; live exports need the deployed router and its deployment block. x402 facilitator/paid API are implemented locally; official-client interoperability and live settlement remain unverified.
+
+The [agent client](packages/agent-client/README.md) and [scripted demo](apps/agent-demo/README.md) now exercise the paid API with per-call/session spending limits, recipient/origin allowlists and same-authorization retries. Sessions are in memory; live testnet proof remains pending.

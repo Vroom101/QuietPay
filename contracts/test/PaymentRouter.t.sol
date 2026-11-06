@@ -13,7 +13,8 @@ contract PaymentRouterTest is Test {
     address relayer = makeAddr("relayer");
     address attacker = makeAddr("attacker");
     address payout = makeAddr("payout");
-    address refundSigner = makeAddr("refundSigner");
+    uint256 refundPk = 0xB0B;
+    address refundSigner;
 
     uint256 payerPk = 0xA11CE;
     address payer;
@@ -30,6 +31,7 @@ contract PaymentRouterTest is Test {
     function setUp() public {
         vm.warp(1_000_000);
         payer = vm.addr(payerPk);
+        refundSigner = vm.addr(refundPk);
         usdt = new MockUSDT();
         router = new PaymentRouter(address(usdt), owner);
         vm.startPrank(owner);
@@ -57,7 +59,7 @@ contract PaymentRouterTest is Test {
     }
 
     function _unpack(bytes memory sig) internal pure returns (bytes32 r, bytes32 s, uint8 v) {
-        assembly {
+        assembly ("memory-safe") {
             r := mload(add(sig, 32))
             s := mload(add(sig, 64))
             v := byte(0, mload(add(sig, 96)))
@@ -339,4 +341,162 @@ contract PaymentRouterTest is Test {
         assertEq(usdt.balanceOf(payout) + usdt.balanceOf(relayer), value);
         assertEq(usdt.balanceOf(address(router)), 0);
     }
+    function _refundSig(uint256 amount, uint256 index, address recipient) internal view returns (bytes memory) {
+        return _sign(refundPk, refundSigner, address(router), amount, validAfter, validBefore,
+            router.computeRefundNonce(MERCHANT, ORDER, recipient, amount, index));
+    }
+
+    function _refund(uint256 amount, bytes memory sig) internal {
+        vm.prank(relayer);
+        router.refund(MERCHANT, ORDER, amount, validAfter, validBefore, sig);
+    }
+
+    function test_partialThenFullRefund() public {
+        _pay(_goodSig());
+        usdt.mint(refundSigner, PRICE);
+        uint256 beforePayer = usdt.balanceOf(payer);
+        uint256 beforeRelayer = usdt.balanceOf(relayer);
+        vm.expectEmit(true, true, true, true, address(router));
+        emit PaymentRouter.Refunded(MERCHANT, ORDER, payer, 5_000_000, 5_000_000, 0);
+        _refund(5_000_000, _refundSig(5_000_000, 0, payer));
+        assertEq(router.receipts(MERCHANT, ORDER).refunded, 5_000_000);
+        assertEq(router.receipts(MERCHANT, ORDER).refundCount, 1);
+        _refund(20_000_000, _refundSig(20_000_000, 1, payer));
+        assertEq(router.receipts(MERCHANT, ORDER).refunded, PRICE);
+        assertEq(router.receipts(MERCHANT, ORDER).refundCount, 2);
+        assertEq(usdt.balanceOf(payer), beforePayer + PRICE);
+        assertEq(usdt.balanceOf(relayer), beforeRelayer, "no refund fee");
+        assertEq(usdt.balanceOf(address(router)), 0);
+        assertEq(payer.balance, 0);
+        bytes memory paySig = _goodSig();
+        vm.expectRevert(PaymentRouter.AlreadySettled.selector);
+        vm.prank(relayer);
+        router.pay(MERCHANT, ORDER, payer, PRICE, FEE, validAfter, validBefore, paySig);
+    }
+
+    function test_nonRelayerCannotRefund() public {
+        _pay(_goodSig());
+        bytes memory sig = _refundSig(1_000_000, 0, payer);
+        vm.prank(attacker);
+        vm.expectRevert(PaymentRouter.NotRelayer.selector);
+        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
+    }
+
+    function test_unfundedRefundLeavesReceiptAndNonceUnchanged() public {
+        _pay(_goodSig());
+        bytes memory sig = _refundSig(1_000_000, 0, payer);
+        vm.expectRevert();
+        vm.prank(relayer);
+        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
+        assertEq(router.receipts(MERCHANT, ORDER).refunded, 0);
+        assertEq(router.receipts(MERCHANT, ORDER).refundCount, 0);
+        assertFalse(usdt.authorizationState(refundSigner, router.computeRefundNonce(MERCHANT, ORDER, payer, 1_000_000, 0)));
+    }
+
+    function test_refundAbovePaidReverts() public {
+        _pay(_goodSig());
+        usdt.mint(refundSigner, PRICE * 2);
+        bytes memory sig = _refundSig(PRICE + 1, 0, payer);
+        vm.expectRevert(PaymentRouter.RefundExceedsPaid.selector);
+        vm.prank(relayer);
+        router.refund(MERCHANT, ORDER, PRICE + 1, validAfter, validBefore, sig);
+    }
+
+    function test_replayedRefundIndexReverts() public {
+        _pay(_goodSig());
+        usdt.mint(refundSigner, PRICE);
+        bytes memory sig = _refundSig(1_000_000, 0, payer);
+        _refund(1_000_000, sig);
+        vm.expectRevert();
+        vm.prank(relayer);
+        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
+        assertEq(router.receipts(MERCHANT, ORDER).refundCount, 1);
+    }
+
+    function test_wrongPayerRefundCannotRedirectFunds() public {
+        _pay(_goodSig());
+        usdt.mint(refundSigner, PRICE);
+        bytes memory sig = _refundSig(1_000_000, 0, attacker);
+        vm.expectRevert(bytes("invalid signature"));
+        vm.prank(relayer);
+        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
+        assertEq(usdt.balanceOf(attacker), 0);
+        assertEq(router.receipts(MERCHANT, ORDER).refunded, 0);
+    }
+
+    function test_futureRefundIndexReverts() public {
+        _pay(_goodSig());
+        usdt.mint(refundSigner, PRICE);
+        bytes memory sig = _refundSig(1_000_000, 1, payer);
+        vm.expectRevert(bytes("invalid signature"));
+        vm.prank(relayer);
+        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
+    }
+
+    function test_unknownReceiptCannotBeRefunded() public {
+        bytes memory sig = _refundSig(1_000_000, 0, payer);
+        vm.expectRevert(PaymentRouter.NotSettled.selector);
+        vm.prank(relayer);
+        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
+    }
+
+    function test_pausedRouterCannotRefund() public {
+        _pay(_goodSig());
+        usdt.mint(refundSigner, PRICE);
+        bytes memory sig = _refundSig(1_000_000, 0, payer);
+        vm.prank(owner);
+        router.pause();
+        vm.expectRevert();
+        vm.prank(relayer);
+        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
+    }
+
+    function test_expiredRefundCannotBeSent() public {
+        _pay(_goodSig());
+        usdt.mint(refundSigner, PRICE);
+        bytes memory sig = _refundSig(1_000_000, 0, payer);
+        vm.warp(validBefore);
+        vm.expectRevert(PaymentRouter.Expired.selector);
+        vm.prank(relayer);
+        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
+    }
+
+    function testFuzz_refundsConserveValueAndNeverExceedPaid(uint256 amount) public {
+        amount = bound(amount, 1, PRICE);
+        _pay(_goodSig());
+        usdt.mint(refundSigner, PRICE);
+        uint256 balance = usdt.balanceOf(payer);
+        _refund(amount, _refundSig(amount, 0, payer));
+        assertEq(usdt.balanceOf(payer), balance + amount);
+        assertEq(usdt.balanceOf(refundSigner), PRICE - amount);
+        assertEq(router.receipts(MERCHANT, ORDER).refunded, amount);
+        assertLe(router.receipts(MERCHANT, ORDER).refunded, PRICE);
+        assertEq(usdt.balanceOf(address(router)), 0);
+    }
+
+    function _agentSignature(bytes32 nonce) internal view returns (bytes memory) {
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdt.DOMAIN_SEPARATOR(),
+            keccak256(abi.encode(usdt.TRANSFER_TYPEHASH(), payer, payout, uint256(1_000_000), validAfter, validBefore, nonce))));
+        (uint8 v, bytes32 r, bytes32 sigS) = vm.sign(payerPk, digest);
+        return abi.encodePacked(r, sigS, v);
+    }
+
+    function _agentTransfer(bytes32 nonce, bytes memory sig) internal {
+        (bytes32 r, bytes32 sigS, uint8 v) = _unpack(sig);
+        usdt.transferWithAuthorization(payer, payout, 1_000_000, validAfter, validBefore, nonce, v, r, sigS);
+    }
+
+    function test_agentTransferAuthorizationPaysRecipientWithoutRouterReceipt() public {
+        bytes32 nonce = keccak256("agent-payment");
+        bytes memory sig = _agentSignature(nonce);
+        vm.prank(relayer);
+        _agentTransfer(nonce, sig);
+        assertEq(usdt.balanceOf(payout), 1_000_000);
+        assertTrue(usdt.authorizationState(payer, nonce));
+        assertFalse(router.receipts(MERCHANT, ORDER).settled);
+        assertEq(payer.balance, 0);
+        vm.expectRevert(bytes("auth used"));
+        _agentTransfer(nonce, sig);
+    }
+
 }

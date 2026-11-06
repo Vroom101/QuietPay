@@ -7,6 +7,7 @@ import { Checkout } from "./pages/Checkout";
 import { Cart } from "./pages/Cart";
 import { Success } from "./pages/Success";
 import { Orders } from "./pages/Orders";
+import { InvoicePage, SubscribePage, SubscriptionPage } from "./pages/Billing";
 
 function loadSaved(): string[] {
   try {
@@ -22,7 +23,7 @@ export function App() {
   const [saved, setSaved] = useState(loadSaved);
   const location = useLocation();
   const view = new URLSearchParams(location.search).get("view");
-  const isCheckout = location.pathname === "/checkout";
+  const isCheckout = location.pathname === "/checkout" || location.pathname.startsWith("/checkout/invoice/");
   const isPaymentRoute = isCheckout || location.pathname.startsWith("/success/") || location.pathname === "/orders";
 
   useEffect(() => {
@@ -63,6 +64,10 @@ export function App() {
           <Route path="/" element={<Shop saved={saved} toggleSaved={toggleSaved} />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/checkout" element={<Checkout />} />
+          <Route path="/checkout/invoice/:id" element={<InvoicePage checkout />} />
+          <Route path="/invoice/:id" element={<InvoicePage />} />
+          <Route path="/subscribe/:id" element={<SubscribePage />} />
+          <Route path="/subscription/:id" element={<SubscriptionPage />} />
           <Route path="/success/:orderId" element={<Success />} />
           <Route path="/orders" element={<Orders />} />
         </Routes>

@@ -6,6 +6,7 @@ import {
   CreateOrderRequest,
   QuietpayError,
   RelayPayRequest,
+  RelayRefundRequest,
   errorBody,
   type ErrorCode,
 } from "@quietpay/shared";
@@ -89,9 +90,33 @@ export function buildServer(svc: RelayerService): FastifyInstance {
     return svc.relayPay(body, { ip: req.ip });
   });
 
+  app.get<{ Params: { id: string } }>("/v1/orders/:id/refund-context", async (req, reply) => {
+    const merchant = merchantFromKey(req, reply);
+    if (!merchant) return reply;
+    return svc.refunds.context(merchant, req.params.id as `0x${string}`);
+  });
+  app.get<{ Params: { id: string } }>("/v1/orders/:id/refunds", async (req, reply) => {
+    const merchant = merchantFromKey(req, reply);
+    if (!merchant) return reply;
+    return { refunds: svc.refunds.list(merchant, req.params.id) };
+  });
+  app.post("/v1/relay/refund", async (req, reply) => {
+    const merchant = merchantFromKey(req, reply);
+    if (!merchant) return reply;
+    return svc.refunds.submit(merchant, RelayRefundRequest.parse(req.body), req.ip);
+  });
+  app.get<{ Params: { id: string } }>("/v1/refunds/:id", async (req, reply) => {
+    const merchant = merchantFromKey(req, reply);
+    if (!merchant) return reply;
+    return svc.refunds.get(merchant, req.params.id);
+  });
+
   app.get("/v1/metrics", async (req, reply) => {
     if (!operatorOnly(req, reply)) return reply;
-    return svc.metrics();
+    await svc.refreshBalance();
+    const metrics = svc.metrics();
+    metrics.paused = svc.localPaused || await svc.chain.isPaused();
+    return metrics;
   });
 
   app.post("/v1/admin/pause", async (req, reply) => {

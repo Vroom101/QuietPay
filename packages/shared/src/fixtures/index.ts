@@ -1,6 +1,6 @@
 import type { Address, Hex } from "viem";
-import { computePayNonce, computeRefundNonce, merchantIdFromSlug, token } from "../typed-data.js";
-import type { Order, RefundQuoteResponse, RefundResponse, RelayPayResponse } from "../schemas.js";
+import { computePayNonce, merchantIdFromSlug, token } from "../typed-data.js";
+import type { Order, RelayPayResponse } from "../schemas.js";
 import type { WebhookEvent } from "../webhook.js";
 
 /** Deterministic fixtures. Addresses are well-known throwaway values, not real wallets. */
@@ -86,44 +86,3 @@ export const webhookFailed: WebhookEvent = {
   createdAt: FIXTURE_NOW + 3,
   data: { ...webhookSettled.data, txHash: undefined, failureCode: "simulation_failed" },
 };
-
-export const FIXTURE_REFUND_SIGNER = "0x5555555555555555555555555555555555555555" as Address;
-export const FIXTURE_REFUND_TX_HASH = ("0x" + "ef".repeat(32)) as Hex;
-
-export const refundQuote: RefundQuoteResponse = {
-  orderId: FIXTURE_ORDER_ID,
-  merchantId: FIXTURE_MERCHANT_ID,
-  payer: FIXTURE_PAYER,
-  amount: "10000000",
-  refundIndex: 0,
-  nonce: computeRefundNonce({
-    merchantId: FIXTURE_MERCHANT_ID,
-    orderId: FIXTURE_ORDER_ID,
-    payer: FIXTURE_PAYER,
-    amount: 10_000_000n,
-    refundIndex: 0,
-  }),
-  totalRefunded: "0",
-  remaining: "25000000",
-  refundSigner: FIXTURE_REFUND_SIGNER,
-  chainId: token.chainId,
-  token: token.address,
-  router: FIXTURE_ROUTER,
-  domain: token.eip712Domain,
-};
-
-export const refundResponse: RefundResponse = {
-  orderId: FIXTURE_ORDER_ID,
-  amount: "10000000",
-  refundIndex: 0,
-  totalRefunded: "10000000",
-  txHash: FIXTURE_REFUND_TX_HASH,
-};
-
-export const orderPartiallyRefunded = makeOrder({
-  status: "settled",
-  payer: FIXTURE_PAYER,
-  txHash: FIXTURE_TX_HASH,
-  settledAt: FIXTURE_NOW + 3,
-  refundedAmount: "10000000",
-});

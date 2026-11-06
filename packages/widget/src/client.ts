@@ -149,14 +149,14 @@ export interface PollOptions {
   onUpdate?: (o: Order) => void;
 }
 
-/** Polls until the order is settled / failed / expired. Throws WidgetError("timeout") after the timeout. */
+/** Polls until the order is settled / refunded / failed / expired. Throws WidgetError("timeout") after the timeout. */
 export async function pollOrder(relayerUrl: string, orderId: string, opts: PollOptions = {}): Promise<Order> {
   const interval = opts.intervalMs ?? 1000;
   const deadline = Date.now() + (opts.timeoutMs ?? 60_000);
   for (;;) {
     const o = await fetchOrder(relayerUrl, orderId);
     opts.onUpdate?.(o);
-    if (o.status === "settled" || o.status === "failed" || o.status === "expired") return o;
+    if (["settled", "partially_refunded", "refunded", "failed", "expired"].includes(o.status)) return o;
     if (Date.now() >= deadline) throw new WidgetError("timeout", "timeout");
     await new Promise((r) => setTimeout(r, interval));
   }

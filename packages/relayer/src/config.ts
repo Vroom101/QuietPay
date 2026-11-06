@@ -4,6 +4,8 @@ import { parseUnits } from "viem";
 const hexAddress = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const hexKey = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 
+const decimal = (places: number) => z.string().regex(new RegExp(`^[0-9]+(?:\\.[0-9]{1,${places}})?$`), "Invalid non-negative decimal amount");
+
 const EnvSchema = z.object({
   RPC_URL: z.string().url(),
   CHAIN_ID: z.coerce.number().int().default(1874),
@@ -16,18 +18,21 @@ const EnvSchema = z.object({
   WEBHOOK_SECRET: z.string().min(16),
   DATABASE_PATH: z.string().default("./quietpay.db"),
   /** Decimal WBT. Hard cap on gas spent per rolling hour. */
-  LOSS_BUDGET_WBT_PER_HOUR: z.string().default("0.05"),
+  LOSS_BUDGET_WBT_PER_HOUR: decimal(18).default("0.05"),
   /** Wei. Empty means no cap. */
-  MAX_GAS_PRICE: z.string().optional(),
+  MAX_GAS_PRICE: z.string().regex(/^(?:[1-9][0-9]*)?$/).optional(),
   /** Decimal USDT. Cumulative per-payer cap over a rolling 24h. */
-  PAYER_CAP_USDT: z.string().default("100"),
+  PAYER_CAP_USDT: decimal(6).default("100"),
+  MAX_GAS_LIMIT: z.coerce.bigint().positive().default(500000n),
+  LOW_BALANCE_WBT: decimal(18).default("0.01"),
+  PENDING_RETRY_SECONDS: z.coerce.number().int().min(5).default(30),
+  MAX_REPLACEMENTS: z.coerce.number().int().min(0).max(10).default(3),
   // Optional, additive to the frozen list.
-  RELAY_FEE_USDT: z.string().default("0.05"),
+  RELAY_FEE_USDT: decimal(6).default("0.05"),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(20),
-  /** EIP-712 domain of the payment token. Defaults to the live Whitechain test USDT. Set for the demo token. */
-  TOKEN_DOMAIN_NAME: z.string().default("Tether USD"),
-  TOKEN_DOMAIN_VERSION: z.string().default("1"),
   EXPLORER_BASE_URL: z.string().url().default("https://testnet.whitechain.io"),
+  TOKEN_DOMAIN_NAME: z.string().trim().min(1).default("Tether USD"),
+  TOKEN_DOMAIN_VERSION: z.string().trim().min(1).default("1"),
   PORT: z.coerce.number().int().default(8787),
 });
 
@@ -43,11 +48,15 @@ export interface Config {
   databasePath: string;
   lossBudgetWei: bigint;
   maxGasPrice: bigint | null;
+  maxGasLimit: bigint;
+  lowBalanceWei: bigint;
+  pendingRetrySeconds: number;
+  maxReplacements: number;
   payerCap: bigint; // USDT base units
   relayFee: bigint; // USDT base units
   rateLimitPerMinute: number;
-  tokenDomain: { name: string; version: string };
   explorerBaseUrl: string;
+  tokenDomain: { name: string; version: string };
   port: number;
 }
 
@@ -73,11 +82,15 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     databasePath: e.DATABASE_PATH,
     lossBudgetWei: parseUnits(e.LOSS_BUDGET_WBT_PER_HOUR, 18),
     maxGasPrice: e.MAX_GAS_PRICE ? BigInt(e.MAX_GAS_PRICE) : null,
+    maxGasLimit: e.MAX_GAS_LIMIT,
+    lowBalanceWei: parseUnits(e.LOW_BALANCE_WBT, 18),
+    pendingRetrySeconds: e.PENDING_RETRY_SECONDS,
+    maxReplacements: e.MAX_REPLACEMENTS,
     payerCap: parseUnits(e.PAYER_CAP_USDT, 6),
     relayFee: parseUnits(e.RELAY_FEE_USDT, 6),
     rateLimitPerMinute: e.RATE_LIMIT_PER_MINUTE,
-    tokenDomain: { name: e.TOKEN_DOMAIN_NAME, version: e.TOKEN_DOMAIN_VERSION },
     explorerBaseUrl: e.EXPLORER_BASE_URL.replace(/\/$/, ""),
+    tokenDomain: { name: e.TOKEN_DOMAIN_NAME, version: e.TOKEN_DOMAIN_VERSION },
     port: e.PORT,
   };
 }

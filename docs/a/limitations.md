@@ -15,8 +15,8 @@ The widget shows the payer address. The user must send USDT to it from elsewhere
 - Merchant name is not in the Order schema, so the widget shows a shortened merchant id and the reference.
 - Demo store trusts `cartTotal` from the browser. A real shop must price the cart on its server.
 - Demo store keeps paid orders and seen webhook ids in memory; both reset on restart.
-- The mock relayer does not verify signatures, serve `GET /v1/orders`, or send webhooks. Dashboard uses a fixture adapter; the store needs `simulate-webhook`.
+- The mock relayer does not verify signatures, serve `GET /v1/orders`, or send webhooks. Dashboard has a fixture adapter; the store needs `simulate-webhook`.
 - Widget is verified against the mock relayer only, not the real relayer or chain.
 - Widget build emits JS only (no `.d.ts`); monorepo consumers use the TS sources.
 - Dashboard shows the explorer link only when the order carries `explorerUrl`.
-- No refunds, x402 or ledger (out of scope for P0).
+- Backend/SDK refunds and dashboard merchant-server refund controls are implemented locally. Customer-facing refund webhook/status integration is pending. x402 and ledger backends are implemented; their browser integration remains pending.

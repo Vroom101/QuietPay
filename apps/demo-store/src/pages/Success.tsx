@@ -1,4 +1,5 @@
-import { formatUsdt } from "@quietpay/shared";
+import { formatUsdt, token } from "@quietpay/shared";
+import { formatUnits } from "viem";
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { readPayment, type PaymentStatus } from "../payment";
@@ -11,6 +12,8 @@ export function Success() {
 function Receipt({ orderId }: { orderId: string }) {
   const [state, setState] = useState<PaymentStatus>({ paid: false });
   const [unavailable, setUnavailable] = useState(false);
+  const [delayed, setDelayed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [details, setDetails] = useSearchParams();
 
   // The shop only marks an order paid once its server has verified the signed webhook.
@@ -19,12 +22,14 @@ function Receipt({ orderId }: { orderId: string }) {
     const { signal } = controller;
     let retry: ReturnType<typeof setTimeout> | undefined;
     const startedAt = Date.now();
+    const delay = setTimeout(() => setDelayed(true), 12_000);
     const tick = async () => {
       try {
         const status = await readPayment(orderId, signal);
         if (signal.aborted) return;
         setUnavailable(false);
         if (status.paid || status.simulation) {
+          clearTimeout(delay);
           retry = setTimeout(() => setState(status), Math.max(0, 450 - (Date.now() - startedAt)));
         } else {
           retry = setTimeout(tick, 2000);
@@ -39,8 +44,9 @@ function Receipt({ orderId }: { orderId: string }) {
     return () => {
       controller.abort();
       clearTimeout(retry);
+      clearTimeout(delay);
     };
-  }, [orderId]);
+  }, [orderId, attempt]);
 
   const simulation = state.paid ? undefined : state.simulation;
   const complete = state.paid || !!simulation;
@@ -56,8 +62,13 @@ function Receipt({ orderId }: { orderId: string }) {
         {simulation && "Simulated conversion complete. No funds moved."}
         {state.paid && (state.demo ? "Demo payment confirmed. No funds moved." : "The shop has confirmed your payment.")}
         {unavailable && "We couldn't check your payment status. Trying again…"}
-        {!state.paid && !simulation && !unavailable && "The shop is confirming your payment…"}
+        {!complete && !unavailable && (delayed ? "The shop is still waiting for confirmation. Check this order again without starting another payment." : "The shop is confirming your payment…")}
       </p>
+      {!complete && (unavailable || delayed) && <button type="button" className="gateway-primary payment-secondary" onClick={() => {
+        setUnavailable(false);
+        setAttempt((value) => value + 1);
+      }}>Check payment status</button>}
+      {!complete && (unavailable || delayed) && <p className="mt-3 break-all text-sm" aria-label="Order ID">{orderId}</p>}
       {complete && showDetails && <dl id="payment-details" className="gateway-receipt-details">
         <div>
           <dt className="font-medium">Order number</dt>
@@ -85,12 +96,22 @@ function Receipt({ orderId }: { orderId: string }) {
                 <dd className="break-all">{state.txHash}</dd>
               </div>
             )}
+            {!!state.refunded && state.refunded !== "0" && (
+              <div><dt>{state.orderStatus === "refunded" ? "Fully refunded" : "Partially refunded"}{state.refundCount !== undefined && ` (${state.refundCount})`}</dt>
+                <dd>{formatUnits(BigInt(state.refunded), token.decimals)} USDT</dd></div>
+            )}
           </>
         )}
       </dl>}
+      {complete && showDetails && !!state.refunds?.length && <section className="gateway-receipt-details" aria-label="Refund history">
+        <h2>Refund history</h2>
+        <ol>{state.refunds.map((refund) => <li key={refund.id} className="mt-2 flex justify-between gap-3">
+          <span>Demo refund · {new Date(refund.createdAt).toLocaleDateString()}</span><strong>{refund.amount} USDT</strong>
+        </li>)}</ol>
+      </section>}
       {complete && <div className="payment-receipt-actions">
         <button type="button" className="gateway-primary" aria-expanded={showDetails} onClick={() => setDetails(showDetails ? {} : { details: "1" }, { replace: true })}>{showDetails ? "Hide payment details" : "View payment details"}</button>
-        <Link to="/orders" className="gateway-primary payment-secondary">View orders</Link>
+        {simulation?.quote.invoiceId ? <Link to={`/invoice/${simulation.quote.invoiceId}`} className="gateway-primary payment-secondary">View invoice</Link> : <Link to="/orders" className="gateway-primary payment-secondary">View orders</Link>}
       </div>}
     </div>
   );

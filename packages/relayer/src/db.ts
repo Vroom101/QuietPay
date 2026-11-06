@@ -22,6 +22,12 @@ export interface OrderRow {
   settled_at: number | null;
 }
 
+export interface RefundRow {
+  id: string; order_id: string; merchant_id: string; amount: string; refund_index: number;
+  status: "pending" | "settled" | "failed"; signature: string; valid_after: number;
+  valid_before: number; tx_hash: string | null; failure_code: string | null; created_at: number;
+}
+
 export interface DeliveryRow {
   id: string;
   order_id: string;
@@ -32,10 +38,16 @@ export interface DeliveryRow {
   delivered_at: number | null;
 }
 
+export interface AttemptRow {
+  /** order_id is the work ID: a payment order ID or a refund ID. */
+  hash: string; order_id: string; raw: string; nonce: number;
+  gas: string; gas_price: string; sent_at: number; replacement: number;
+}
+
 export class Db {
   readonly raw: Database.Database;
 
-  constructor(path: string) {
+  constructor(path: string | Buffer) {
     this.raw = new Database(path);
     this.raw.pragma("journal_mode = WAL");
     this.raw.exec(`
@@ -75,8 +87,30 @@ export class Db {
         next_attempt_at INTEGER NOT NULL,
         delivered_at INTEGER
       );
+      CREATE TABLE IF NOT EXISTS relay_attempts (
+        hash TEXT PRIMARY KEY, order_id TEXT NOT NULL, raw TEXT NOT NULL,
+        nonce INTEGER NOT NULL, gas TEXT NOT NULL, gas_price TEXT NOT NULL,
+        sent_at INTEGER NOT NULL, replacement INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS refunds (
+        id TEXT PRIMARY KEY, order_id TEXT NOT NULL, merchant_id TEXT NOT NULL,
+        amount TEXT NOT NULL, refund_index INTEGER NOT NULL, status TEXT NOT NULL,
+        signature TEXT NOT NULL, valid_after INTEGER NOT NULL, valid_before INTEGER NOT NULL,
+        tx_hash TEXT, failure_code TEXT, created_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_refund_active ON refunds(order_id,refund_index)
+        WHERE status IN ('pending','settled');
+      CREATE TABLE IF NOT EXISTS x402_payments (
+        id TEXT PRIMARY KEY, payer TEXT NOT NULL, nonce TEXT NOT NULL, merchant_id TEXT NOT NULL,
+        resource TEXT NOT NULL, pay_to TEXT NOT NULL, amount TEXT NOT NULL, fingerprint TEXT NOT NULL, request TEXT NOT NULL,
+        status TEXT NOT NULL, tx_hash TEXT UNIQUE, error_reason TEXT, created_at INTEGER NOT NULL,
+        delivered_at INTEGER, delivery_attempts INTEGER NOT NULL DEFAULT 0, lease_token TEXT, lease_until INTEGER,
+        UNIQUE(payer,nonce)
+      );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
+    const columns = this.raw.pragma("table_info(orders)") as { name: string }[];
+    if (!columns.some(c => c.name === "payer_volume_at")) this.raw.exec("ALTER TABLE orders ADD COLUMN payer_volume_at INTEGER");
   }
 
   close() {
@@ -104,17 +138,17 @@ export class Db {
   }
 
   pendingOrders(): OrderRow[] {
-    return this.raw.prepare("SELECT * FROM orders WHERE status = 'pending' AND tx_hash IS NOT NULL").all() as OrderRow[];
+    return this.raw.prepare("SELECT * FROM orders WHERE status = 'pending'").all() as OrderRow[];
   }
 
   /** Atomic claim: only one caller moves an order from `created` to `pending`. */
-  claimForRelay(id: string, payer: string, signature: string, validAfter: number, validBefore: number): boolean {
+  claimForRelay(id: string, payer: string, signature: string, validAfter: number, validBefore: number, now = Math.floor(Date.now() / 1000)): boolean {
     const r = this.raw
       .prepare(
-        `UPDATE orders SET status='pending', payer=?, signature=?, valid_after=?, valid_before=?
+        `UPDATE orders SET status='pending', payer=?, signature=?, valid_after=?, valid_before=?, tx_hash=NULL, failure_code=NULL, payer_volume_at=?
          WHERE id=? AND status IN ('created','failed')`,
       )
-      .run(payer.toLowerCase(), signature, validAfter, validBefore, id.toLowerCase());
+      .run(payer.toLowerCase(), signature, validAfter, validBefore, now, id.toLowerCase());
     return r.changes === 1;
   }
 
@@ -137,9 +171,11 @@ export class Db {
   /** Sum of amounts this payer has pending or settled since `since` (unix seconds). */
   payerVolume(payer: string, since: number): bigint {
     const rows = this.raw
-      .prepare("SELECT amount FROM orders WHERE payer=? AND status IN ('pending','settled') AND created_at>=?")
+      .prepare("SELECT amount FROM orders WHERE payer=? AND status IN ('pending','settled','partially_refunded','refunded') AND COALESCE(payer_volume_at,created_at)>=?")
       .all(payer.toLowerCase(), since) as { amount: string }[];
-    return rows.reduce((a, r) => a + BigInt(r.amount), 0n);
+    const agents = this.raw.prepare("SELECT amount FROM x402_payments WHERE payer=? AND status IN ('settling','settled') AND created_at>=?")
+      .all(payer.toLowerCase(),since) as {amount:string}[];
+    return [...rows,...agents].reduce((a, r) => a + BigInt(r.amount), 0n);
   }
 
   countByStatus(): Record<string, number> {
@@ -150,13 +186,52 @@ export class Db {
   // ---- gas spend (loss budget)
   recordSpend(txHash: string, ts: number, wei: bigint) {
     this.raw
-      .prepare("INSERT INTO spend (tx_hash, ts, wei) VALUES (?, ?, ?) ON CONFLICT(tx_hash) DO UPDATE SET wei=excluded.wei")
+      .prepare("INSERT INTO spend (tx_hash, ts, wei) VALUES (?, ?, ?) ON CONFLICT(tx_hash) DO UPDATE SET wei=excluded.wei, ts=excluded.ts")
       .run(txHash, ts, wei.toString());
   }
 
   spentSince(since: number): bigint {
     const rows = this.raw.prepare("SELECT wei FROM spend WHERE ts>=?").all(since) as { wei: string }[];
     return rows.reduce((a, r) => a + BigInt(r.wei), 0n);
+  }
+
+  attempts(orderId: string): AttemptRow[] {
+    return this.raw.prepare("SELECT * FROM relay_attempts WHERE order_id=? ORDER BY rowid").all(orderId) as AttemptRow[];
+  }
+
+  nonceFloor(): number {
+    return (this.raw.prepare("SELECT COALESCE(MAX(nonce)+1,0) n FROM relay_attempts").get() as { n: number }).n;
+  }
+
+  saveAttempt(a: AttemptRow, target: "orders" | "refunds" | "x402_payments" = "orders") {
+    this.raw.transaction(() => {
+      this.raw.prepare(`INSERT INTO relay_attempts VALUES (@hash,@order_id,@raw,@nonce,@gas,@gas_price,@sent_at,@replacement)`).run(a);
+      this.raw.prepare(`UPDATE ${target} SET tx_hash=? WHERE id=?`).run(a.hash, a.order_id);
+      const previous = this.attempts(a.order_id).filter(x => x.nonce === a.nonce && x.hash !== a.hash);
+      for (const old of previous) this.raw.prepare("DELETE FROM spend WHERE tx_hash=?").run(old.hash);
+      this.recordSpend(a.hash, a.sent_at, BigInt(a.gas) * BigInt(a.gas_price));
+    })();
+  }
+
+  reservedSpend(since: number): bigint {
+    const rows = this.raw.prepare(`SELECT s.wei FROM spend s WHERE s.ts>=? OR EXISTS
+      (SELECT 1 FROM orders o WHERE o.status='pending' AND o.tx_hash=s.tx_hash) OR EXISTS (SELECT 1 FROM refunds r WHERE r.status='pending' AND r.tx_hash=s.tx_hash) OR EXISTS (SELECT 1 FROM x402_payments x WHERE x.status='settling' AND x.tx_hash=s.tx_hash)`).all(since) as { wei: string }[];
+    return rows.reduce((sum, r) => sum + BigInt(r.wei), 0n);
+  }
+
+  getRefund(id: string): RefundRow | undefined {
+    return this.raw.prepare("SELECT * FROM refunds WHERE id=?").get(id.toLowerCase()) as RefundRow | undefined;
+  }
+  pendingRefunds(): RefundRow[] {
+    return this.raw.prepare("SELECT * FROM refunds WHERE status='pending'").all() as RefundRow[];
+  }
+  insertRefund(r: RefundRow) {
+    this.raw.prepare(`INSERT INTO refunds VALUES (@id,@order_id,@merchant_id,@amount,@refund_index,@status,
+      @signature,@valid_after,@valid_before,@tx_hash,@failure_code,@created_at)`).run(r);
+  }
+  refundTotals(orderId: string) {
+    const rows = this.raw.prepare("SELECT amount FROM refunds WHERE order_id=? AND status='settled'").all(orderId) as { amount: string }[];
+    return { amount: rows.reduce((v,r) => v + BigInt(r.amount), 0n), count: rows.length };
   }
 
   // ---- settings

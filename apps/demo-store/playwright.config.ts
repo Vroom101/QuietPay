@@ -23,6 +23,7 @@ export default defineConfig({
         QUIETPAY_MERCHANT_ID: "",
         QUIETPAY_WEBHOOK_SECRET: "dev-webhook-secret",
         QUIETPAY_WEBHOOK_URL: "",
+        QUIETPAY_MOCK_RELAYER: "1",
         QUIETPAY_ENABLE_DEMO_CONVERSION: "1",
       },
     },
@@ -31,7 +32,7 @@ export default defineConfig({
       url: storeUrl,
       env: {
         VITE_RELAYER_URL: relayerUrl,
-        VITE_CHECKOUT_ROUTER: "",
+        VITE_CHECKOUT_ROUTER: "0x1111111111111111111111111111111111111111",
         VITE_CHECKOUT_TOKEN: "",
         VITE_CHECKOUT_DOMAIN_NAME: "",
         VITE_CHECKOUT_DOMAIN_VERSION: "",

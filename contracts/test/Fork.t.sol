@@ -83,6 +83,6 @@ contract ForkTest is Test {
         router.refund(MERCHANT, ORDER, 10_000_000, vA, vB, rsig);
         assertEq(IUSDT(USDT).balanceOf(payer), 100_000_000 - PRICE + 10_000_000);
         assertEq(IUSDT(USDT).balanceOf(refundSigner), 90_000_000);
-        assertEq(router.receipts(MERCHANT, ORDER).totalRefunded, 10_000_000);
+        assertEq(router.receipts(MERCHANT, ORDER).refunded, 10_000_000);
     }
 }

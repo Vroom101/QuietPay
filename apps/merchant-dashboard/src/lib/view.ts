@@ -10,7 +10,7 @@ export interface OrderRow {
   explorerUrl: string | null;
   created: string;
   reference: string | null;
-  refund: { label: string; refunded: string; remaining: string } | null;
+  refund: { label: string; refunded: string; remaining: string; count?: number } | null;
 }
 
 export const shortHex = (s: string) => `${s.slice(0, 6)}...${s.slice(-4)}`;
@@ -22,15 +22,15 @@ function formatRefundAmount(amount: bigint): string {
 }
 
 function refundSummary(order: Order): OrderRow["refund"] {
-  if (order.status !== "settled" || order.refundedAmount === undefined) return null;
+  if (!["settled", "partially_refunded", "refunded"].includes(order.status) || order.refunded === undefined) return null;
   const amount = BigInt(order.amount);
-  const refunded = BigInt(order.refundedAmount);
+  const refunded = BigInt(order.refunded);
   if (refunded > amount) return null;
 
   let label = "No refund";
   if (refunded === amount) label = "Fully refunded";
   else if (refunded > 0n) label = "Partially refunded";
-  return { label, refunded: formatRefundAmount(refunded), remaining: formatRefundAmount(amount - refunded) };
+  return { label, refunded: formatRefundAmount(refunded), remaining: formatRefundAmount(amount - refunded), count: order.refundCount };
 }
 
 export function toRow(o: Order): OrderRow {
@@ -53,5 +53,7 @@ export const STATUS_STYLES: Record<OrderStatus, string> = {
   pending: "bg-amber-100 text-amber-800",
   settled: "bg-emerald-100 text-emerald-800",
   failed: "bg-red-100 text-red-800",
+  partially_refunded: "bg-amber-100 text-amber-800",
+  refunded: "bg-stone-200 text-stone-700",
   expired: "bg-stone-200 text-stone-500",
 };

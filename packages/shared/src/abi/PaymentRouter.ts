@@ -314,12 +314,12 @@ export const paymentRouterAbi = [
             "internalType": "bool"
           },
           {
-            "name": "refundCount",
-            "type": "uint32",
-            "internalType": "uint32"
+            "name": "refunded",
+            "type": "uint256",
+            "internalType": "uint256"
           },
           {
-            "name": "totalRefunded",
+            "name": "refundCount",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -710,6 +710,11 @@ export const paymentRouterAbi = [
   },
   {
     "type": "error",
+    "name": "BadTokenBalance",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BadWindow",
     "inputs": []
   },
@@ -745,12 +750,12 @@ export const paymentRouterAbi = [
   },
   {
     "type": "error",
-    "name": "NoReceipt",
+    "name": "NotRelayer",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "NotRelayer",
+    "name": "NotSettled",
     "inputs": []
   },
   {
@@ -787,7 +792,7 @@ export const paymentRouterAbi = [
   },
   {
     "type": "error",
-    "name": "RefundOverValue",
+    "name": "RefundExceedsPaid",
     "inputs": []
   },
   {

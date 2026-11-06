@@ -47,8 +47,8 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         uint256 fee;
         uint64 paidAt;
         bool settled;
-        uint32 refundCount;
-        uint256 totalRefunded;
+        uint256 refunded;
+        uint256 refundCount;
     }
 
     IERC20 public immutable token;
@@ -69,15 +69,13 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         uint256 fee,
         address relayer
     );
-    event Refunded(
-        bytes32 indexed merchantId,
-        bytes32 indexed orderId,
-        address indexed payer,
-        uint256 amount,
-        uint256 totalRefunded,
-        uint256 refundIndex
-    );
 
+    event Refunded(bytes32 indexed merchantId, bytes32 indexed orderId, address indexed payer,
+        uint256 amount, uint256 totalRefunded, uint256 refundIndex);
+
+    error NotSettled();
+    error RefundExceedsPaid();
+    error BadTokenBalance();
     error NotRelayer();
     error UnknownMerchant();
     error MerchantExists();
@@ -89,8 +87,6 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
     error Expired();
     error AlreadySettled();
     error BadSignatureLength();
-    error NoReceipt();
-    error RefundOverValue();
 
     constructor(address token_, address owner_) Ownable(owner_) {
         if (token_ == address(0)) revert ZeroAddress();
@@ -145,18 +141,6 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         return keccak256(abi.encode(PAY_TAG, merchantId, orderId, payout, value));
     }
 
-    /// @notice The EIP-3009 nonce the refundSigner must sign for refund number `refundIndex`.
-    ///         The payer is read from the receipt by the router, never passed in.
-    function computeRefundNonce(
-        bytes32 merchantId,
-        bytes32 orderId,
-        address payer,
-        uint256 amount,
-        uint256 refundIndex
-    ) public pure returns (bytes32) {
-        return keccak256(abi.encode(REFUND_TAG, merchantId, orderId, payer, amount, refundIndex));
-    }
-
     // ---------------------------------------------------------------- relayer
 
     function pay(
@@ -192,42 +176,35 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         emit Paid(merchantId, orderId, payer, payout, value, fee, msg.sender);
     }
 
-    /// @notice Gasless partial refund. The merchant's refundSigner signs a ReceiveWithAuthorization
-    ///         for `amount` to this router; the router forwards it to the payer stored in the receipt.
-    ///         The relay fee on refunds is zero; the operator absorbs gas.
-    function refund(
-        bytes32 merchantId,
-        bytes32 orderId,
-        uint256 amount,
-        uint256 validAfter,
-        uint256 validBefore,
-        bytes calldata signature
-    ) external nonReentrant whenNotPaused {
+    function computeRefundNonce(bytes32 merchantId, bytes32 orderId, address payer, uint256 amount, uint256 refundIndex)
+        public pure returns (bytes32)
+    {
+        return keccak256(abi.encode(REFUND_TAG, merchantId, orderId, payer, amount, refundIndex));
+    }
+
+    /// @notice Refunds are funded by the merchant's refundSigner. No relay fee is charged.
+    function refund(bytes32 merchantId, bytes32 orderId, uint256 amount,
+        uint256 validAfter, uint256 validBefore, bytes calldata signature)
+        external nonReentrant whenNotPaused
+    {
         if (!isRelayer[msg.sender]) revert NotRelayer();
         Receipt storage r = _receipts[merchantId][orderId];
-        if (!r.settled) revert NoReceipt();
+        if (!r.settled) revert NotSettled();
         if (amount == 0) revert ZeroValue();
-        if (r.totalRefunded + amount > r.value) revert RefundOverValue();
-        _checkWindow(validAfter, validBefore);
+        if (amount > r.value - r.refunded) revert RefundExceedsPaid();
+        if (validBefore <= validAfter || validBefore - validAfter > MAX_WINDOW) revert BadWindow();
+        if (block.timestamp <= validAfter) revert NotYetValid();
+        if (block.timestamp >= validBefore) revert Expired();
         if (signature.length != 65) revert BadSignatureLength();
-
-        address payer = r.payer;
         uint256 index = r.refundCount;
-        // Effects before interactions.
-        r.totalRefunded += amount;
-        r.refundCount = uint32(index + 1);
-
-        _pull(
-            computeRefundNonce(merchantId, orderId, payer, amount, index),
-            merchants[merchantId].refundSigner,
-            amount,
-            validAfter,
-            validBefore,
-            signature
-        );
-        token.safeTransfer(payer, amount);
-
-        emit Refunded(merchantId, orderId, payer, amount, r.totalRefunded, index);
+        bytes32 nonce = computeRefundNonce(merchantId, orderId, r.payer, amount, index);
+        r.refunded += amount;
+        r.refundCount = index + 1;
+        uint256 beforeBalance = token.balanceOf(address(this));
+        _pull(nonce, merchants[merchantId].refundSigner, amount, validAfter, validBefore, signature);
+        if (token.balanceOf(address(this)) != beforeBalance + amount) revert BadTokenBalance();
+        token.safeTransfer(r.payer, amount);
+        emit Refunded(merchantId, orderId, r.payer, amount, r.refunded, index);
     }
 
     /// @dev Validates inputs and returns the merchant's current registry payout.
@@ -246,20 +223,16 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         if (payer == address(0)) revert ZeroAddress();
         if (value == 0) revert ZeroValue();
         if (fee > m.maxRelayFee || fee > value) revert FeeOverCap();
-        _checkWindow(validAfter, validBefore);
-        if (sigLen != 65) revert BadSignatureLength();
-    }
-
-    function _checkWindow(uint256 validAfter, uint256 validBefore) private view {
         if (validBefore <= validAfter || validBefore - validAfter > MAX_WINDOW) revert BadWindow();
         if (block.timestamp <= validAfter) revert NotYetValid();
         if (block.timestamp >= validBefore) revert Expired();
+        if (sigLen != 65) revert BadSignatureLength();
     }
 
     /// @dev The only token call besides plain transfers: pull the payer's authorized funds.
     function _pull(
         bytes32 nonce,
-        address from,
+        address payer,
         uint256 value,
         uint256 validAfter,
         uint256 validBefore,
@@ -267,7 +240,7 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
     ) private {
         (bytes32 r, bytes32 s, uint8 v) = _split(sig);
         IReceiveWithAuthorization(address(token)).receiveWithAuthorization(
-            from, address(this), value, validAfter, validBefore, nonce, v, r, s
+            payer, address(this), value, validAfter, validBefore, nonce, v, r, s
         );
     }
 

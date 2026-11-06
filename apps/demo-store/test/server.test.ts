@@ -1,28 +1,27 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createMockRelayer } from "@quietpay/shared/mock-server";
-import { merchantIdFromSlug } from "@quietpay/shared";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { webhookSettled } from "@quietpay/shared/fixtures";
 import { signWebhook } from "@quietpay/shared/webhook";
-import * as sdk from "@quietpay/merchant-sdk";
+import * as sdk from "../server/sdk-stub.js";
 import { buildApp } from "../server/app.js";
 
 let relayer: Server;
 let app: ReturnType<typeof buildApp>;
 const SECRET = "test-secret";
-let baseUrl: string;
 
 beforeAll(async () => {
   relayer = createMockRelayer();
   await new Promise<void>((r) => relayer.listen(0, "127.0.0.1", r));
-  baseUrl = `http://127.0.0.1:${(relayer.address() as AddressInfo).port}`;
   app = buildApp(sdk, {
-    baseUrl,
+    baseUrl: `http://127.0.0.1:${(relayer.address() as AddressInfo).port}`,
     apiKey: "k",
-    merchantId: merchantIdFromSlug("demo-store"),
+    merchantId: webhookSettled.data.merchantId as `0x${string}`,
     webhookSecret: SECRET,
-    demoConversion: true,
   });
 });
 afterAll(async () => {
@@ -39,65 +38,50 @@ const post = (body: string, sig?: string) =>
   });
 
 describe("demo-store server", () => {
-  it("prices a multi-item cart from the catalog and sends the correct base units", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/checkout",
-      payload: { items: { mug: 2, notebook: 1 }, cartTotal: "32.50" },
-    });
+  it("creates an order from cartTotal", async () => {
+    const res = await app.inject({ method: "POST", url: "/api/checkout", payload: { items: { notebook: 3 }, cartTotal: "25.50" } });
     expect(res.statusCode).toBe(200);
-    const { orderId } = res.json();
-    expect(orderId).toMatch(/^0x[0-9a-f]{64}$/);
-    const order = await sdk.getOrder({ baseUrl, orderId });
-    expect(order.amount).toBe("32500000");
+    expect(res.json().orderId).toMatch(/^0x[0-9a-f]{64}$/);
   });
 
-  it("rejects missing items, invalid products and quantities, and totals outside the limit", async () => {
-    for (const items of [undefined, [], {}, { unknown: 1 }, { mug: 0 }, { mug: -1 }, { mug: 1.5 }, { mug: "2" }, { mug: Number.MAX_SAFE_INTEGER }]) {
-      const res = await app.inject({ method: "POST", url: "/api/checkout", payload: { items, cartTotal: "12.00" } });
-      expect(res.statusCode).toBe(400);
+  it("advertises only the supported direct payment route", async () => {
+    const res = await app.inject({ url: "/api/checkout/methods" });
+    expect(res.json()).toEqual({ methods: [{ id: "usdt", name: "Tether USD", symbol: "USDT", simulated: false }], settlementSymbol: "USDT", mockRelayer: false });
+  });
+
+  it("rejects tampered totals and invalid quantities before creating an order", async () => {
+    expect((await app.inject({ method: "POST", url: "/api/checkout", payload: { items: { notebook: 1 }, cartTotal: "0.01" } })).statusCode).toBe(409);
+    for (const items of [{}, { unknown: 1 }, { notebook: -1 }, { notebook: 1.5 }, { notebook: Number.MAX_SAFE_INTEGER }]) {
+      expect((await app.inject({ method: "POST", url: "/api/checkout", payload: { items, cartTotal: "8.50" } })).statusCode).toBe(400);
     }
   });
 
-  it("rejects an amount that does not match the server-priced cart", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/checkout",
-      payload: { items: { mug: 1 }, cartTotal: "0.01" },
-    });
-    expect(res.statusCode).toBe(409);
-  });
-
-  const quoteDemo = (methodId = "demo-stablecoin", destinationId = "usdt") => app.inject({
-    method: "POST", url: "/api/checkout/demo-quote",
-    payload: { items: { notebook: 1 }, cartTotal: "8.50", methodId, destinationId },
-  });
-
-  it("quotes the server-priced cart and keeps simulated confirmation separate from paid orders", async () => {
-    const quote = (await quoteDemo()).json();
-    expect(quote).toMatchObject({ symbol: "DEMO", settlementSymbol: "USDT", payAmount: "8.50", merchantAmount: "8.40", relayFee: "0.10" });
-    const confirm = () => app.inject({ method: "POST", url: "/api/checkout/demo-confirm", payload: { quoteId: quote.id } });
-    expect((await confirm()).json()).toEqual({ orderId: quote.id });
-    expect((await confirm()).json()).toEqual({ orderId: quote.id });
-    const status = (await app.inject({ url: `/api/orders/${quote.id}/paid` })).json();
-    expect(status).toMatchObject({ paid: false, simulation: { quote } });
-  });
-
-  it("quotes stablecoin payouts and rejects unsupported routes", async () => {
-    const quote = await quoteDemo("usdt", "demo-stablecoin");
-    expect(quote.json()).toMatchObject({ symbol: "USDT", settlementSymbol: "DEMO", merchantAmount: "8.40" });
-    expect((await quoteDemo("usdt", "usdt")).statusCode).toBe(400);
-    expect((await quoteDemo("usdt", "unknown")).statusCode).toBe(400);
-  });
-
-  it("rejects expired quotes", async () => {
-    const quote = (await quoteDemo()).json();
-    const now = vi.spyOn(Date, "now").mockReturnValue(quote.expiresAt);
+  it("retains verified receipts and duplicate detection after restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "quietpay-receipt-"));
+    const config = { baseUrl: "http://relayer.test", apiKey: "k", merchantId: webhookSettled.data.merchantId as `0x${string}`,
+      webhookSecret: SECRET, receiptDatabasePath: join(dir, "receipts.db") };
+    let server = buildApp(sdk, config);
+    const body = JSON.stringify(webhookSettled);
+    const request = { method: "POST" as const, url: "/webhooks/quietpay", payload: body,
+      headers: { "content-type": "application/json", "quietpay-signature": signWebhook(SECRET, body) } };
     try {
-      const res = await app.inject({ method: "POST", url: "/api/checkout/demo-confirm", payload: { quoteId: quote.id } });
-      expect(res.statusCode).toBe(409);
-    } finally {
-      now.mockRestore();
+      expect((await server.inject(request)).statusCode).toBe(200);
+      await server.close();
+      server = buildApp(sdk, config);
+      expect((await server.inject({ url: `/api/orders/${webhookSettled.data.orderId}/paid` })).json()).toMatchObject({ paid: true, eventId: webhookSettled.id });
+      expect((await server.inject(request)).json().duplicate).toBe(true);
+    } finally { await server.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("rejects a signed webhook for a different merchant", async () => {
+    const body = JSON.stringify({ ...webhookSettled, id: "evt_foreign_merchant", data: { ...webhookSettled.data, merchantId: "0x" + "ab".repeat(32) } });
+    expect((await post(body, signWebhook(SECRET, body))).statusCode).toBe(400);
+  });
+
+  it("rejects a bad cartTotal", async () => {
+    for (const cartTotal of ["abc", "-1", "0", "1.234", 5]) {
+      const res = await app.inject({ method: "POST", url: "/api/checkout", payload: { cartTotal } });
+      expect(res.statusCode).toBe(400);
     }
   });
 

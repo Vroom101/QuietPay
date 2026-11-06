@@ -14,8 +14,9 @@ import {
 } from "@quietpay/shared";
 import type { WebhookEvent } from "@quietpay/shared/webhook";
 import { rowToOrder, type Db, type OrderRow } from "./db.js";
-import type { ChainPort, PayArgs } from "./chain.js";
+import type { ChainPort, PayArgs, TxReceipt } from "./chain.js";
 import type { Config } from "./config.js";
+import { RefundService } from "./refunds.js";
 import { RateLimiter } from "./ratelimit.js";
 
 const HOUR = 3600;
@@ -46,10 +47,18 @@ export class RelayerService {
   readonly now: () => number;
   private readonly log: (msg: string, extra?: Record<string, unknown>) => void;
   private readonly ipLimiter: RateLimiter;
+  private readonly payerLimiter: RateLimiter;
+  private readonly merchantLimiter: RateLimiter;
+  private balanceWei: bigint | null = null;
+  private balanceLow = false;
+  private monitor: NodeJS.Timeout | null = null;
   private readonly orderLimiter: RateLimiter;
-  private readonly sendLock = new Mutex();
+  readonly refunds: RefundService;
+  readonly sendLock = new Mutex();
   private relayed = 0;
   private readonly rejected = new Map<string, number>();
+  private readonly inFlight = new Map<string, Promise<RelayPayResponse>>();
+  private readonly recovering = new Set<string>();
   private readonly tracking = new Set<string>();
 
   constructor(d: ServiceDeps) {
@@ -58,7 +67,10 @@ export class RelayerService {
     this.chain = d.chain;
     this.now = d.now ?? (() => Math.floor(Date.now() / 1000));
     this.log = d.log ?? (() => undefined);
+    this.payerLimiter = new RateLimiter(d.cfg.rateLimitPerMinute, 60_000, () => this.now() * 1000);
+    this.merchantLimiter = new RateLimiter(d.cfg.rateLimitPerMinute, 60_000, () => this.now() * 1000);
     this.ipLimiter = new RateLimiter(d.cfg.rateLimitPerMinute, 60_000, () => this.now() * 1000);
+    this.refunds = new RefundService(this, d.log);
     this.orderLimiter = new RateLimiter(Math.max(5, Math.floor(d.cfg.rateLimitPerMinute / 2)), 60_000, () => this.now() * 1000);
   }
 
@@ -74,13 +86,14 @@ export class RelayerService {
   // ------------------------------------------------------------------ views
 
   toOrder(row: OrderRow): Order {
-    return rowToOrder(row, {
+    const totals = this.db.refundTotals(row.id);
+    return { ...rowToOrder(row, {
       router: this.cfg.router,
       token: this.cfg.usdt,
       chainId: this.cfg.chainId,
       domain: this.cfg.tokenDomain,
       explorerBaseUrl: this.cfg.explorerBaseUrl,
-    });
+    }), refunded: totals.amount.toString(), refundCount: totals.count };
   }
 
   getOrder(id: string): Order {
@@ -117,13 +130,21 @@ export class RelayerService {
   metrics(): MetricsResponse {
     const counts = this.db.countByStatus();
     const spent = this.db.spentSince(this.now() - HOUR);
+    const agentRows = this.db.raw.prepare("SELECT status,COUNT(*) count FROM x402_payments GROUP BY status").all() as {status:string;count:number}[];
+    const agents = Object.fromEntries(agentRows.map(r=>[r.status,r.count]));
     return {
+      agentPayments: {settling:agents.settling??0,settled:agents.settled??0,failed:agents.failed??0},
+      balanceWbt: this.balanceWei === null ? null : formatUnits(this.balanceWei, 18),
+      lowBalance: this.balanceLow,
+      lowBalanceThresholdWbt: formatUnits(this.cfg.lowBalanceWei, 18),
       orders: {
         created: counts.created ?? 0,
         pending: counts.pending ?? 0,
         settled: counts.settled ?? 0,
         failed: counts.failed ?? 0,
         expired: counts.expired ?? 0,
+        partially_refunded: counts.partially_refunded ?? 0,
+        refunded: counts.refunded ?? 0,
       },
       relayed: this.relayed,
       rejected: Object.fromEntries(this.rejected),
@@ -171,8 +192,10 @@ export class RelayerService {
 
   // ------------------------------------------------------------------ relay
 
+  recordRejection(code: string) { this.rejected.set(code,(this.rejected.get(code)??0)+1); }
+  recordRelay() { this.relayed += 1; }
   private reject(code: ErrorCode, message?: string): never {
-    this.rejected.set(code, (this.rejected.get(code) ?? 0) + 1);
+    this.recordRejection(code);
     throw new QuietpayError(code, message);
   }
 
@@ -181,6 +204,16 @@ export class RelayerService {
    * cheapest checks run first so a flood of junk costs the relayer nothing.
    */
   async relayPay(req: RelayPayRequest, ctx: { ip: string }): Promise<RelayPayResponse> {
+    const key = JSON.stringify([req.orderId.toLowerCase(), req.signature.toLowerCase(), req.payer.toLowerCase(), req.validAfter, req.validBefore, req.amount]);
+    const existing = this.inFlight.get(key);
+    if (existing) return existing;
+    const work = this.relayPayOnce(req, ctx);
+    this.inFlight.set(key, work);
+    try { return await work; }
+    finally { this.inFlight.delete(key); }
+  }
+
+  private async relayPayOnce(req: RelayPayRequest, ctx: { ip: string }): Promise<RelayPayResponse> {
     // 1. rate limit (per client and per order)
     if (!this.ipLimiter.allow(`ip:${ctx.ip}`) || !this.orderLimiter.allow(`order:${req.orderId.toLowerCase()}`)) {
       this.reject("rate_limited");
@@ -195,7 +228,7 @@ export class RelayerService {
     if (row.signature && row.signature.toLowerCase() === req.signature.toLowerCase() && row.tx_hash) {
       return { orderId: row.id as Hex, status: row.status, txHash: row.tx_hash as Hex };
     }
-    if (row.status === "settled" || row.status === "pending") this.reject("already_settled");
+    if (["settled", "pending", "partially_refunded", "refunded"].includes(row.status)) this.reject("already_settled");
     if (row.status === "expired") this.reject("order_expired");
 
     // 3. amount matches
@@ -231,6 +264,10 @@ export class RelayerService {
     }
     if (signer.toLowerCase() !== req.payer.toLowerCase()) this.reject("bad_signature");
 
+    if (!this.payerLimiter.allow(req.payer.toLowerCase()) || !this.merchantLimiter.allow(row.merchant_id)) {
+      this.reject("rate_limited");
+    }
+
     // 5. merchant registered, fee within cap, payout unchanged since the order was created
     const merchant = await this.chain.getMerchant(row.merchant_id as Hex);
     if (merchant.payout === ZERO) this.reject("simulation_failed", "This merchant is not registered.");
@@ -255,8 +292,13 @@ export class RelayerService {
       this.reject("already_settled");
     }
 
+    // No awaits between this cap check and the SQLite claim: concurrent requests
+    // in this single-writer process cannot both reserve the same remaining volume.
+    if (this.db.payerVolume(req.payer, this.now() - DAY) + BigInt(row.amount) > this.cfg.payerCap) {
+      this.reject("rate_limited", "Per-payer limit reached for today.");
+    }
     // Claim the order so concurrent requests cannot both broadcast.
-    if (!this.db.claimForRelay(row.id, req.payer, req.signature, req.validAfter, req.validBefore)) {
+    if (!this.db.claimForRelay(row.id, req.payer, req.signature, req.validAfter, req.validBefore, this.now())) {
       const again = this.db.getOrder(row.id)!;
       if (again.signature?.toLowerCase() === req.signature.toLowerCase() && again.tx_hash) {
         return { orderId: again.id as Hex, status: again.status, txHash: again.tx_hash as Hex };
@@ -278,6 +320,11 @@ export class RelayerService {
     try {
       // 9-11 run under a lock so the budget check and the spend record cannot interleave.
       const hash = await this.sendLock.run(async () => {
+        if (this.localPaused || await this.chain.isPaused()) this.reject("relayer_paused");
+        // The claimed amount is already included. Recheck under the send lock.
+        if (this.db.payerVolume(req.payer, this.now() - DAY) > this.cfg.payerCap) {
+          this.reject("rate_limited", "Per-payer limit reached for today.");
+        }
         // 9. eth_call simulation
         let gas: bigint;
         try {
@@ -293,13 +340,20 @@ export class RelayerService {
         }
         // 11. hourly loss budget
         const gasLimit = (gas * 12n) / 10n;
+        if (gasLimit > this.cfg.maxGasLimit) this.reject("relayer_paused", "Transaction gas limit exceeds the configured cap.");
         const estimate = gasLimit * gasPrice;
-        if (this.db.spentSince(nowS - HOUR) + estimate > this.cfg.lossBudgetWei) {
+        if (this.db.reservedSpend(this.now() - HOUR) + estimate > this.cfg.lossBudgetWei) {
           this.reject("relayer_paused", "Payments are paused briefly. Please try again later.");
         }
-        const h = await this.chain.sendPay(args, gasLimit, gasPrice);
-        this.db.setTxHash(row.id, h);
-        this.db.recordSpend(h, nowS, estimate);
+        if (this.localPaused) this.reject("relayer_paused");
+        const prepared = await this.chain.preparePay(args, gasLimit, gasPrice);
+        this.db.saveAttempt({ hash: prepared.hash, order_id: row.id, raw: prepared.raw,
+          nonce: prepared.nonce, gas: gasLimit.toString(), gas_price: gasPrice.toString(), sent_at: this.now(), replacement: 0 });
+        // A transport error may occur after the node accepted the transaction.
+        // Keep the signed transaction pending and let the monitor recover it.
+        try { if (!this.localPaused) await this.chain.broadcast(prepared.raw); }
+        catch (e) { this.log("broadcast uncertain; retained for recovery", { order: row.id }); }
+        const h = prepared.hash;
         this.relayed += 1;
         return h;
       });
@@ -319,31 +373,109 @@ export class RelayerService {
   // ------------------------------------------------------------------ tracking
 
   /** Waits for the receipt and moves the order to settled or failed. Safe to call twice. */
-  async track(orderId: string, hash: Hex): Promise<void> {
+  async track(orderId: string, hash: Hex, receipt?: TxReceipt): Promise<void> {
     if (this.tracking.has(orderId)) return;
     this.tracking.add(orderId);
     try {
-      const r = await this.chain.waitForReceipt(hash);
+      const r = receipt ?? await this.chain.waitForReceipt(hash);
       const row = this.db.getOrder(orderId);
-      if (!row) return;
-      this.db.recordSpend(hash, this.now(), r.gasUsed * r.effectiveGasPrice);
-      if (r.status === "success") {
-        this.db.setStatus(orderId, "settled", { settledAt: this.now() });
-        this.enqueueWebhook(orderId, "payment.settled");
-      } else {
-        this.db.setStatus(orderId, "failed", { failureCode: "simulation_failed" });
-        this.enqueueWebhook(orderId, "payment.failed");
-      }
+      if (!row || row.status !== "pending") return;
+      const attempts = this.db.attempts(orderId);
+      const mined = attempts.find(a => a.hash === hash);
+      // A late receipt callback from a previous failed attempt must not overwrite a retry.
+      if (mined ? mined.nonce !== attempts.at(-1)?.nonce : row.tx_hash !== hash) return;
+      this.db.raw.transaction(() => {
+        // Only one transaction at this nonce can be mined. Replace its reservation with actual spend.
+        for (const a of attempts.filter(a => a.nonce === mined?.nonce)) {
+          this.db.raw.prepare("DELETE FROM spend WHERE tx_hash=?").run(a.hash);
+        }
+        this.db.setTxHash(orderId, hash);
+        this.db.recordSpend(hash, this.now(), r.gasUsed * r.effectiveGasPrice);
+        if (r.status === "success") {
+          this.db.setStatus(orderId, "settled", { settledAt: this.now() });
+          this.enqueueWebhook(orderId, "payment.settled");
+        } else {
+          this.db.setStatus(orderId, "failed", { failureCode: "simulation_failed" });
+          this.enqueueWebhook(orderId, "payment.failed");
+        }
+      })();
     } catch (e) {
-      this.log("tracking error; will retry on restart", { order: orderId, err: String((e as Error).message).slice(0, 200) });
+      this.log("tracking error; monitor will retry", { order: orderId, err: String((e as Error).message).slice(0, 200) });
     } finally {
       this.tracking.delete(orderId);
     }
   }
 
-  /** Re-attach to transactions that were pending when the process stopped. */
-  recoverPending() {
-    for (const row of this.db.pendingOrders()) void this.track(row.id, row.tx_hash as Hex);
+  async refreshBalance() {
+    const balance = await this.chain.getBalance();
+    const low = balance < this.cfg.lowBalanceWei;
+    if (low && !this.balanceLow) this.log("low relayer WBT balance", { balanceWbt: formatUnits(balance, 18) });
+    this.balanceWei = balance;
+    this.balanceLow = low;
+  }
+
+  startMonitor() {
+    if (this.monitor) return;
+    this.recoverPending(true);
+    this.monitor = setInterval(() => this.recoverPending(), this.cfg.pendingRetrySeconds * 1000);
+    this.monitor.unref();
+  }
+
+  stopMonitor() {
+    if (this.monitor) clearInterval(this.monitor);
+    this.monitor = null;
+  }
+
+  recoverPending(releaseOrphanClaims = false) {
+    this.refunds.recoverPending(releaseOrphanClaims);
+    void this.refreshBalance().catch(e => this.log("balance read failed", { error: String(e) }));
+    for (const row of this.db.pendingOrders()) {
+      if (!row.tx_hash) { if (releaseOrphanClaims) this.db.revertClaim(row.id); continue; }
+      void this.recoverOrder(row.id).catch(e => this.log("recovery failed", { order: row.id, error: String(e) }));
+    }
+  }
+
+  async recoverOrder(orderId: string) {
+    if (this.tracking.has(orderId) || this.recovering.has(orderId)) return;
+    this.recovering.add(orderId);
+    try { await this.recoverOrderOnce(orderId); }
+    finally { this.recovering.delete(orderId); }
+  }
+
+  private async recoverOrderOnce(orderId: string) {
+    const row = this.db.getOrder(orderId);
+    if (!row || row.status !== "pending" || !row.tx_hash) return;
+    // Check every same-nonce candidate: an older transaction may have mined first.
+    const attempts = this.db.attempts(orderId);
+    const latest = attempts.at(-1);
+    if (!latest) { await this.track(orderId, row.tx_hash as Hex); return; }
+    for (const a of attempts.filter(a => a.nonce === latest.nonce)) {
+      const receipt = await this.chain.getReceipt(a.hash as Hex);
+      if (receipt) await this.track(orderId, a.hash as Hex, receipt);
+      if (this.db.getOrder(orderId)?.status !== "pending") return;
+    }
+    await this.sendLock.run(async () => {
+      const current = this.db.getOrder(orderId);
+      if (current?.status !== "pending" || current.tx_hash !== latest.hash) return;
+      if (this.localPaused || await this.chain.isPaused()) return;
+      let raw = latest.raw as Hex;
+      if (this.now() - latest.sent_at >= this.cfg.pendingRetrySeconds && latest.replacement < this.cfg.maxReplacements
+          && row.valid_before !== null && this.now() < row.valid_before) {
+        const price = (BigInt(latest.gas_price) * 1125n + 999n) / 1000n;
+        const gas = BigInt(latest.gas);
+        const delta = gas * (price - BigInt(latest.gas_price));
+        if ((this.cfg.maxGasPrice === null || price <= this.cfg.maxGasPrice)
+            && this.db.reservedSpend(this.now() - HOUR) + delta <= this.cfg.lossBudgetWei) {
+          const tx = await this.chain.preparePay({ merchantId: row.merchant_id as Hex, orderId: row.id as Hex,
+            payer: row.payer as Hex, value: BigInt(row.amount), fee: BigInt(row.fee),
+            validAfter: BigInt(row.valid_after!), validBefore: BigInt(row.valid_before!), signature: row.signature as Hex }, gas, price, latest.nonce);
+          this.db.saveAttempt({ hash: tx.hash, order_id: orderId, raw: tx.raw, nonce: latest.nonce,
+            gas: gas.toString(), gas_price: price.toString(), sent_at: this.now(), replacement: latest.replacement + 1 });
+          raw = tx.raw;
+        }
+      }
+      try { if (!this.localPaused) await this.chain.broadcast(raw); } catch { /* already known, mined, or temporarily unreachable */ }
+    });
   }
 
   private enqueueWebhook(orderId: string, type: WebhookEvent["type"]) {

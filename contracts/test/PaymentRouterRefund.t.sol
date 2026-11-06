@@ -141,7 +141,7 @@ contract PaymentRouterRefundTest is Test {
         assertEq(usdt.balanceOf(address(router)), 0, "router custodies nothing");
         assertEq(usdt.balanceOf(relayer), FEE, "no refund fee to the relayer");
         PaymentRouter.Receipt memory r = router.receipts(MERCHANT, ORDER);
-        assertEq(r.totalRefunded, 10_000_000);
+        assertEq(r.refunded, 10_000_000);
         assertEq(r.refundCount, 1);
         assertTrue(r.settled);
     }
@@ -153,7 +153,7 @@ contract PaymentRouterRefundTest is Test {
         // Same amount again: only the index differs, so the nonce differs and it succeeds.
         _refund(5_000_000, 1);
         PaymentRouter.Receipt memory r = router.receipts(MERCHANT, ORDER);
-        assertEq(r.totalRefunded, 10_000_000);
+        assertEq(r.refunded, 10_000_000);
         assertEq(r.refundCount, 2);
         assertTrue(
             router.computeRefundNonce(MERCHANT, ORDER, payer, 5_000_000, 0)
@@ -167,11 +167,11 @@ contract PaymentRouterRefundTest is Test {
         _refund(10_000_000, 0);
         _refund(10_000_000, 1);
         _refund(5_000_000, 2);
-        assertEq(router.receipts(MERCHANT, ORDER).totalRefunded, PRICE);
+        assertEq(router.receipts(MERCHANT, ORDER).refunded, PRICE);
 
         bytes memory sig = _refundSig(payer, 1, 3);
         vm.prank(relayer);
-        vm.expectRevert(PaymentRouter.RefundOverValue.selector);
+        vm.expectRevert(PaymentRouter.RefundExceedsPaid.selector);
         router.refund(MERCHANT, ORDER, 1, vA, vB, sig);
     }
 
@@ -180,14 +180,14 @@ contract PaymentRouterRefundTest is Test {
     function test_overRefundReverts() public {
         bytes memory sig = _refundSig(payer, PRICE + 1, 0);
         vm.prank(relayer);
-        vm.expectRevert(PaymentRouter.RefundOverValue.selector);
+        vm.expectRevert(PaymentRouter.RefundExceedsPaid.selector);
         router.refund(MERCHANT, ORDER, PRICE + 1, vA, vB, sig);
     }
 
     function test_refundIsComparedToGrossValueNotNet() public {
         // Gross value 25.00 is refundable even though the merchant received 24.95.
         _refund(PRICE, 0);
-        assertEq(router.receipts(MERCHANT, ORDER).totalRefunded, PRICE);
+        assertEq(router.receipts(MERCHANT, ORDER).refunded, PRICE);
     }
 
     // ------------------------------------------------------------ 5. zero
@@ -213,7 +213,7 @@ contract PaymentRouterRefundTest is Test {
     function test_unknownOrderReverts() public {
         bytes memory sig = _refundSig(payer, 1_000_000, 0);
         vm.prank(relayer);
-        vm.expectRevert(PaymentRouter.NoReceipt.selector);
+        vm.expectRevert(PaymentRouter.NotSettled.selector);
         router.refund(MERCHANT, keccak256("nope"), 1_000_000, vA, vB, sig);
     }
 
@@ -228,7 +228,7 @@ contract PaymentRouterRefundTest is Test {
         vm.prank(relayer);
         vm.expectRevert(bytes("invalid signature"));
         router.refund(MERCHANT, ORDER, 5_000_000, vA, vB, sig);
-        assertEq(router.receipts(MERCHANT, ORDER).totalRefunded, 5_000_000);
+        assertEq(router.receipts(MERCHANT, ORDER).refunded, 5_000_000);
     }
 
     function test_signatureForLaterIndexCannotBeUsedEarly() public {
@@ -298,7 +298,7 @@ contract PaymentRouterRefundTest is Test {
         router.refund(MERCHANT, ORDER, 5_000_000, vA, vB, sig);
 
         PaymentRouter.Receipt memory after_ = router.receipts(MERCHANT, ORDER);
-        assertEq(after_.totalRefunded, before_.totalRefunded);
+        assertEq(after_.refunded, before_.refunded);
         assertEq(after_.refundCount, before_.refundCount);
         assertEq(usdt.balanceOf(refundSigner), 1_000_000);
         // The authorization was not consumed, so it works once the wallet is topped up.
@@ -409,12 +409,12 @@ contract PaymentRouterRefundTest is Test {
         bytes memory sig = _refundSig(payer, a2, 1);
         vm.prank(relayer);
         if (a1 + a2 > PRICE) {
-            vm.expectRevert(PaymentRouter.RefundOverValue.selector);
+            vm.expectRevert(PaymentRouter.RefundExceedsPaid.selector);
             router.refund(MERCHANT, ORDER, a2, vA, vB, sig);
-            assertEq(router.receipts(MERCHANT, ORDER).totalRefunded, a1);
+            assertEq(router.receipts(MERCHANT, ORDER).refunded, a1);
         } else {
             router.refund(MERCHANT, ORDER, a2, vA, vB, sig);
-            assertEq(router.receipts(MERCHANT, ORDER).totalRefunded, a1 + a2);
+            assertEq(router.receipts(MERCHANT, ORDER).refunded, a1 + a2);
         }
     }
 
@@ -445,7 +445,7 @@ contract PaymentRouterRefundTest is Test {
         assertTrue(ReentrantPayer(payerContract).reenterAttempted(), "hook ran");
         assertFalse(ReentrantPayer(payerContract).reenterSucceeded(), "re-entry was blocked");
         PaymentRouter.Receipt memory r = router.receipts(MERCHANT, ORDER);
-        assertEq(r.totalRefunded, 5_000_000);
+        assertEq(r.refunded, 5_000_000);
         assertEq(r.refundCount, 1);
     }
 }

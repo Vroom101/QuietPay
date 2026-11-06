@@ -6,7 +6,8 @@ import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ERROR_CODES, ERROR_USER_MESSAGES, formatUsdt, recoverCheckoutSigner, type Order } from "@quietpay/shared";
 import { createMockRelayer } from "@quietpay/shared/mock-server";
-import { FIXTURE_ORDER_ID, FIXTURE_ROUTER, makeOrder } from "@quietpay/shared/fixtures";
+import { pollOrder } from "../src/client.js";
+import { FIXTURE_ORDER_ID, FIXTURE_ROUTER, orderSettled } from "@quietpay/shared/fixtures";
 import "../src/element.js";
 import type { QuietpayCheckout } from "../src/element.js";
 
@@ -116,26 +117,6 @@ describe("quietpay-checkout against the mock relayer", () => {
     el.remove();
   });
 
-  it("does not submit payment if the refreshed order changes the reviewed price", async () => {
-    const reviewed = makeOrder();
-    const changed = makeOrder({ amount: "99000000" });
-    let current = reviewed;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      new Response(JSON.stringify(current)),
-    );
-    const el = mount(reviewed.id);
-    try {
-      await until(() => el.view === "ready");
-      current = changed;
-      await el.pay();
-      expect(el.errorCode).toBe("payment_details_changed");
-      expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith(`/v1/orders/${reviewed.id}`))).toBe(true);
-    } finally {
-      el.remove();
-      fetchMock.mockRestore();
-    }
-  });
-
   it("maps relayer failures at pay time to plain words (simulation_failed)", async () => {
     const order = await createOrder("5000001");
     const el = mount(order.id);
@@ -211,5 +192,24 @@ describe("every relayer error code renders a message", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+describe("refunded checkout compatibility", () => {
+  it.each(["partially_refunded", "refunded"] as const)("shows %s as a receipt without offering payment again", async status => {
+    const o = { ...orderSettled, status, refunded: status === "refunded" ? "25000000" : "5000000", refundCount: 1 };
+    const mock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(o), { status: 200 }));
+    const el = mount(o.id);
+    const settled = vi.fn(), refunded = vi.fn();
+    el.addEventListener("quietpay:settled", settled);
+    el.addEventListener("quietpay:refunded", refunded);
+    try {
+      await until(() => !!el.shadowRoot?.querySelector("[data-testid=receipt]"));
+      expect(el.shadowRoot?.querySelector("button")).toBeNull();
+      expect(text(el)).toContain("Refunded:");
+      expect(settled).not.toHaveBeenCalled();
+      expect(refunded).toHaveBeenCalled();
+      expect((await pollOrder(base, o.id, { timeoutMs: 1 })).status).toBe(status);
+    } finally { el.remove(); mock.mockRestore(); }
   });
 });

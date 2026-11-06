@@ -11,8 +11,8 @@ export const ERROR_CODES = [
   "rate_limited",
   "simulation_failed",
   "fee_over_cap",
-  // added with refunds (shared-change)
   "insufficient_refund_balance",
+  "budget_exceeded",
   "payment_replayed",
 ] as const;
 
@@ -39,6 +39,7 @@ export const ERROR_HTTP_STATUS: Record<ErrorCode, number> = {
   simulation_failed: 422,
   fee_over_cap: 422,
   insufficient_refund_balance: 422,
+  budget_exceeded: 429,
   payment_replayed: 409,
 };
 
@@ -52,9 +53,10 @@ export const ERROR_USER_MESSAGES: Record<ErrorCode, string> = {
   relayer_paused: "Payments are paused for a moment. Please try again shortly.",
   rate_limited: "Too many attempts. Please wait a minute and try again.",
   simulation_failed: "This payment could not go through, and you have not been charged. Please check your balance and try again.",
+  budget_exceeded: "This request exceeds the permitted spending limit.",
+  payment_replayed: "This payment approval has already been used.",
+  insufficient_refund_balance: "The merchant refund account has insufficient funds. Please contact the merchant.",
   fee_over_cap: "This payment could not be processed right now, and you have not been charged. Please try again later.",
-  insufficient_refund_balance: "The merchant's refund wallet does not hold enough to cover this refund yet. Please top it up and try again.",
-  payment_replayed: "This approval was already used. Please start a new payment.",
 };
 
 export function errorBody(code: ErrorCode, message?: string): ErrorResponse {
