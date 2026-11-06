@@ -229,6 +229,46 @@ export class FacilitatorService {
       };
     }
   }
+  private newRow(data: ReturnType<FacilitatorService["inspect"]>): PaymentRow {
+    const { req, policy, auth, id } = data;
+    return {
+      id,
+      payer: auth.from.toLowerCase(),
+      nonce: auth.nonce.toLowerCase(),
+      merchant_id: policy.merchantId.toLowerCase(),
+      resource: new URL(policy.resource.url).href,
+      pay_to: auth.to.toLowerCase(),
+      amount: auth.value,
+      fingerprint: data.fingerprint,
+      request: JSON.stringify(req),
+      status: "settling",
+      tx_hash: null,
+      error_reason: null,
+      created_at: this.relayer.now(),
+      delivered_at: null,
+      delivery_attempts: 0,
+      lease_token: null,
+      lease_until: null,
+    };
+  }
+  /**
+   * The nonce was already used before we sent anything. Record the payment and let the external-settlement
+   * check decide: a plain transfer that paid exactly this authorization settles it (once deep enough), a
+   * cancelled one fails, anything unbindable is parked as unresolved. Returns false (nothing recorded) when
+   * the nonce turns out not to be used, so the caller answers payment_replayed as before.
+   */
+  private adoptExternal(
+    data: ReturnType<FacilitatorService["inspect"]>,
+  ): Promise<boolean> {
+    return this.relayer.sendLock.run(async () => {
+      if (this.store.get(data.id)) return false;
+      const row = this.newRow(data);
+      this.store.insert(row);
+      if ((await this.resolveExternal(row)) !== "none") return true;
+      this.relayer.db.raw.prepare("DELETE FROM x402_payments WHERE id=?").run(row.id);
+      return false;
+    });
+  }
   private result(id: string): X402SettleResponse {
     const row = this.store.get(id)!;
     const base = {
@@ -287,28 +327,18 @@ export class FacilitatorService {
     this.inflight.add(id);
     try {
       const verified = await this.verify(req, merchant);
-      if (!verified.isValid) return failed(verified.invalidReason!);
+      if (!verified.isValid) {
+        // A used nonce may be a front-run: someone else submitted this very authorization and the payee was paid.
+        if (
+          verified.invalidReason === "payment_replayed" &&
+          (await this.adoptExternal(data))
+        )
+          return this.result(id);
+        return failed(verified.invalidReason!);
+      }
       await this.relayer.sendLock.run(async () => {
         if (this.store.get(id)) throw new PaymentError("payment_replayed");
-        const row: PaymentRow = {
-          id,
-          payer: auth.from.toLowerCase(),
-          nonce: auth.nonce.toLowerCase(),
-          merchant_id: policy.merchantId.toLowerCase(),
-          resource: new URL(policy.resource.url).href,
-          pay_to: auth.to.toLowerCase(),
-          amount: auth.value,
-          fingerprint: data.fingerprint,
-          request: JSON.stringify(req),
-          status: "settling",
-          tx_hash: null,
-          error_reason: null,
-          created_at: this.relayer.now(),
-          delivered_at: null,
-          delivery_attempts: 0,
-          lease_token: null,
-          lease_until: null,
-        };
+        const row = this.newRow(data);
         this.store.insert(row);
         try {
           await this.sendLocked(row);

@@ -1,0 +1,7 @@
+﻿# Attack log (backend audit)
+
+| Id | Round | Angle | Finding | Severity | Status |
+|---|---|---|---|---|---|
+| F13 | B1 audit | Front-running of the agent's signed EIP-3009 authorization | A third party submitting the authorization first made our transfer revert; `finish()` marked the payment `failed` although the payee was paid, so the payer paid and got nothing and could not retry (unique payer+nonce). Same outcome if the foreign tx landed before verify (`payment_replayed`) or before our send (simulation failed). | High (payer misled) | Fixed. Reverted/failed-to-send attempts now call `chain.findExternalSettlement`; a plain `transferWithAuthorization` to the token paying exactly this payer, payee, amount and nonce, 2+ blocks deep, settles the row with the foreign hash (`settlement_source=external`, our gas spend kept). Shallow: stays pending. Cancelled: failed. Used but unbindable (forwarder/multicall, cancel without event): `unresolved`, never delivered. Tests: 11 unit (front-run.test.ts) + real-chain anvil front-run (anvil-front-run.test.ts, fails on the old code with `failed`). |
+
+Residual (Low, documented): a payload observed by a third party can be redeemed for any resource with the same price and payee (the signature does not cover the resource). USDT blacklist or fund freezing after payment is out of scope. A foreign tx that reaches the token only through a forwarder or multicall is parked as `unresolved` for review (no trace-based binding yet).

@@ -133,6 +133,42 @@ describe("F13 front-run: a third party consumes the signed authorization first",
     expect(e.state.sent).toHaveLength(0);
   });
 
+  it("handles the foreign tx landing before we even verify: settle adopts it instead of answering payment_replayed", async () => {
+    const e = setup();
+    e.state.used.add(nonce(1));
+    e.state.external = matched(2);
+    const req = await e.request();
+    const res = await e.service.settle(req, MERCHANT_ID);
+    expect(res).toMatchObject({ success: true, transaction: FOREIGN });
+    expect(row(e).settlement_source).toBe("external");
+    expect(e.state.sent).toHaveLength(0);
+    expect(e.service.claim(req, MERCHANT_ID).success).toBe(true);
+    expect(e.service.claim(req, MERCHANT_ID).success).toBe(false);
+  });
+
+  it("a used nonce nobody can bind to this payment is parked, not delivered and not answered as a plain replay", async () => {
+    const e = setup();
+    e.state.used.add(nonce(1));
+    e.state.external = { kind: "unknown" };
+    const req = await e.request();
+    const res = await e.service.settle(req, MERCHANT_ID);
+    expect(res).toMatchObject({ success: false, errorReason: "settlement_unresolved" });
+    expect(row(e).status).toBe("unresolved");
+    expect(e.service.claim(req, MERCHANT_ID).success).toBe(false);
+    expect(e.state.sent).toHaveLength(0);
+  });
+
+  it("a shallow foreign tx before verify answers settlement_pending and delivers nothing yet", async () => {
+    const e = setup();
+    e.state.used.add(nonce(1));
+    e.state.external = matched(1);
+    const req = await e.request();
+    const res = await e.service.settle(req, MERCHANT_ID);
+    expect(res).toMatchObject({ success: false, errorReason: "settlement_pending" });
+    expect(row(e).status).toBe("settling");
+    expect(e.service.claim(req, MERCHANT_ID).success).toBe(false);
+  });
+
   it("does not turn a simulation failure with an UNUSED nonce into a settlement", async () => {
     const e = setup();
     e.state.usedAtSimulateCall = 0;
