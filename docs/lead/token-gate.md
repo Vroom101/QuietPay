@@ -32,4 +32,13 @@ separate funded wallet submits. This is covered by the first real payment throug
 (`docs/lead/first-payment.md`, checkpoint CP1). If that transaction reverts inside the token, escalate
 to the Plan B design in the build plan (permit plus order intent).
 
-Transaction link: _pending_
+## Fork evidence (2026-11-06)
+
+`contracts/test/Fork.t.sol` runs the real `PaymentRouter` against the real USDT proxy on a fork of chain 1874
+(`QUIETPAY_FORK_RPC=https://rpc.ankr.com/whitechain_testnet forge test --match-contract ForkTest`). With a payer holding
+zero native balance, the real token accepted our `ReceiveWithAuthorization` signature (domain `Tether USD` / `1`),
+consumed the nonce, paid the merchant and relayer exactly, rejected a replay, and also executed a refund from a
+separate refundSigner. This is a simulation on forked state, **not** a broadcast transaction, so it does not replace
+the live tx link below.
+
+Transaction link: _pending (needs a funded relayer key)_
