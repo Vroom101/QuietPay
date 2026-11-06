@@ -66,6 +66,8 @@ export const RelayPayRequest = z.object({
   validAfter: z.number().int().nonnegative(),
   validBefore: z.number().int().positive(),
   signature: Signature,
+  /** Optional echo of the price the payer saw. The relayer rejects with amount_mismatch if it differs from the order. */
+  amount: Amount.optional(),
 });
 export type RelayPayRequest = z.infer<typeof RelayPayRequest>;
 export const RelayPayResponse = z.object({
