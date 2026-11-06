@@ -12,7 +12,7 @@ const cfg = loadConfig();
 const db = new Db(cfg.databasePath);
 const chain = makeChain({ rpcUrl: cfg.rpcUrl, chainId: cfg.chainId, router: cfg.router, relayerKey: cfg.relayerKey });
 const svc = new RelayerService({ cfg, db, chain, log });
-const worker = new WebhookWorker(db, cfg.webhookSecret, undefined, undefined, log);
+const worker = new WebhookWorker(db, cfg.webhookSecret, undefined, undefined, log, { allowPrivate: cfg.allowPrivateWebhooks });
 
 svc.recoverPending();
 worker.start();

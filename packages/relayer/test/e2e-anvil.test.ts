@@ -19,7 +19,7 @@ import { Db } from "../src/db.js";
 import { makeChain } from "../src/chain.js";
 import { RelayerService } from "../src/service.js";
 import { buildServer } from "../src/server.js";
-import { WebhookWorker } from "../src/webhooks.js";
+import { WebhookWorker, merchantWebhookSecret } from "../src/webhooks.js";
 import { makeCfg } from "./helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -114,10 +114,11 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
       apiKeys: new Map([["test-key", merchantId]]),
       lossBudgetWei: parseUnits("1", 18),
       tokenDomain: domain,
+      allowPrivateWebhooks: true, // the test's webhook receiver listens on 127.0.0.1
     });
     const db = new Db(":memory:");
     const svc = new RelayerService({ cfg, db, chain: makeChain({ rpcUrl: RPC, chainId: 31337, router, relayerKey: RELAYER_KEY }) });
-    const worker = new WebhookWorker(db, cfg.webhookSecret);
+    const worker = new WebhookWorker(db, cfg.webhookSecret, undefined, undefined, undefined, { allowPrivate: true });
     const app = buildServer(svc);
 
     // Merchant creates the order over HTTP with its API key.
@@ -220,7 +221,7 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
     // Signed webhook is delivered and verifies.
     expect(await worker.tick()).toBe(1);
     expect(hooks).toHaveLength(1);
-    expect(verifyWebhookSignature(cfg.webhookSecret, hooks[0]!.body, hooks[0]!.sig)).toBe(true);
+    expect(verifyWebhookSignature(merchantWebhookSecret(cfg.webhookSecret, merchantId), hooks[0]!.body, hooks[0]!.sig)).toBe(true);
     const event = WebhookEvent.parse(JSON.parse(hooks[0]!.body));
     expect(event.type).toBe("payment.settled");
     expect(event.data.txHash).toBe(txHash);

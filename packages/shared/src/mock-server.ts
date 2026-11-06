@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { ERROR_HTTP_STATUS, errorBody, type ErrorCode } from "./errors.js";
 import { CreateOrderRequest, RefundRequest, RelayPayRequest, type Order } from "./schemas.js";
-import { InvalidAmountError, parseUsdt } from "./amount.js";
+import { InvalidAmountError, MAX_WHOLE_UNITS, parseUsdt } from "./amount.js";
 import {
   FIXTURE_PAYER,
   FIXTURE_ROUTER,
@@ -78,6 +78,9 @@ export function createMockRelayer(opts: { settleAfterMs?: number } = {}): Server
           if (e instanceof InvalidAmountError) return fail(res, "invalid_amount");
           throw e;
         }
+      } else if (body && typeof body.amount === "string" && /^[0-9]{1,78}$/.test(body.amount)) {
+        // Integer base units get the same cap as decimal amounts.
+        if (BigInt(body.amount) > MAX_WHOLE_UNITS * 10n ** BigInt(token.decimals)) return fail(res, "invalid_amount");
       }
       const parsed = CreateOrderRequest.safeParse(body);
       if (!parsed.success) return fail(res, parsed.error.issues.some((i) => i.path.includes("amount")) ? "invalid_amount" : "bad_signature");

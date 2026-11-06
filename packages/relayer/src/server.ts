@@ -10,6 +10,7 @@ import {
   type ErrorCode,
 } from "@quietpay/shared";
 import type { RelayerService } from "./service.js";
+import { RateLimiter } from "./ratelimit.js";
 
 function safeEqual(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -39,8 +40,13 @@ export function buildServer(svc: RelayerService): FastifyInstance {
       const code: ErrorCode = err.issues.some((i) => i.path.includes("amount")) ? "amount_mismatch" : "bad_signature";
       return reply.code(400).send(errorBody(code, "The request was not valid."));
     }
+    // Fastify client errors (bad JSON, oversized body, unsupported content type) keep their status.
+    // Only fixed, safe messages are sent; the Fastify message is never echoed back.
     const e = err as { statusCode?: number };
-    if (e.statusCode === 400 || e.statusCode === 413) return reply.code(400).send(errorBody("bad_signature", "The request was not valid."));
+    if (typeof e.statusCode === "number" && e.statusCode >= 400 && e.statusCode <= 499) {
+      const msg = e.statusCode === 415 ? "Unsupported content type. Send application/json." : "The request was not valid.";
+      return reply.code(e.statusCode).send(errorBody("bad_signature", msg));
+    }
     svc["log"]?.("unhandled", { err: String((err as Error).message).slice(0, 300) });
     return reply.code(500).send({ error: { code: "simulation_failed", message: "Something went wrong on our side." } });
   });
@@ -63,7 +69,12 @@ export function buildServer(svc: RelayerService): FastifyInstance {
     return true;
   };
 
-  app.get("/v1/health", async () => svc.health());
+  // Health is unauthenticated and costs RPC calls, so it gets its own small per-IP limit.
+  const healthLimiter = new RateLimiter(60, 60_000);
+  app.get("/v1/health", async (req) => {
+    if (!healthLimiter.allow(req.ip)) throw new QuietpayError("rate_limited");
+    return svc.health();
+  });
 
   app.post("/v1/orders", async (req, reply) => {
     const merchant = merchantFromKey(req, reply);

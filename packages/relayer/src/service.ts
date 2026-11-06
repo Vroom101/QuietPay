@@ -17,6 +17,7 @@ import { rowToOrder, type Db, type OrderRow } from "./db.js";
 import type { ChainPort, PayArgs } from "./chain.js";
 import type { Config } from "./config.js";
 import { RateLimiter } from "./ratelimit.js";
+import { webhookUrlProblem } from "./webhooks.js";
 
 const HOUR = 3600;
 const DAY = 86_400;
@@ -93,8 +94,9 @@ export class RelayerService {
     return this.db.listOrders(merchantId).map((r) => this.toOrder(this.expireIfNeeded(r)));
   }
 
+  /** Created and failed orders stop being relayable at expiresAt. */
   private expireIfNeeded(row: OrderRow): OrderRow {
-    if (row.status === "created" && this.now() >= row.expires_at) {
+    if ((row.status === "created" || row.status === "failed") && this.now() >= row.expires_at) {
       this.db.setStatus(row.id, "expired");
       return { ...row, status: "expired" };
     }
@@ -138,11 +140,18 @@ export class RelayerService {
   // ------------------------------------------------------------------ orders
 
   async createOrder(merchantId: Hex, req: CreateOrderRequest): Promise<Order> {
+    if (req.webhookUrl !== undefined) {
+      const problem = webhookUrlProblem(req.webhookUrl, this.cfg.allowPrivateWebhooks);
+      if (problem) throw new QuietpayError("bad_signature", `${problem}.`);
+    }
     const m = await this.chain.getMerchant(merchantId);
     if (m.payout === ZERO) throw new QuietpayError("simulation_failed", "This merchant is not registered.");
     const amount = BigInt(req.amount);
-    let fee = this.cfg.relayFee < m.maxRelayFee ? this.cfg.relayFee : m.maxRelayFee;
-    if (fee > amount) fee = amount;
+    const fee = this.cfg.relayFee < m.maxRelayFee ? this.cfg.relayFee : m.maxRelayFee;
+    // The router requires value > fee; an order it can never settle is refused up front.
+    if (amount <= fee) {
+      throw new QuietpayError("invalid_amount", `Amount must be greater than the relay fee (${fee.toString()} base units).`);
+    }
     const id = ("0x" + randomBytes(32).toString("hex")) as Hex;
     const created = this.now();
     const row: OrderRow = {
@@ -164,6 +173,7 @@ export class RelayerService {
       created_at: created,
       expires_at: created + (req.expiresInSeconds ?? 900),
       settled_at: null,
+      relayed_at: null,
     };
     this.db.insertOrder(row);
     return this.toOrder(row);
@@ -181,10 +191,9 @@ export class RelayerService {
    * cheapest checks run first so a flood of junk costs the relayer nothing.
    */
   async relayPay(req: RelayPayRequest, ctx: { ip: string }): Promise<RelayPayResponse> {
-    // 1. rate limit (per client and per order)
-    if (!this.ipLimiter.allow(`ip:${ctx.ip}`) || !this.orderLimiter.allow(`order:${req.orderId.toLowerCase()}`)) {
-      this.reject("rate_limited");
-    }
+    // 1. rate limit per client. The per-order limit is charged only after the signature verifies (4b),
+    //    so a third party spamming junk with a victim's orderId cannot lock the victim out.
+    if (!this.ipLimiter.allow(`ip:${ctx.ip}`)) this.reject("rate_limited");
 
     // 2. order exists and is not expired
     const found = this.db.getOrder(req.orderId);
@@ -231,6 +240,10 @@ export class RelayerService {
     }
     if (signer.toLowerCase() !== req.payer.toLowerCase()) this.reject("bad_signature");
 
+    // 4b. per-order limit, keyed by order and verified payer: anyone can sign the order's typed data
+    //     with their own key, so keying by payer stops one signer from exhausting another's budget.
+    if (!this.orderLimiter.allow(`order:${row.id}:${req.payer.toLowerCase()}`)) this.reject("rate_limited");
+
     // 5. merchant registered, fee within cap, payout unchanged since the order was created
     const merchant = await this.chain.getMerchant(row.merchant_id as Hex);
     if (merchant.payout === ZERO) this.reject("simulation_failed", "This merchant is not registered.");
@@ -243,20 +256,22 @@ export class RelayerService {
     // 6. router / relayer not paused
     if (this.localPaused || (await this.chain.isPaused())) this.reject("relayer_paused");
 
-    // 7. per-payer cap over a rolling 24h
-    const volume = this.db.payerVolume(req.payer, nowS - DAY);
-    if (volume + BigInt(row.amount) > this.cfg.payerCap) {
-      this.reject("rate_limited", "Per-payer limit reached for today.");
-    }
-
-    // 8. not already settled on chain
+    // 7. not already settled on chain
     if (await this.chain.isSettled(row.merchant_id as Hex, row.id as Hex)) {
       this.db.setStatus(row.id, "settled");
       this.reject("already_settled");
     }
 
-    // Claim the order so concurrent requests cannot both broadcast.
-    if (!this.db.claimForRelay(row.id, req.payer, req.signature, req.validAfter, req.validBefore)) {
+    // 8. Claim the order so concurrent requests cannot both broadcast. The per-payer cap over a rolling
+    //    24h (measured from relay time) is checked inside the same transaction as the claim, so two
+    //    concurrent relays for one payer cannot both pass it.
+    const claim = this.db.claimForRelay(row.id, req.payer, req.signature, req.validAfter, req.validBefore, {
+      now: this.now(),
+      payerCap: this.cfg.payerCap,
+      windowSeconds: DAY,
+    });
+    if (claim === "over_cap") this.reject("rate_limited", "Per-payer limit reached for today.");
+    if (claim !== "ok") {
       const again = this.db.getOrder(row.id)!;
       if (again.signature?.toLowerCase() === req.signature.toLowerCase() && again.tx_hash) {
         return { orderId: again.id as Hex, status: again.status, txHash: again.tx_hash as Hex };

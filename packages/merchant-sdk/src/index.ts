@@ -91,7 +91,10 @@ export async function createOrder(opts: CreateOrderOptions): Promise<Order> {
 
 /** Reads an order. Public: no API key needed. */
 export async function getOrder(opts: GetOrderOptions): Promise<Order> {
-  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/orders/${opts.orderId}`);
+  if (!/^0x[0-9a-fA-F]{64}$/.test(opts.orderId)) {
+    throw new QuietpayApiError(400, "unknown", "Invalid orderId: expected 0x followed by 64 hex characters");
+  }
+  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/orders/${encodeURIComponent(opts.orderId)}`);
   return parse(res, Order);
 }
 

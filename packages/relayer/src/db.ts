@@ -20,7 +20,11 @@ export interface OrderRow {
   created_at: number;
   expires_at: number;
   settled_at: number | null;
+  /** When the order was claimed for relay (unix seconds). The per-payer 24h window is measured from this. */
+  relayed_at: number | null;
 }
+
+export type ClaimResult = "ok" | "over_cap" | "unavailable";
 
 export interface DeliveryRow {
   id: string;
@@ -57,7 +61,8 @@ export class Db {
         failure_code TEXT,
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL,
-        settled_at INTEGER
+        settled_at INTEGER,
+        relayed_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_orders_merchant ON orders(merchant_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_orders_payer ON orders(payer, created_at);
@@ -77,6 +82,22 @@ export class Db {
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
+    this.migrate();
+  }
+
+  /** Idempotent migrations for databases created by older versions. */
+  private migrate() {
+    const cols = (this.raw.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).map((c) => c.name);
+    if (!cols.includes("relayed_at")) {
+      this.raw.transaction(() => {
+        this.raw.exec("ALTER TABLE orders ADD COLUMN relayed_at INTEGER");
+        // Backfill orders relayed before the column existed. settled_at is at or after the real relay
+        // time, so it keeps old volume inside the 24h window slightly longer (the conservative side);
+        // created_at is the fallback for pending/failed rows.
+        this.raw.exec("UPDATE orders SET relayed_at = COALESCE(settled_at, created_at) WHERE payer IS NOT NULL AND relayed_at IS NULL");
+      })();
+    }
+    this.raw.exec("CREATE INDEX IF NOT EXISTS idx_orders_payer_relayed ON orders(payer, relayed_at)");
   }
 
   close() {
@@ -107,20 +128,40 @@ export class Db {
     return this.raw.prepare("SELECT * FROM orders WHERE status = 'pending' AND tx_hash IS NOT NULL").all() as OrderRow[];
   }
 
-  /** Atomic claim: only one caller moves an order from `created` to `pending`. */
-  claimForRelay(id: string, payer: string, signature: string, validAfter: number, validBefore: number): boolean {
-    const r = this.raw
-      .prepare(
-        `UPDATE orders SET status='pending', payer=?, signature=?, valid_after=?, valid_before=?
-         WHERE id=? AND status IN ('created','failed')`,
-      )
-      .run(payer.toLowerCase(), signature, validAfter, validBefore, id.toLowerCase());
-    return r.changes === 1;
+  /**
+   * Atomic claim: only one caller moves an order from `created`/`failed` to `pending`, and only if the
+   * payer's volume over [now - windowSeconds, now] plus this order stays within `payerCap`. The cap check
+   * and the claim run in one IMMEDIATE transaction, so concurrent relays (in this process or another one
+   * on the same database) cannot both pass the cap.
+   */
+  claimForRelay(
+    id: string,
+    payer: string,
+    signature: string,
+    validAfter: number,
+    validBefore: number,
+    limits: { now: number; payerCap: bigint; windowSeconds: number },
+  ): ClaimResult {
+    const tx = this.raw.transaction((): ClaimResult => {
+      const row = this.getOrder(id);
+      if (!row || (row.status !== "created" && row.status !== "failed") || limits.now >= row.expires_at) return "unavailable";
+      if (this.payerVolume(payer, limits.now - limits.windowSeconds) + BigInt(row.amount) > limits.payerCap) return "over_cap";
+      const r = this.raw
+        .prepare(
+          `UPDATE orders SET status='pending', payer=?, signature=?, valid_after=?, valid_before=?, relayed_at=?
+           WHERE id=? AND status IN ('created','failed')`,
+        )
+        .run(payer.toLowerCase(), signature, validAfter, validBefore, limits.now, id.toLowerCase());
+      return r.changes === 1 ? "ok" : "unavailable";
+    });
+    return tx.immediate();
   }
 
   revertClaim(id: string) {
     this.raw
-      .prepare("UPDATE orders SET status='created', payer=NULL, signature=NULL, valid_after=NULL, valid_before=NULL WHERE id=? AND status='pending' AND tx_hash IS NULL")
+      .prepare(
+        "UPDATE orders SET status='created', payer=NULL, signature=NULL, valid_after=NULL, valid_before=NULL, relayed_at=NULL WHERE id=? AND status='pending' AND tx_hash IS NULL",
+      )
       .run(id.toLowerCase());
   }
 
@@ -134,10 +175,10 @@ export class Db {
       .run(status, extra?.failureCode ?? null, extra?.settledAt ?? null, id.toLowerCase());
   }
 
-  /** Sum of amounts this payer has pending or settled since `since` (unix seconds). */
+  /** Sum of amounts this payer has pending or settled, relayed since `since` (unix seconds). */
   payerVolume(payer: string, since: number): bigint {
     const rows = this.raw
-      .prepare("SELECT amount FROM orders WHERE payer=? AND status IN ('pending','settled') AND created_at>=?")
+      .prepare("SELECT amount FROM orders WHERE payer=? AND status IN ('pending','settled') AND relayed_at>=?")
       .all(payer.toLowerCase(), since) as { amount: string }[];
     return rows.reduce((a, r) => a + BigInt(r.amount), 0n);
   }

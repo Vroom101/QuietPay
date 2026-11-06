@@ -13,7 +13,18 @@ const EnvSchema = z.object({
   OPERATOR_TOKEN: z.string().min(16, "OPERATOR_TOKEN must be at least 16 characters"),
   /** `apiKey:merchantId` pairs, comma separated. merchantId is a 0x bytes32. */
   MERCHANT_API_KEYS: z.string().min(1),
+  /**
+   * Master webhook key. Never given to merchants: each merchant's webhooks are signed with
+   * HMAC-SHA256(WEBHOOK_SECRET, merchantId.toLowerCase()) as lowercase hex (see merchantWebhookSecret
+   * in webhooks.ts), and the operator hands each merchant only its own derived secret:
+   *   printf %s 0x<merchantId lowercase> | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET"
+   */
   WEBHOOK_SECRET: z.string().min(16),
+  /**
+   * "1" lets merchants register loopback / private-range webhook URLs (127.0.0.1, 10/8, 192.168/16, ...).
+   * Local development and tests only. Link-local, cloud metadata and 0.0.0.0 stay refused regardless.
+   */
+  ALLOW_PRIVATE_WEBHOOKS: z.enum(["0", "1", "true", "false", ""]).default("0"),
   DATABASE_PATH: z.string().default("./quietpay.db"),
   /** Decimal WBT. Hard cap on gas spent per rolling hour. */
   LOSS_BUDGET_WBT_PER_HOUR: z.string().default("0.05"),
@@ -39,7 +50,8 @@ export interface Config {
   relayerKey: `0x${string}`;
   operatorToken: string;
   apiKeys: Map<string, `0x${string}`>; // apiKey -> merchantId
-  webhookSecret: string;
+  webhookSecret: string; // master key; merchants get merchantWebhookSecret(webhookSecret, merchantId)
+  allowPrivateWebhooks: boolean;
   databasePath: string;
   lossBudgetWei: bigint;
   maxGasPrice: bigint | null;
@@ -70,6 +82,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     operatorToken: e.OPERATOR_TOKEN,
     apiKeys,
     webhookSecret: e.WEBHOOK_SECRET,
+    allowPrivateWebhooks: e.ALLOW_PRIVATE_WEBHOOKS === "1" || e.ALLOW_PRIVATE_WEBHOOKS === "true",
     databasePath: e.DATABASE_PATH,
     lossBudgetWei: parseUnits(e.LOSS_BUDGET_WBT_PER_HOUR, 18),
     maxGasPrice: e.MAX_GAS_PRICE ? BigInt(e.MAX_GAS_PRICE) : null,

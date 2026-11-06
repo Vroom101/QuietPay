@@ -71,6 +71,7 @@ export function makeCfg(over: Partial<Config> = {}): Config {
     operatorToken: "operator-token-123456",
     apiKeys: new Map([["test-key", MERCHANT_ID]]),
     webhookSecret: "whsec_test_secret_123456",
+    allowPrivateWebhooks: false,
     databasePath: ":memory:",
     lossBudgetWei: 50_000_000_000_000_000n, // 0.05 WBT
     maxGasPrice: null,
