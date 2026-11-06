@@ -168,8 +168,9 @@ export class FakeChain implements ChainPort {
   release() {
     this.resolveReceipt?.({} as TxReceipt);
   }
+  head = 100n;
   async getBlockNumber() {
-    return 100n;
+    return this.head;
   }
 }
 
@@ -190,6 +191,7 @@ export function makeCfg(over: Partial<Config> = {}): Config {
     maxGasLimit: 500000n, lowBalanceWei: 10n ** 16n, pendingRetrySeconds: 30, maxReplacements: 3,
     payerCap: 100_000_000n, // 100 USDT
     relayFee: 50_000n,
+    settleConfirmations: 1,
     rateLimitPerMinute: 1000,
     tokenDomain: { name: "Tether USD", version: "1" },
     explorerBaseUrl: "https://explorer.test",
