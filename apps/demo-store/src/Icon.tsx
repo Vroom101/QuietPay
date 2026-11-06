@@ -5,6 +5,7 @@ const paths = {
   orders: <><rect x="5" y="3" width="14" height="18" rx="2" /><path d="M9 8h6m-6 4h6m-6 4h4" /></>,
   heart: <path d="M20.5 8.8c0 4.5-8.5 9.5-8.5 9.5s-8.5-5-8.5-9.5a4.5 4.5 0 0 1 8.5-2.1 4.5 4.5 0 0 1 8.5 2.1Z" />,
   bag: <><path d="M4.5 8h15l1 12h-17l1-12Z" /><path d="M9 9V6a3 3 0 0 1 6 0v3" /></>,
+  store: <><path d="M4 10v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9M3 10l2-5h14l2 5" /><path d="M3 10a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" /></>,
   left: <path d="m14 6-6 6 6 6" />,
   right: <path d="m10 6 6 6-6 6" />,
   arrow: <path d="M4 12h15m-6-6 6 6-6 6" />,

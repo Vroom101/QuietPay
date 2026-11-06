@@ -64,6 +64,7 @@ describe("signCheckout", () => {
     ["domain name", { ...orderCreated, checkout: { ...checkout, domain: { ...checkout.domain, name: "Other" } } }],
     ["domain version", { ...orderCreated, checkout: { ...checkout, domain: { ...checkout.domain, version: "99" } } }],
     ["authorization value", { ...orderCreated, checkout: { ...checkout, value: "1" } }],
+    ["relay fee", { ...orderCreated, fee: "1", checkout: { ...checkout, fee: "1" } }],
     ["amount with a valid nonce", makeOrder({ amount: "1" })],
     ["nonce", { ...orderCreated, checkout: { ...checkout, nonce: "0x" + "99".repeat(32) } }],
   ] as const)("rejects a changed %s before calling the signer", async (_field, order) => {

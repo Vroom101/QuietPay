@@ -7,7 +7,7 @@ import { useCart } from "../cart";
 import { PRODUCTS, cents, fromCents } from "../products";
 import { Icon } from "../Icon";
 import { ProductImage } from "../ProductImage";
-import { directPayment, previewUsdtCents, type DemoQuote, type PaymentMethod } from "../payment";
+import { directPayment, type DemoQuote, type PaymentMethod } from "../payment";
 import { rememberOrder } from "../orders";
 
 const MOCK_RELAYER_URL = "http://localhost:8787";
@@ -30,21 +30,17 @@ async function post<T>(path: string, body: object): Promise<T> {
 }
 
 export function Checkout() {
-  const { items, total, add, remove, clear, count } = useCart();
+  const { items, total, clear, count } = useCart();
   const nav = useNavigate();
   const [methods, setMethods] = useState<PaymentMethod[]>([directPayment]);
   const [method, setMethod] = useState(directPayment);
+  const [destination, setDestination] = useState(directPayment);
+  const simulated = method.simulated || destination.simulated;
   const [quote, setQuote] = useState<DemoQuote>();
   const [expired, setExpired] = useState(false);
   const [orderId, setOrderId] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const [editedAmount, setEditedAmount] = useState<string>();
-  const cartCents = cents(total);
-  const amount = editedAmount ?? total;
-  const previewCents = previewUsdtCents(amount);
-  const matchesCart = previewCents === cartCents;
-  const previewAmount = previewCents === null ? "—" : fromCents(previewCents);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -62,7 +58,6 @@ export function Checkout() {
     setQuote(undefined);
     setOrderId(undefined);
     setError(undefined);
-    setEditedAmount(undefined);
   }, [items]);
 
   useEffect(() => {
@@ -73,22 +68,26 @@ export function Checkout() {
   }, [quote]);
 
   function finish(id: string) {
-    rememberOrder(id);
+    rememberOrder(id, {
+      total,
+      placedAt: Date.now(),
+      items: PRODUCTS.flatMap((product) => items[product.id] ? [{ name: product.name, quantity: items[product.id]! }] : []),
+    });
     clear();
     nav(`/success/${id}`, { replace: true });
   }
 
   async function submit() {
-    if (busy || !matchesCart) return;
+    if (busy) return;
     setBusy(true);
     setError(undefined);
     const cart = { items, cartTotal: total };
     try {
-      if (!method.simulated) {
+      if (!simulated) {
         const order = await post<{ orderId: string }>("/api/checkout", cart);
         setOrderId(order.orderId);
       } else if (!quote || expired || quote.expiresAt <= Date.now()) {
-        setQuote(await post<DemoQuote>("/api/checkout/demo-quote", { ...cart, methodId: method.id }));
+        setQuote(await post<DemoQuote>("/api/checkout/demo-quote", { ...cart, methodId: method.id, destinationId: destination.id }));
       } else {
         const order = await post<{ orderId: string }>("/api/checkout/demo-confirm", { quoteId: quote.id });
         finish(order.orderId);
@@ -101,13 +100,13 @@ export function Checkout() {
   }
 
   if (!count) {
-    return <section className="gateway gateway-empty"><h1>Your cart is empty</h1><Link className="gateway-primary" to="/orders">View orders <Icon name="arrow" /></Link></section>;
+    return <section className="gateway gateway-empty"><h1>Your cart is empty</h1><Link className="gateway-primary" to="/cart">View cart <Icon name="arrow" /></Link></section>;
   }
 
   return (
     <section className="gateway gateway-checkout">
       <div className="gateway-top">
-        <Link to="/#catalog" className="gateway-back"><Icon name="left" /> Back to shop</Link>
+        <Link to="/cart" className="gateway-back"><Icon name="left" /> Back to cart</Link>
         <span className="gateway-mode"><span /> {IS_DEMO ? "Demo checkout" : "Stablecoin checkout"}</span>
       </div>
       <div className="gateway-intro">
@@ -116,10 +115,17 @@ export function Checkout() {
       <div className="gateway-grid">
         <aside className="gateway-summary" aria-labelledby="summary-title">
           <div className="gateway-total">
+            <svg className="gateway-card-curves" viewBox="0 0 500 300" preserveAspectRatio="none" fill="none" aria-hidden="true">
+              <path d="M506 20C462 84 397 120 281 131" />
+              <path d="M508 163C412 180 322 213 211 304" />
+              <path d="M510 165C427 181 348 219 270 304" />
+            </svg>
             <img className="gateway-card-logo" src="/brand/quietpay-wordmark.png" alt="QuietPay" />
-            <p id="summary-title">Order total</p>
-            <strong>{total} <span>USDT</span></strong>
-            <p>Quiet Store · {count} {count === 1 ? "item" : "items"}</p>
+            <p id="summary-title" className="gateway-total-label">Order total</p>
+            <div className={`gateway-card-amount${total.length > 8 ? " gateway-card-amount-long" : ""}`}>
+              <strong>{total}</strong><span>USDT</span>
+            </div>
+            <p className="gateway-card-merchant"><Icon name="store" /> Quiet Store · {count} {count === 1 ? "item" : "items"}</p>
           </div>
           <div className="gateway-items">
             <h2>Order summary</h2>
@@ -127,13 +133,8 @@ export function Checkout() {
               {PRODUCTS.filter((product) => items[product.id]).map((product) => (
                 <li key={product.id}>
                   <ProductImage product={product} className="gateway-item-image" />
-                  <div className="gateway-item-label"><strong>{product.name}</strong><small>{product.price} USDT each</small></div>
-                  <div className="gateway-quantity" aria-label={`Quantity for ${product.name}`}>
-                    <button type="button" aria-label={`Remove one ${product.name}`} disabled={busy || !!orderId} onClick={() => remove(product.id)}><Icon name="minus" /></button>
-                    <span>{items[product.id]}</span>
-                    <button type="button" aria-label={`Add one ${product.name}`} disabled={busy || !!orderId} onClick={() => add(product.id)}><Icon name="plus" /></button>
-                  </div>
-                  <span className="gateway-line-price">{fromCents(cents(product.price) * items[product.id]!)}</span>
+                  <div className="gateway-item-label"><strong>{product.name}</strong><small>Qty {items[product.id]} · {product.price} USDT each</small></div>
+                  <span className="gateway-line-price">{fromCents(cents(product.price) * items[product.id]!)} USDT</span>
                 </li>
               ))}
             </ul>
@@ -146,46 +147,36 @@ export function Checkout() {
           </div>
           {!orderId && (
             <fieldset className="gateway-console-fields" disabled={busy}>
-              <div className="gateway-amount-field">
-                <label htmlFor="payment-amount">Enter amount</label>
-                <span className="gateway-currency">{method.symbol}</span>
-                <div className="gateway-amount-value">
-                  <input id="payment-amount" inputMode="decimal" maxLength={14} value={amount} onChange={(event) => {
-                    setEditedAmount(event.target.value);
-                    setQuote(undefined);
-                    setError(undefined);
-                  }} />
-                </div>
-              </div>
-              <div className="gateway-asset-field">
-                <span className={`gateway-token ${method.simulated ? "gateway-token-demo" : ""}`} aria-hidden="true">{method.symbol.slice(0, 1)}</span>
-                <label htmlFor="payment-stablecoin">Pay with</label>
-                <select id="payment-stablecoin" value={method.id} onChange={(event) => {
-                  const selected = methods.find((entry) => entry.id === event.target.value);
-                  if (selected) setMethod(selected);
+              <legend className="sr-only">Payment route</legend>
+              <label className="gateway-route">
+                <span><strong>Pay from</strong><small>What you send</small></span>
+                <select aria-label="Pay from" value={method.id} onChange={(event) => {
+                  setMethod(methods.find((option) => option.id === event.target.value) ?? directPayment);
                   setQuote(undefined);
                   setError(undefined);
                 }}>
-                  {methods.map((option) => <option key={option.id} value={option.id}>{option.name} · {option.symbol}</option>)}
+                  {methods.map((option) => <option key={option.id} value={option.id}>{option.simulated ? "Stablecoin (demo)" : option.symbol}</option>)}
+                  <option disabled>Other crypto (unavailable)</option>
                 </select>
-              </div>
-              {!quote && <div className="gateway-quote gateway-preview" aria-live="polite">
-                <p className="gateway-preview-label">{IS_DEMO ? "Conversion preview" : "Payment preview"}</p>
-                <dl>
-                  <div><dt>Stablecoin amount</dt><dd>{previewAmount} {method.symbol}</dd></div>
-                  <div><dt>Order value in USDT</dt><dd>{previewAmount} USDT</dd></div>
-                </dl>
-                {method.simulated && <p>Illustrative rate · 1 {method.symbol} = 1 USDT</p>}
-              </div>}
-              {!matchesCart && <p className="gateway-amount-note">Checkout requires the order total. <button type="button" onClick={() => setEditedAmount(undefined)}>Use order total</button></p>}
+              </label>
+              <label className="gateway-route">
+                <span><strong>To</strong><small>What the merchant receives</small></span>
+                <select aria-label="To" value={destination.id} onChange={(event) => {
+                  setDestination(methods.find((option) => option.id === event.target.value) ?? directPayment);
+                  setQuote(undefined);
+                  setError(undefined);
+                }}>
+                  {methods.map((option) => <option key={option.id} value={option.id}>{option.simulated ? "Stablecoin (demo)" : option.symbol}</option>)}
+                </select>
+              </label>
             </fieldset>
           )}
           {quote && (
             <div className="gateway-quote">
               <dl>
                 <div><dt>You pay</dt><dd>{quote.payAmount} {quote.symbol}</dd></div>
-                <div><dt>Merchant receives</dt><dd>{quote.merchantAmount} USDT</dd></div>
-                <div><dt>Merchant relay fee</dt><dd>{quote.relayFee} USDT</dd></div>
+                <div><dt>Merchant receives</dt><dd>{quote.merchantAmount} {quote.settlementSymbol}</dd></div>
+                <div><dt>Merchant relay fee</dt><dd>{quote.relayFee} {quote.settlementSymbol}</dd></div>
               </dl>
               <p role="status">{expired ? "Quote expired. Get a new quote to continue." : "Simulated quote · valid for 60 seconds from issue"}</p>
             </div>
@@ -202,13 +193,13 @@ export function Checkout() {
               onSettled={() => finish(orderId)}
             />
           ) : (
-            <button type="button" onClick={() => void submit()} disabled={busy || !matchesCart} className="gateway-primary">
-              {busy ? "Working…" : quote && !expired ? `Confirm ${quote.payAmount} ${quote.symbol}` : expired ? "Refresh quote" : "Continue to pay"}
+            <button type="button" onClick={() => void submit()} disabled={busy} className="gateway-primary">
+              {busy ? "Working…" : quote && !expired ? `Confirm ${quote.payAmount} ${quote.symbol}` : expired ? "Refresh quote" : "Review payment details"}
               <Icon name="arrow" />
             </button>
           )}
           {error && <p role="alert" className="gateway-error">{error}</p>}
-          <p className="gateway-fee-note"><span /> {method.simulated ? "Demo only. No funds will move." : "The merchant covers the relay fee."}</p>
+          <p className="gateway-fee-note"><span /> {simulated ? "Demo only. No funds will move." : "The merchant covers the relay fee."}</p>
         </div>
       </div>
     </section>

@@ -98,10 +98,12 @@ export async function signCheckout(
     c.chainId !== domain.chainId || c.token.toLowerCase() !== domain.verifyingContract.toLowerCase() ||
     c.domain.name !== domain.name || c.domain.version !== domain.version ||
     c.value !== order.amount || order.amount !== (expected.amount ?? reviewed?.amount ?? order.amount) ||
-    c.payout.toLowerCase() !== order.payout.toLowerCase() ||
+    c.payout.toLowerCase() !== order.payout.toLowerCase() || c.fee !== order.fee ||
+    BigInt(order.fee) > BigInt(order.amount) ||
     (reviewed && (
       order.id.toLowerCase() !== reviewed.id.toLowerCase() ||
       order.amount !== reviewed.amount ||
+      order.fee !== reviewed.fee ||
       order.merchantId.toLowerCase() !== reviewed.merchantId.toLowerCase() ||
       order.payout.toLowerCase() !== reviewed.payout.toLowerCase()
     ))

@@ -4,6 +4,7 @@ import { useCart } from "./cart";
 import { Icon } from "./Icon";
 import { Shop } from "./pages/Shop";
 import { Checkout } from "./pages/Checkout";
+import { Cart } from "./pages/Cart";
 import { Success } from "./pages/Success";
 import { Orders } from "./pages/Orders";
 
@@ -54,12 +55,13 @@ export function App() {
           <Link to={view === "search" ? "/#catalog" : "/?view=search#catalog"} className="icon-link" aria-label="Search products"><Icon name="search" /></Link>
           <Link to={view === "saved" ? "/#catalog" : "/?view=saved#catalog"} className={view === "saved" ? "icon-link active" : "icon-link"} aria-label="Saved products"><Icon name="heart" /></Link>
           <Link to="/orders" className="icon-link" aria-label="Orders"><Icon name="orders" /></Link>
-          <Link to="/checkout" className="icon-link cart-link" aria-label={`Cart (${count})`}><Icon name="bag" />{count > 0 && <span className="cart-count">{count}</span>}</Link>
+          <Link to="/cart" className="icon-link cart-link" aria-label={`Cart (${count})`}><Icon name="bag" />{count > 0 && <span className="cart-count">{count}</span>}</Link>
         </nav>
       </header>
       <main>
         <Routes>
           <Route path="/" element={<Shop saved={saved} toggleSaved={toggleSaved} />} />
+          <Route path="/cart" element={<Cart />} />
           <Route path="/checkout" element={<Checkout />} />
           <Route path="/success/:orderId" element={<Success />} />
           <Route path="/orders" element={<Orders />} />

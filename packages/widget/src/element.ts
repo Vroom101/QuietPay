@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from "lit";
-import { formatUsdt, type Order } from "@quietpay/shared";
+import { formatUsdt, token, type Order } from "@quietpay/shared";
+import { formatUnits } from "viem";
 import type { PrivateKeyAccount } from "viem/accounts";
 import { WidgetError, fetchOrder, pollOrder, relayPay, signCheckout } from "./client.js";
 import { getOrCreateAccount } from "./keystore.js";
@@ -170,9 +171,13 @@ export class QuietpayCheckout extends LitElement {
   }
 
   private renderSummary(o: Order) {
+    const fee = BigInt(o.fee);
+    const payout = BigInt(o.amount) - fee;
     return html`
       <div class="muted">Pay merchant ${short(o.merchantId)}${o.reference ? html` &middot; ${o.reference}` : nothing}</div>
       <div class="amount">${formatUsdt(o.amount)} USDT</div>
+      <div class="row"><span>Merchant receives</span><span>${formatUnits(payout, token.decimals)} USDT</span></div>
+      <div class="row"><span>Merchant relay fee</span><span>${formatUnits(fee, token.decimals)} USDT</span></div>
     `;
   }
 

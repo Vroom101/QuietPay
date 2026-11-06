@@ -65,8 +65,8 @@ function Receipt({ orderId }: { orderId: string }) {
         </div>
         {simulation && <>
           <div><dt>You paid (simulated)</dt><dd>{simulation.quote.payAmount} {simulation.quote.symbol}</dd></div>
-          <div><dt>Merchant payout (simulated)</dt><dd>{simulation.quote.merchantAmount} USDT</dd></div>
-          <div><dt>Merchant relay fee</dt><dd>{simulation.quote.relayFee} USDT</dd></div>
+          <div><dt>Merchant payout (simulated)</dt><dd>{simulation.quote.merchantAmount} {simulation.quote.settlementSymbol}</dd></div>
+          <div><dt>Merchant relay fee</dt><dd>{simulation.quote.relayFee} {simulation.quote.settlementSymbol}</dd></div>
           <div><dt>Completed at</dt><dd>{new Date(simulation.confirmedAt * 1000).toLocaleString()}</dd></div>
         </>}
         {state.paid && (

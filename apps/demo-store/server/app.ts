@@ -65,16 +65,20 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   const demoOrders = new Set<string>();
   const quotes = new Map<string, DemoQuote>();
   const simulations = new Map<string, { quote: DemoQuote; confirmedAt: number }>();
+  const methods = config.demoConversion ? [directPayment, ...demoMethods] : [directPayment];
 
   app.get("/api/checkout/methods", async () => ({
-    methods: config.demoConversion ? [directPayment, ...demoMethods] : [directPayment],
+    methods,
   }));
 
   if (config.demoConversion) {
     app.post("/api/checkout/demo-quote", async (req, reply) => {
-      const methodId = (req.body as { methodId?: unknown } | null)?.methodId;
-      const method = demoMethods.find((entry) => entry.id === methodId);
-      if (!method) return reply.code(400).send({ error: "This demo payment method is unavailable." });
+      const { methodId, destinationId = directPayment.id } = (req.body ?? {}) as { methodId?: unknown; destinationId?: unknown };
+      const method = methods.find((entry) => entry.id === methodId);
+      const destination = methods.find((entry) => entry.id === destinationId);
+      if (!method || !destination || (!method.simulated && !destination.simulated)) {
+        return reply.code(400).send({ error: "This demo payment route is unavailable." });
+      }
       const priced = priceCart(req.body);
       if (priced.error !== undefined) return reply.code(priced.status).send({ error: priced.error });
 
@@ -84,6 +88,7 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
       const quote: DemoQuote = {
         id: `demo-${randomUUID()}`,
         symbol: method.symbol,
+        settlementSymbol: destination.symbol,
         payAmount: priced.total,
         merchantAmount: fromCents(priced.totalCents - fee),
         relayFee: fromCents(fee),

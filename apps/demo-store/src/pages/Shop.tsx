@@ -116,7 +116,7 @@ export function Shop({ saved, toggleSaved }: { saved: string[]; toggleSaved: (id
       {count > 0 && (
         <div className="shopping-bag-bar">
           <span>{count} {count === 1 ? "item" : "items"} in your cart</span>
-          <Link to="/checkout" className="pill-button">Checkout <Icon name="arrow" /></Link>
+          <Link to="/cart" className="pill-button">View cart <Icon name="arrow" /></Link>
         </div>
       )}
     </>

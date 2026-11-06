@@ -68,19 +68,26 @@ describe("demo-store server", () => {
     expect(res.statusCode).toBe(409);
   });
 
-  const quoteDemo = () => app.inject({
+  const quoteDemo = (methodId = "demo-stablecoin", destinationId = "usdt") => app.inject({
     method: "POST", url: "/api/checkout/demo-quote",
-    payload: { items: { notebook: 1 }, cartTotal: "8.50", methodId: "demo-stablecoin" },
+    payload: { items: { notebook: 1 }, cartTotal: "8.50", methodId, destinationId },
   });
 
   it("quotes the server-priced cart and keeps simulated confirmation separate from paid orders", async () => {
     const quote = (await quoteDemo()).json();
-    expect(quote).toMatchObject({ symbol: "DEMO", payAmount: "8.50", merchantAmount: "8.40", relayFee: "0.10" });
+    expect(quote).toMatchObject({ symbol: "DEMO", settlementSymbol: "USDT", payAmount: "8.50", merchantAmount: "8.40", relayFee: "0.10" });
     const confirm = () => app.inject({ method: "POST", url: "/api/checkout/demo-confirm", payload: { quoteId: quote.id } });
     expect((await confirm()).json()).toEqual({ orderId: quote.id });
     expect((await confirm()).json()).toEqual({ orderId: quote.id });
     const status = (await app.inject({ url: `/api/orders/${quote.id}/paid` })).json();
     expect(status).toMatchObject({ paid: false, simulation: { quote } });
+  });
+
+  it("quotes stablecoin payouts and rejects unsupported routes", async () => {
+    const quote = await quoteDemo("usdt", "demo-stablecoin");
+    expect(quote.json()).toMatchObject({ symbol: "USDT", settlementSymbol: "DEMO", merchantAmount: "8.40" });
+    expect((await quoteDemo("usdt", "usdt")).statusCode).toBe(400);
+    expect((await quoteDemo("usdt", "unknown")).statusCode).toBe(400);
   });
 
   it("rejects expired quotes", async () => {
