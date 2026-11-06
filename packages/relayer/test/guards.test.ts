@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { QuietpayError, type ErrorCode } from "@quietpay/shared";
-import { FakeChain, MERCHANT_ID, PAYER_KEY, makeEnv, newOrder, payer, signFor } from "./helpers.js";
+import { FakeChain, MERCHANT_ID, PAYER_KEY, makeEnv, newOrder, payer, signFor, waitFor } from "./helpers.js";
 
 const ctx = { ip: "203.0.113.7" };
 
@@ -218,7 +218,7 @@ describe("idempotency and state", () => {
     const order = await newOrder(svc, "25000000", { webhookUrl: "https://merchant.test/hook" });
     const res = await svc.relayPay(await signFor(order, clock.t), ctx);
     expect(res.status).toBe("pending");
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => svc.getOrder(order.id).status === "settled", "order settled");
     const got = svc.getOrder(order.id);
     expect(got.status).toBe("settled");
     expect(got.payer?.toLowerCase()).toBe(payer.address.toLowerCase());
@@ -234,12 +234,12 @@ describe("idempotency and state", () => {
     chain.receiptStatus = "reverted";
     const order = await newOrder(svc, "25000000", { webhookUrl: "https://merchant.test/hook" });
     await svc.relayPay(await signFor(order, clock.t), ctx);
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => svc.getOrder(order.id).status === "failed", "order failed");
     expect(svc.getOrder(order.id).status).toBe("failed");
     expect(JSON.parse(db.dueDeliveries(clock.t)[0]!.body).type).toBe("payment.failed");
     chain.receiptStatus = "success";
     await svc.relayPay(await signFor(order, clock.t, { validBefore: clock.t + 250 }), ctx);
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => svc.getOrder(order.id).status === "settled", "order settled");
     expect(svc.getOrder(order.id).status).toBe("settled");
   });
 

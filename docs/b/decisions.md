@@ -7,3 +7,6 @@
 - R16: confirmation depth is opt-in (SETTLE_CONFIRMATIONS, default 1) so existing deployments keep their behaviour. Recommend setting it above 1 for Whitechain before real money; the right value depends on the chain's finality, which is not documented here.
 - S8: verifyWebhook stays stateless by default; added optional isDuplicate(eventId) hook, called only after the signature and timestamp verify. Receivers must still dedupe by event id (documented on the option).
 - F18: the facilitator and paywall never fetch a URL taken from a request, payload or resource (proved by a no-fetch test), so there is no SSRF surface there; webhook URL SSRF stays covered by relayer ssrf-ipv6 and pentest-round2 tests.
+
+- B2.3 relayer anvil suites: fixed ports (18545/18546 etc.) kept but guarded by `assertPortFree` (fails with a clear message on a stale anvil) and `waitForRpc` (throws on timeout). Full port-0 conversion deferred: the e2e suite hands the port to child processes and config, so the guard gives the same safety for less churn.
+- B2.3 `pentest-round9`: the wall-clock `<350ms` assertion is replaced by a count of worker passes (<=2), which tests the same fairness property without timing.

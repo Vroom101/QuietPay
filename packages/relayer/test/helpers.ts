@@ -221,6 +221,15 @@ export function makeEnv(cfgOver: Partial<Config> = {}) {
   return { clock, chain, db, cfg, svc };
 }
 
+/** Polls until `cond` is true; throws on timeout. Replaces fixed sleeps so tests neither race nor over-wait. */
+export async function waitFor(cond: () => boolean, what = "condition", timeoutMs = 2000): Promise<void> {
+  const end = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 2));
+  }
+}
+
 export async function newOrder(svc: RelayerService, amount = "25000000", extra: { webhookUrl?: string } = {}) {
   return svc.createOrder(MERCHANT_ID, { merchantId: MERCHANT_ID, amount, ...extra });
 }

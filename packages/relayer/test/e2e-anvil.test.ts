@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { assertPortFree, requireInCi, waitForRpc } from "./anvil-util.js";
 import { createServer, type Server } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -27,6 +28,8 @@ const out = process.env.CONTRACTS_OUT ?? resolve(here, "../../../contracts/out")
 const routerArtifact = resolve(out, "PaymentRouter.sol/PaymentRouter.json");
 const usdtArtifact = resolve(out, "MockAuthToken.sol/MockAuthToken.json");
 const haveArtifacts = existsSync(routerArtifact) && existsSync(usdtArtifact);
+requireInCi(haveArtifacts, "compiled contracts (forge build)");
+requireInCi(spawnSync("anvil", ["--version"], { stdio: "ignore" }).status === 0, "anvil");
 
 // Standard anvil dev keys (public, test-only).
 const DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
@@ -34,6 +37,7 @@ const RELAYER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6
 const PAYOUT = "0x90F79bf6EB2c4f870365E785982E1f101E93b906" as Hex;
 const PORT = 18545;
 const RPC = `http://127.0.0.1:${PORT}`;
+const HOOK_PORT = 18546;
 
 describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real router, signed webhook", () => {
   let anvil: ChildProcess;
@@ -41,15 +45,10 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
   const hooks: { body: string; sig: string }[] = [];
 
   beforeAll(async () => {
+    await assertPortFree(PORT);
+    await assertPortFree(HOOK_PORT);
     anvil = spawn("anvil", ["--port", String(PORT), "--silent"], { stdio: "ignore" });
-    for (let i = 0; i < 50; i++) {
-      try {
-        const r = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' });
-        if (r.ok) break;
-      } catch {
-        await new Promise((r) => setTimeout(r, 200));
-      }
-    }
+    await waitForRpc(RPC);
     hookServer = createServer((req, res) => {
       let b = "";
       req.on("data", (c) => (b += c));
@@ -57,7 +56,7 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
         hooks.push({ body: b, sig: String(req.headers["quietpay-signature"]) });
         res.writeHead(200).end("ok");
       });
-    }).listen(18546);
+    }).listen(HOOK_PORT);
   }, 30_000);
 
   afterAll(() => {

@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { verifyWebhookSignature } from "@quietpay/shared/webhook";
 import { buildServer } from "../src/server.js";
 import { WebhookWorker, merchantWebhookSecret } from "../src/webhooks.js";
-import { MERCHANT_ID, makeEnv, newOrder, signFor } from "./helpers.js";
+import { MERCHANT_ID, makeEnv, newOrder, signFor, waitFor } from "./helpers.js";
 
 const auth = { authorization: "Bearer test-key" };
 const op = { authorization: "Bearer operator-token-123456" };
@@ -86,7 +86,7 @@ describe("webhook worker", () => {
     const { svc, db, clock, chain } = makeEnv();
     const o = await newOrder(svc, "25000000", { webhookUrl: "https://merchant.test/hook" });
     await svc.relayPay(await signFor(o, clock.t), { ip: "1.1.1.1" });
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => chain.sent.length === 1, "broadcast");
     expect(chain.sent).toHaveLength(1);
 
     const calls: { sig: string; body: string }[] = [];
@@ -121,7 +121,7 @@ describe("webhook worker", () => {
     const { svc, db, clock } = makeEnv();
     const o = await newOrder(svc, "25000000", { webhookUrl: "https://merchant.test/hook" });
     await svc.relayPay(await signFor(o, clock.t), { ip: "1.1.1.1" });
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => db.dueDeliveries(clock.t).length > 0, "webhook delivery queued");
     let n = 0;
     const worker = new WebhookWorker(db, "whsec_test_secret_123456", () => clock.t, async () => {
       n += 1;
