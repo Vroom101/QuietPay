@@ -38,6 +38,7 @@ export type IssueCode =
   | "to_block_not_final"
   | "unsupported_hash_version"
   | "range_mismatch"
+  | "range_before_deploy"
   | "config_mismatch"
   | "payto_expectation_missing"
   | "confirmations_below_expected"
