@@ -41,15 +41,25 @@ function dashboardUrl() {
     (["localhost", "127.0.0.1"].includes(window.location.hostname) ? "http://localhost:5174" : undefined);
 }
 
+function MerchantSignupLink({ className = "qp-button" }: { className?: string }) {
+  const dashboard = dashboardUrl();
+  if (!dashboard) return null;
+  const signup = new URL(dashboard, window.location.origin);
+  signup.searchParams.set("signup", "1");
+  return <a className={className} href={signup.href}>Sign Up <Icon name="arrow" /></a>;
+}
+
 function MarketingHeader() {
   return (
     <header className="qp-marketing-header">
-      <Link to="/" className="qp-nav-brand" aria-label="QuietPay home"><img src={logo} alt="" /></Link>
+      <Link to="/" className="qp-nav-brand" aria-label="QuietPay home">
+        <span className="qp-nav-wordmark" aria-hidden="true" style={{ maskImage: `url("${logo}")` }} />
+      </Link>
       <nav aria-label="Main navigation">
         <Link to="/#products">Products</Link>
         <Link to="/#how-it-works">How it works</Link>
       </nav>
-      <Link className="qp-button qp-nav-cta" to="/shop">Try the demo <Icon name="arrow" /></Link>
+      <MerchantSignupLink className="qp-button qp-nav-cta" />
     </header>
   );
 }
@@ -71,15 +81,32 @@ function MarketingFooter() {
 }
 
 const chapters = [
-  ["overview", "Overview"], ["use-cases", "Use cases"], ["products", "Services"],
+  ["overview", "Overview"], ["use-cases", "Services"], ["products", "Products"],
   ["analytics", "Analytics"], ["how-it-works", "Whitechain"], ["demo", "Demo"],
 ] as const;
 
 const audiences = [
   { title: "Shoppers", icon: "bag", headline: "Pay and get back to your day.", copy: "Review your order, approve a stablecoin payment, and find the receipt in your order history.", link: "/shop", action: "Visit the demo store" },
-  { title: "Online stores", icon: "orders", headline: "Keep payment and fulfillment in sync.", copy: "Drop checkout into your storefront and use signed payment webhooks to update orders when funds settle.", link: "/product/checkout", action: "Explore checkout" },
-  { title: "Studios & global teams", icon: "repeat", headline: "Give clients one link to pay.", copy: "Set an amount and due date, share an invoice link, and track when the payment comes in.", link: "/product/invoices", action: "Explore invoices" },
+  { title: "Online stores", icon: "store", headline: "Keep payments and orders in sync.", copy: "Add checkout to your storefront and update orders with signed webhooks when funds settle.", link: "/product/checkout", action: "Explore checkout" },
+  { title: "Studios & global teams", icon: "team", headline: "Give clients one link to pay.", copy: "Set an amount and due date, share an invoice link, and track when the payment comes in.", link: "/product/invoices", action: "Explore invoices" },
 ] as const;
+
+const capabilities = [
+  { icon: "spark", title: "Pay effortlessly", copy: "Review and approve a stablecoin payment in a few steps." },
+  { icon: "layers", title: "Track everything", copy: "See your orders, payment status, and receipts in one place." },
+  { icon: "shield", title: "Stay in control", copy: "Review payment details and keep a record of refunds." },
+] as const;
+
+function PaymentIllustration({ icon }: { icon: (typeof audiences)[number]["icon"] }) {
+  return (
+    <div className="qp-audience-art" aria-hidden="true">
+      <div className="qp-audience-orbit" />
+      <div className="qp-audience-platform" />
+      <div className="qp-audience-object"><Icon name={icon} /></div>
+      <div className="qp-audience-receipt"><Icon name="orders" /><span>✓</span></div>
+    </div>
+  );
+}
 
 function AudienceSection() {
   const [selected, setSelected] = useState(0);
@@ -87,20 +114,33 @@ function AudienceSection() {
 
   return (
     <section className="qp-audiences qp-wrap" id="use-cases" aria-labelledby="audiences-title">
-      <div className="qp-section-title"><span>02 / USE CASES</span><h2 id="audiences-title">What are you here to do?</h2></div>
+      <div className="qp-section-title">
+        <span className="qp-audience-kicker"><Icon name="store" /> MERCHANT SERVICES</span>
+        <h2 id="audiences-title">What are <em>you here</em> to do?</h2>
+        <p>Choose your role and get started with payments, orders, and more.</p>
+      </div>
       <div className="qp-audience-switch">
         <div className="qp-audience-options" role="group" aria-label="Choose a use case">
           {audiences.map((entry, index) => (
             <button key={entry.title} type="button" aria-pressed={selected === index} aria-controls="qp-audience-detail" onClick={() => setSelected(index)}>
-              <Icon name={entry.icon} />{entry.title}
+              <Icon name={entry.icon} /><span>{entry.title}</span><Icon name="arrow" />
             </button>
           ))}
         </div>
         <div className="qp-audience-detail" id="qp-audience-detail" aria-live="polite">
-          <span className="qp-product-icon"><Icon name={audience.icon} /></span>
-          <h3>{audience.headline}</h3><p>{audience.copy}</p>
-          <Link className="qp-card-action" to={audience.link}>{audience.action} <Icon name="arrow" /></Link>
+          <div className="qp-audience-copy">
+            <span className="qp-audience-badge"><Icon name={audience.icon} /> For {audience.title.toLowerCase()}</span>
+            <h3>{audience.headline}</h3><p>{audience.copy}</p>
+            <Link className="qp-button qp-audience-cta" to={audience.link}>{audience.action} <Icon name="arrow" /></Link>
+          </div>
+          <PaymentIllustration icon={audience.icon} />
         </div>
+      </div>
+      <div className="qp-capabilities-label"><Icon name="spark" /> WHAT YOU CAN DO</div>
+      <div className="qp-capabilities">
+        {capabilities.map(({ icon, title, copy }) => (
+          <article key={title}><span className="qp-capability-icon"><Icon name={icon} /></span><div><h3>{title}</h3><p>{copy}</p></div></article>
+        ))}
       </div>
     </section>
   );
@@ -118,8 +158,8 @@ export function Landing() {
             <h1 id="quietpay-title">A simpler way to get paid.</h1>
             <p>Give customers a clear way to pay, and give your business a record of what came in, what went back, and what settled.</p>
             <div className="qp-hero-actions">
-              <Link to="/shop" className="qp-button">Try the demo <Icon name="arrow" /></Link>
-              <Link to="/#products" className="qp-button qp-button-glass">Explore services</Link>
+              <MerchantSignupLink />
+              <Link to="/#use-cases" className="qp-button qp-button-glass">Explore services</Link>
             </div>
           </section>
         </div>
@@ -133,13 +173,28 @@ export function Landing() {
         <AudienceSection />
 
         <section className="qp-product-section qp-wrap" id="products" aria-labelledby="products-title">
-          <div className="qp-section-title"><span>03 / MERCHANT SERVICES</span><h2 id="products-title">From the first charge to the next.</h2></div>
+          <div className="qp-section-title">
+            <span className="qp-audience-kicker"><Icon name="store" /> PAYMENT SERVICES</span>
+            <h2 id="products-title">From the <em>first charge</em> to the next.</h2>
+            <p>Accept payments, bill clients, and manage what happens after checkout.</p>
+          </div>
           <div className="qp-product-grid">
             {products.map((product) => (
-              <Link key={product.id} className="qp-product-card" to={`/product/${product.id}`}>
-                <span className="qp-product-icon"><Icon name={product.icon} /></span>
-                <h3>{product.title}</h3><p>{product.description}</p>
-                <div className="qp-card-preview"><span>{product.example[0]}</span><strong>{product.example[1]}</strong></div>
+              <Link key={product.id} className={product.id === "checkout" ? "qp-product-card qp-product-featured" : "qp-product-card"} to={`/product/${product.id}`}>
+                {product.id === "checkout" && (
+                  <div className="qp-checkout-art">
+                    <img src="/brand/checkout-usdt.webp" alt="" loading="lazy" width={800} height={1000} />
+                  </div>
+                )}
+                <div className="qp-product-card-title">
+                  <span className="qp-product-icon"><Icon name={product.icon} /></span>
+                  <h3>{product.title}</h3>
+                </div>
+                <p>{product.description}</p>
+                <div className="qp-card-preview">
+                  <Icon name={product.id === "checkout" || product.id === "subscriptions" ? "layers" : product.icon} />
+                  <span>{product.example[0]}</span><strong>{product.example[1]}</strong>
+                </div>
                 <span className="qp-card-action">View {product.title.toLowerCase()} <Icon name="arrow" /></span>
               </Link>
             ))}
