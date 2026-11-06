@@ -1,4 +1,4 @@
-import { formatUsdt, type Order, type OrderStatus } from "@quietpay/shared";
+import { formatUsdt, token, type Order, type OrderStatus } from "@quietpay/shared";
 
 export interface OrderRow {
   id: string;
@@ -10,9 +10,28 @@ export interface OrderRow {
   explorerUrl: string | null;
   created: string;
   reference: string | null;
+  refund: { label: string; refunded: string; remaining: string } | null;
 }
 
 export const shortHex = (s: string) => `${s.slice(0, 6)}...${s.slice(-4)}`;
+
+function formatRefundAmount(amount: bigint): string {
+  const digits = amount.toString().padStart(token.decimals + 1, "0");
+  const fraction = digits.slice(-token.decimals).replace(/0+$/, "").padEnd(2, "0");
+  return `${digits.slice(0, -token.decimals)}.${fraction} USDT`;
+}
+
+function refundSummary(order: Order): OrderRow["refund"] {
+  if (order.status !== "settled" || order.refundedAmount === undefined) return null;
+  const amount = BigInt(order.amount);
+  const refunded = BigInt(order.refundedAmount);
+  if (refunded > amount) return null;
+
+  let label = "No refund";
+  if (refunded === amount) label = "Fully refunded";
+  else if (refunded > 0n) label = "Partially refunded";
+  return { label, refunded: formatRefundAmount(refunded), remaining: formatRefundAmount(amount - refunded) };
+}
 
 export function toRow(o: Order): OrderRow {
   return {
@@ -25,6 +44,7 @@ export function toRow(o: Order): OrderRow {
     explorerUrl: o.explorerUrl ?? null,
     created: new Date(o.createdAt * 1000).toISOString().replace("T", " ").slice(0, 16) + " UTC",
     reference: o.reference ?? null,
+    refund: refundSummary(o),
   };
 }
 

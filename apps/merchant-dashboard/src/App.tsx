@@ -86,6 +86,7 @@ export function App() {
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Amount</th>
               <th className="px-3 py-2">Relay fee</th>
+              <th className="px-3 py-2">Refund</th>
               <th className="px-3 py-2">Payout address</th>
               <th className="px-3 py-2">Payer</th>
               <th className="px-3 py-2">Created</th>
@@ -103,6 +104,15 @@ export function App() {
                   {r.reference && <div className="text-xs font-normal text-stone-400">{r.reference}</div>}
                 </td>
                 <td className="px-3 py-2">{r.fee}</td>
+                <td className="px-3 py-2">
+                  {r.refund ? (
+                    <>
+                      <div className="font-medium">{r.refund.label}</div>
+                      <div className="whitespace-nowrap text-xs text-stone-600">{r.refund.refunded} refunded</div>
+                      <div className="whitespace-nowrap text-xs text-stone-600">{r.refund.remaining} remaining</div>
+                    </>
+                  ) : r.status === "settled" ? <span className="text-stone-500">Unavailable</span> : <span>—</span>}
+                </td>
                 <td className="px-3 py-2 font-mono text-xs" title={r.payout}>{shortHex(r.payout)}</td>
                 <td className="px-3 py-2 font-mono text-xs" title={r.payer ?? undefined}>{r.payer ? shortHex(r.payer) : "-"}</td>
                 <td className="px-3 py-2 text-stone-500">{r.created}</td>
@@ -116,7 +126,7 @@ export function App() {
               </tr>
             ))}
             {rows.length === 0 && !loading && (
-              <tr><td colSpan={7} className="px-3 py-6 text-center text-stone-400">No orders yet.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-stone-400">No orders yet.</td></tr>
             )}
           </tbody>
         </table>

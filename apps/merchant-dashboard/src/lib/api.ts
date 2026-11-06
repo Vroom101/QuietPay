@@ -6,6 +6,7 @@ import {
   orderExpired,
   orderFailed,
   orderPending,
+  orderPartiallyRefunded,
   orderSettled,
 } from "@quietpay/shared/fixtures";
 
@@ -14,15 +15,25 @@ export function fixtureOrders(): Order[] {
   const id = (n: number) => ("0x" + n.toString(16).padStart(64, "0")) as `0x${string}`;
   const base = orderSettled.createdAt;
   return [
-    orderSettled,
+    orderPartiallyRefunded,
     orderPending,
     orderCreated,
     orderFailed,
+    makeOrder({
+      id: id(9),
+      status: "settled",
+      payer: FIXTURE_PAYER,
+      amount: "8500000",
+      refundedAmount: "8500000",
+      reference: "order-1044",
+      createdAt: base + 3800,
+    }),
     orderExpired,
     makeOrder({
       id: id(7),
       amount: "125500000",
       fee: "50000",
+      refundedAmount: "0",
       status: "settled",
       payer: FIXTURE_PAYER,
       txHash: ("0x" + "ef".repeat(32)) as `0x${string}`,
