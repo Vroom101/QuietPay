@@ -319,6 +319,31 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
     }
   }
 
+  // 7. Second node (optional): head depth, the timestamps used for date_utc, and the settlement Transfers.
+  if (input.src2) {
+    const n2 = input.src2;
+    const disagree = (message: string, expected?: string, actual?: string) =>
+      issues.push({ check: "event_set_hash", code: "rpc_disagreement", message, expected, actual });
+    const head2 = await n2.getBlockNumber();
+    if (head2 - meta.confirmations < meta.toBlock) {
+      disagree(`the second node's head ${head2} does not finalise toBlock ${meta.toBlock} with ${meta.confirmations} confirmations (first node head ${head})`, `>= ${meta.toBlock + meta.confirmations}`, String(head2));
+    }
+    const blocks = new Set<number>([...csvRows.map((r) => r.block), ...events.filter((e) => e.kind === "Paid").map((e) => e.block)]);
+    for (const b of [...blocks].sort((x, y) => x - y)) {
+      if (b < meta.fromBlock || b > meta.toBlock) continue;
+      const t2 = (await n2.getBlock(b)).timestamp;
+      const t1 = await timestamp(b);
+      if (t1 !== t2) disagree(`block ${b} timestamp differs between the two nodes (${t1} vs ${t2}); date_utc cannot be trusted`, String(t1), String(t2));
+    }
+    const paidBlocks = [...new Set(events.filter((e) => e.kind === "Paid" && e.address === router).map((e) => e.block))].sort((x, y) => x - y);
+    for (const b of paidBlocks) {
+      const q = { address: usdt, topics: [TOPICS.Transfer] };
+      const a = fingerprint(await fetchPaged(src, q, b, b, paging));
+      const c = fingerprint(await fetchPaged(n2, q, b, b, paging));
+      if (a !== c) disagree(`the two nodes return different USDT Transfer logs for settlement block ${b}`);
+    }
+  }
+
   return finish();
 }
 
