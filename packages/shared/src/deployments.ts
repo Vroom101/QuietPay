@@ -7,6 +7,8 @@ export interface Deployment {
   deployTx: string | null;
   explorerUrl: string | null;
   verified: boolean;
+  /** Block the router was deployed in; indexers start here. */
+  deployBlock?: number;
   tokenKind?: string;
   tokenDeployTx?: string;
   tokenExplorerUrl?: string;

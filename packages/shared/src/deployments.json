@@ -9,6 +9,7 @@
     "explorerUrl": "https://explorer.testnet.whitechain.io/address/0x6a765694262E1c9CdDbb1C76008a61df7f58D86f",
     "tokenExplorerUrl": "https://explorer.testnet.whitechain.io/address/0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4",
     "verified": true,
-    "demoMerchantSlug": "demo-store"
+    "demoMerchantSlug": "demo-store",
+    "deployBlock": 12347996
   }
 }
