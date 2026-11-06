@@ -30,12 +30,12 @@ export interface RawEvent {
   args: Record<string, string>;
 }
 
-export type LedgerSource = "router" | "x402";
+export type LedgerSource = "router" | "payto_transfer";
 export type LedgerStatus = "settled" | "partially_refunded" | "refunded";
 
 /** One ledger row. Amounts are strings with exactly 6 places. */
 export interface LedgerRow {
-  /** Stable identity: `merchantId:orderId` for router rows, `txHash:logIndex` for x402 rows. */
+  /** Stable identity: `merchantId:orderId` for router rows, `txHash:logIndex` for payto_transfer rows. */
   key: string;
   dateUtc: string;
   source: LedgerSource;

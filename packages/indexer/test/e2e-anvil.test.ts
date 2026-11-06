@@ -92,7 +92,7 @@ describe.skipIf(!have)("13. end to end on anvil with the real router", () => {
     const rSig = await refundSigner.signTypedData(buildRefundAuthorization({ refundSigner: refundSigner.address, router, amount: 10_000_000n, nonce: rNonce, validAfter: vA, validBefore: vB, ...domain }));
     await wait(await rw.writeContract({ address: router, abi: paymentRouterAbi, functionName: "refund", args: [merchantId, orderId, 10_000_000n, vA, vB, rSig] }));
 
-    // 3. A direct agent (x402-style) transfer of 1.50 from the payer to the facilitator. The payer needs gas for a plain transfer.
+    // 3. A bare USDT transfer (recorded as payto_transfer, not x402 proof) of 1.50 from the payer to the facilitator. The payer needs gas for a plain transfer.
     await wait(await w.sendTransaction({ to: payer.address, value: 10n ** 18n }));
     await wait(await wallet(payer).writeContract({ address: usdt, abi: tok.abi, functionName: "transfer", args: [facilitator, 1_500_000n] }));
 
@@ -108,7 +108,7 @@ describe.skipIf(!have)("13. end to end on anvil with the real router", () => {
     const rows = exp.rows;
     expect(rows).toHaveLength(2); // the payout transfer to the facilitator is NOT counted a second time
 
-    const [routerRow, x402Row] = rows;
+    const [routerRow, paytoRow] = rows;
     expect(routerRow).toMatchObject({
       source: "router",
       orderId,
@@ -121,12 +121,12 @@ describe.skipIf(!have)("13. end to end on anvil with the real router", () => {
       status: "partially_refunded",
       txHash: payRcpt.transactionHash,
     });
-    expect(x402Row).toMatchObject({ source: "x402", orderId: "", merchantId: "", payer: payer.address.toLowerCase(), grossUsdt: "1.500000", netUsdt: "1.500000", status: "settled" });
+    expect(paytoRow).toMatchObject({ source: "payto_transfer", orderId: "", merchantId: "", payer: payer.address.toLowerCase(), grossUsdt: "1.500000", netUsdt: "1.500000", status: "settled" });
 
     const lines = exp.csv.trimEnd().split("\n");
     expect(lines).toHaveLength(3);
     expect(lines[1]!.split(",").slice(1, 10)).toEqual(["router", orderId, merchantId, payer.address.toLowerCase(), "25.000000", "0.050000", "10.000000", "14.950000", "partially_refunded"]);
-    expect(lines[2]!.split(",").slice(1, 10)).toEqual(["x402", "", "", payer.address.toLowerCase(), "1.500000", "0.000000", "0.000000", "1.500000", "settled"]);
+    expect(lines[2]!.split(",").slice(1, 10)).toEqual(["payto_transfer", "", "", payer.address.toLowerCase(), "1.500000", "0.000000", "0.000000", "1.500000", "settled"]);
 
     // Idempotent re-run, rebuild parity, and a byte-identical second export.
     expect((await indexOnce({ db, src: makeLogSource(RPC), cfg: config })).newEvents).toBe(0);

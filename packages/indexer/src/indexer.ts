@@ -9,7 +9,7 @@ import type { ChainLog, ExportMeta, LedgerRow, RawEvent } from "./types.js";
 export interface IndexerConfig {
   router: string;
   usdt: string;
-  /** Agent (x402) payments are USDT Transfers to this address. Optional. */
+  /** Bare USDT Transfers to this address are recorded as payto_transfer deposits (not x402 proof). Optional. */
   facilitatorPayTo?: string;
   /** A block is final after this many confirmations. A setting, not a proof of finality. */
   confirmations: number;
@@ -137,7 +137,7 @@ export interface ExportResult {
 
 /**
  * Builds the CSV and sidecar for [from, to]. `to` is clamped to the finalized cursor, so non-final blocks are never
- * included. Rows are those whose payment (or x402 transfer) landed in range, with refunds applied up to `to`.
+ * included. Rows are those whose payment (or payto_transfer deposit) landed in range, with refunds applied up to `to`.
  * The CSV is a pure function of the stored raw events, so the same range always gives the same bytes.
  */
 export function buildExport(

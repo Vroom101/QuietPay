@@ -9,17 +9,25 @@ Built for ETHGlobal Mumbai 2026 (Whitechain: Operate and Scale tracks). **Testne
 ## Status
 
 Quietpay targets the official Whitechain test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874 only.
-An earlier run used a self-minted stand-in token; it is superseded and is not qualification evidence.
+The demo uses no other token.
 
 | Item | Status | Evidence |
 | --- | --- | --- |
 | PaymentRouter deployed and verified | **Done** (block 12351795) | [router](https://explorer.testnet.whitechain.io/address/0xb9D475cdd817900B45C356169c6FdC379B942d82), [deploy tx](https://explorer.testnet.whitechain.io/tx/0xb2ce9853989c79207659f2c7aac30d165a4b152e84c2f76c265342273ea3c4fa), `docs/lead/live-usdt.md` |
 | Qualifying official-USDT payment (zero-gas payer) | **Done**: 1 USDT, fee 0.05, block 12361192 | [pay tx](https://explorer.testnet.whitechain.io/tx/0x1f2da1062f4c941382d1f0d3c7134c49858662d8eb3a68436b8f88fc7d892384), `docs/lead/live-usdt.md` |
-| Official-USDT refund, on-chain | **Done**: 0.5 USDT refunded to the payer (also 72 Foundry tests) | [refund tx](https://explorer.testnet.whitechain.io/tx/0x1ac62248eb3def54499896fd8bfc197436fcb83d9544fe94432c138c2d85127d), `docs/lead/refund.md` |
+| Official-USDT refund, on-chain | **Done**: 0.5 USDT refunded to the payer | [refund tx](https://explorer.testnet.whitechain.io/tx/0x1ac62248eb3def54499896fd8bfc197436fcb83d9544fe94432c138c2d85127d), `docs/lead/refund.md` |
 | Refund API in the relayer and the dashboard refund button | **Not built** | `docs/lead/shared-change.md` |
 | Hosted relayer | **Not done** (runs locally only) | `render.yaml` is ready |
 | Browser checkout | **Not run in a real browser** | widget and store pass their unit tests against the mock relayer |
-| Ledger and verifier | Indexer and ledger CSV built and tested; verifier **not built** | `docs/lead/ledger.md` |
+| Indexer and ledger export | **Done**, live-evidenced | `docs/lead/ledger.md` |
+| Independent ledger verifier | **Not built** | `docs/lead/ledger.md` |
+
+### Explorer proof
+
+- Router [`0xb9D475cdd817900B45C356169c6FdC379B942d82`](https://explorer.testnet.whitechain.io/address/0xb9D475cdd817900B45C356169c6FdC379B942d82), source verified.
+- Official test USDT [`0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7`](https://explorer.testnet.whitechain.io/address/0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7) on chain 1874.
+- Payment [`0x1f2da106...`](https://explorer.testnet.whitechain.io/tx/0x1f2da1062f4c941382d1f0d3c7134c49858662d8eb3a68436b8f88fc7d892384): 1.000000 USDT paid, fee 0.050000, merchant received 0.95, payer paid about 0 WBT (zero gas).
+- Refund [`0x1ac62248...`](https://explorer.testnet.whitechain.io/tx/0x1ac62248eb3def54499896fd8bfc197436fcb83d9544fe94432c138c2d85127d): 0.5 USDT returned to the payer.
 
 ## How it works
 
@@ -35,7 +43,7 @@ Merchant server --createOrder--> Relayer ----- signed webhook ---> Merchant serv
   invalidates the signature. One receipt per (merchant, order).
 - `packages/shared`: zod schemas, error codes, typed-data builders, fixtures, mock relayer, generated ABI, token facts.
 - `packages/relayer`: Fastify service with a guard pipeline, nonce manager, SQLite and signed webhooks with retry.
-- `packages/merchant-sdk`: `createOrder`, `getOrder`, `verifyWebhook`, and a `refund` stub (P1).
+- `packages/merchant-sdk`: `createOrder`, `getOrder`, `verifyWebhook`, and a `refund` stub. The relayer refund API is not built yet.
 - `packages/widget`: Lit `<quietpay-checkout>` plus a React wrapper.
 - `apps/demo-store`, `apps/merchant-dashboard`: the demo shop and the orders view.
 
@@ -49,7 +57,7 @@ compromised relayer can refuse service but cannot redirect funds or exceed the f
 
 ```
 pnpm install
-cd contracts && forge install && forge test       # 25 tests
+cd contracts && forge install && forge test       # run forge test; CI shows the current count (fork test skips offline)
 forge build                                       # needed once for the anvil end-to-end test
 cd .. && pnpm -r typecheck && pnpm -r test
 pnpm --filter @quietpay/shared mock               # mock relayer on :8787 for frontend work
@@ -70,5 +78,8 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 - Tokens sent directly to the router are not supported and cannot be recovered.
 - The relayer is a trusted gas sponsor: it can censor or pause, but cannot redirect funds or exceed the fee cap.
 - The rate limiter is in memory; the gas loss budget is persisted.
-- Not done yet: the live official-USDT payment and refund (funding), a hosted relayer, relayer refund endpoints, a browser run of the widget.
-- P1 (refunds, ledger and verifier, x402) is not started.
+- Not done yet: independent ledger verifier, hosted relayer, real browser checkout against the deployed router, relayer refund API and dashboard refund button, x402 agent settlement.
+
+## Security
+
+Pen-tested in three rounds; see `docs/lead/pentest-round-1.md`.

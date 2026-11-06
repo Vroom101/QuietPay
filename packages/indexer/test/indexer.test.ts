@@ -32,7 +32,7 @@ describe("indexing", () => {
     expect(second.newEvents).toBe(0);
     expect(db.ledger()).toEqual(rowsAfterFirst);
     expect(db.events()).toHaveLength(eventsAfterFirst);
-    expect(rowsAfterFirst.map((r) => r.source)).toEqual(["router", "router", "x402"]);
+    expect(rowsAfterFirst.map((r) => r.source)).toEqual(["router", "router", "payto_transfer"]);
   });
 
   it("re-reading the same block range inserts nothing new (keyed by tx_hash, log_index)", async () => {

@@ -72,12 +72,12 @@ describe("router rows", () => {
   });
 });
 
-describe("x402 rows", () => {
-  it("4. a direct Transfer to the facilitator becomes one x402 row", () => {
+describe("payto_transfer rows", () => {
+  it("4. a direct Transfer to the facilitator becomes one payto_transfer row", () => {
     const rows = buildLedgerRows([raw(transferLog({ block: 300, from: PAYER, to: PAYTO, value: 1_500_000n }))], cfg);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      source: "x402",
+      source: "payto_transfer",
       orderId: "",
       merchantId: "",
       payer: PAYER,
@@ -114,7 +114,7 @@ describe("x402 rows", () => {
       ],
       cfg,
     );
-    expect(rows.map((r) => r.source)).toEqual(["router", "x402"]);
+    expect(rows.map((r) => r.source)).toEqual(["router", "payto_transfer"]);
     expect(rows[1]!.grossUsdt).toBe("0.000009");
   });
 
@@ -152,7 +152,7 @@ describe("formatting and csv", () => {
     expect(lines.slice(1, 4).map((l) => l.split(",")[11] + ":" + l.split(",")[12])).toEqual(["200:0", "300:1", "300:2"]);
     expect(csv.endsWith("\n")).toBe(true);
     expect(csv).not.toContain("\r");
-    // every column filled for a router row, and the x402 row has empty order/merchant
+    // every column filled for a router row, and the payto_transfer row has empty order/merchant
     expect(lines[1]!.split(",").every((c) => c !== "")).toBe(true);
     expect(lines[2]!.split(",").slice(2, 4)).toEqual(["", ""]);
   });

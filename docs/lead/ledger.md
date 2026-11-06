@@ -6,7 +6,8 @@
 ## Sources
 
 1. **Router events**: `Paid`, `Refunded`, plus `MerchantRegistered`, `PayoutChanged` and `RelayerSet` for the operator view.
-2. **x402 (agent) payments**: USDT `Transfer(from, to, value)` where `to` is `FACILITATOR_PAYTO`.
+2. **Pay-to deposits (`payto_transfer`)**: USDT `Transfer(from, to, value)` where `to` is `FACILITATOR_PAYTO`. These are
+   recorded as deposits. They are **not** proof of an x402 API purchase (see below).
 
 ## Row rules
 
@@ -21,8 +22,13 @@
 | `status` | `settled`, `partially_refunded` (0 < refunded < value) or `refunded` (refunded >= value) |
 | `tx_hash`, `block`, `log_index` | from the `Paid` log |
 
-**x402** (one row per qualifying Transfer): `order_id` and `merchant_id` empty, fee and refunded `0.000000`,
-`net_usdt` = gross, `status` = `settled`.
+**payto_transfer** (one row per qualifying Transfer): `order_id` and `merchant_id` empty, fee and refunded `0.000000`,
+`net_usdt` = gross, `status` = `settled`. The `source` value is `payto_transfer`, never `x402`.
+
+A bare USDT transfer to the pay-to address is recorded as a **deposit**. It is **NOT** proof of an x402 API payment:
+the token transfer alone says nothing about which API call, if any, it paid for. Proof of an x402 payment needs the
+facilitator's settlement authorization records, which the verifier will check in a later step. Until then, read these
+rows as deposits into the pay-to address.
 
 Amounts are decimal strings with exactly as many places as the token has (6 for the official USDT, read from `token.json`,
 never hardcoded), built from integer base units (no floating point).
@@ -30,7 +36,7 @@ never hardcoded), built from integer base units (no floating point).
 ### The double-count rule
 
 A router payment also emits a USDT `Transfer`, and a merchant payout may be the same address as `FACILITATOR_PAYTO`.
-A Transfer counts as an x402 payment **only if** its `from` is not the router **and** its transaction has no router
+A Transfer is recorded as a `payto_transfer` deposit **only if** its `from` is not the router **and** its transaction has no router
 `Paid` or `Refunded` log. This is tested in unit tests, on anvil with the real router, and on the live testnet
 (the router's 4.95 payout transfer to the facilitator address is excluded in the sample).
 
@@ -90,7 +96,7 @@ Reuse the pure functions from `@quietpay/indexer`: `decodeRouterLog`, `decodeTra
 - **Live sample (chain data):** `docs/lead/samples/live-sample.csv` and `.meta.json`, exported from the qualifying router, blocks 12351795-12361516. One router row: 1.000000 gross, 0.050000 fee, 0.500000 refunded, 0.450000 net, `partially_refunded`, from the live payment and refund in `live-usdt.md`.
 - **Synthetic sample (format only):** `docs/lead/samples/synthetic-sample.csv` and `.meta.json` are generated from
   hand-made logs by `packages/indexer/scripts/make-synthetic-sample.ts`. They are **not** chain data. They show a partly
-  refunded router row, a plain x402 row, and the double-count rule (a router payout to the facilitator address is counted
+  refunded router row, a plain `payto_transfer` deposit row, and the double-count rule (a router payout to the facilitator address is counted
   once, as router). Dates look odd because the fake chain uses made-up block timestamps.
 
 ## Limits

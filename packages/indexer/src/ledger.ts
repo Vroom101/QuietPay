@@ -4,7 +4,7 @@ import type { LedgerRow, LedgerStatus, RawEvent } from "./types.js";
 
 export interface LedgerConfig {
   router: string;
-  /** Agent (x402) payments are USDT transfers to this address. Omit to disable the x402 source. */
+  /** Bare USDT transfers to this address are recorded as `payto_transfer` deposits, NOT as x402 proof. Omit to disable. */
   facilitatorPayTo?: string;
   decimals?: number;
 }
@@ -22,7 +22,7 @@ export function isoUtc(ts: number): string {
  * Derives ledger rows from raw events. Pure and deterministic: same events in, same rows out, in any input order.
  *
  * Router source: one row per (merchantId, orderId) from `Paid`, updated by the latest `Refunded.totalRefunded`.
- * x402 source: one row per USDT Transfer to `facilitatorPayTo`, counted ONLY if
+ * payto_transfer source: one row per USDT Transfer to `facilitatorPayTo`, counted ONLY if
  *   (1) `from` is not the router, and
  *   (2) its transaction contains no router `Paid` or `Refunded` log.
  * That stops a router payment whose payout equals `facilitatorPayTo` from being counted twice.
@@ -102,7 +102,7 @@ export function buildLedgerRows(events: RawEvent[], cfg: LedgerConfig): LedgerRo
       out.push({
         key: `${lc(e.txHash)}:${e.logIndex}`,
         dateUtc: isoUtc(e.timestamp),
-        source: "x402",
+        source: "payto_transfer",
         orderId: "",
         merchantId: "",
         payer: lc(e.args.from!),
