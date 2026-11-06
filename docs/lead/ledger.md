@@ -18,7 +18,7 @@
 | `gross_usdt` | `Paid.value` |
 | `relay_fee_usdt` | `Paid.fee` |
 | `refunded_usdt` | latest `Refunded.totalRefunded` (0 if none) |
-| `net_usdt` | `max(0, value - fee - refunded)` |
+| `net_usdt` | `value - fee - refunded`; negative (e.g. `-0.050000`) after a refund beyond `value - fee`, because the relay fee is not returned |
 | `status` | `settled`, `partially_refunded` (0 < refunded < value) or `refunded` (refunded >= value) |
 | `tx_hash`, `block`, `log_index` | from the `Paid` log |
 
@@ -102,5 +102,5 @@ Reuse the pure functions from `@quietpay/indexer`: `decodeRouterLog`, `decodeTra
 ## Limits
 
 Testnet only. A confirmation depth is a setting, not a proof of finality. The ledger shows what the chain shows; it does
-not convert currency or claim custody. `net_usdt` is clamped at zero because the router lets a refund reach the gross
-value while the relay fee is not returned; the unclamped figure would be negative for a full refund.
+not convert currency or claim custody. `net_usdt` is the merchant's result and is NOT clamped: a full refund gives `-fee`,
+because the router lets a refund reach the gross value while the relay fee is not returned.

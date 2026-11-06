@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { QuietpayError, buildCheckoutAuthorization, type ErrorCode, type Order } from "@quietpay/shared";
@@ -432,11 +432,22 @@ describe("F: periodic reconciliation", () => {
       n += 1;
       return { settled: 0, failed: 0, rebroadcast: 0 };
     };
-    const t = svc.startReconciler(5);
-    await new Promise((r) => setTimeout(r, 40));
-    clearInterval(t);
-    expect(n).toBeGreaterThan(1);
-    expect(t.hasRef()).toBe(false);
+    // Fake timers: with real ones a busy CPU (parallel `pnpm -r test`) can stall the loop past the whole wait, so
+    // the interval fires once before the deadline and n === 1.
+    vi.useFakeTimers();
+    try {
+      const t = svc.startReconciler(5);
+      expect(t.hasRef()).toBe(false);
+      await vi.advanceTimersByTimeAsync(4);
+      expect(n).toBe(0);
+      await vi.advanceTimersByTimeAsync(36); // t = 40ms: ticks at 5, 10, ..., 40
+      expect(n).toBe(8);
+      clearInterval(t);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(n).toBe(8); // stopped
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

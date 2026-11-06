@@ -50,7 +50,7 @@ pnpm --filter @quietpay/verifier cli verify --csv FILE --rpc URL --router 0x.. -
    - `gross == Paid.value`
    - `fee == Paid.fee`
    - `refunded ==` the latest `Refunded.totalRefunded`
-   - `net == max(0, gross - fee - refunded)`
+   - `net == gross - fee - refunded` (may be negative)
    - the status fits the refunded total
 
    It also reads the real USDT `Transfer` logs of that transaction and requires three of them: payer to router of

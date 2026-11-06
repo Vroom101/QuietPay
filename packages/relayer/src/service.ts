@@ -70,10 +70,15 @@ class Mutex {
 }
 
 interface NewPayerSlot {
-  added: boolean;
-  committed: boolean;
+  held: boolean;
   ip: string;
   payer: string;
+}
+
+/** Relays currently holding one (ip, wallet) new-wallet slot; committed once any of them persisted a signed tx. */
+interface SlotHolders {
+  holders: number;
+  committed: boolean;
 }
 
 const UNRESOLVED: readonly DbStatus[] = ["pending", "broadcast_unknown"];
@@ -111,6 +116,7 @@ export class RelayerService {
   private readonly inflight = new Set<string>();
   private reconciling = false;
   private readonly newPayersByIp = new Map<string, Map<string, number>>();
+  private readonly slotHolders = new Map<string, SlotHolders>();
 
   constructor(d: ServiceDeps) {
     this.cfg = d.cfg;
@@ -304,12 +310,38 @@ export class RelayerService {
    */
   async relayPay(req: RelayPayRequest, ctx: { ip: string }): Promise<RelayPayResponse> {
     // The new-wallet slot (4d) is reserved synchronously and kept only if a signed tx was persisted for it.
-    const slot: NewPayerSlot = { added: false, committed: false, ip: "", payer: "" };
+    const slot: NewPayerSlot = { held: false, ip: "", payer: "" };
     try {
       return await this.relayPayInner(req, ctx, slot);
     } finally {
-      if (slot.added && !slot.committed) this.newPayersByIp.get(slot.ip)?.delete(slot.payer);
+      this.releaseSlot(slot);
     }
+  }
+
+  private slotKey(ip: string, payer: string): string {
+    return `${ip}|${payer}`;
+  }
+
+  /** Drops this relay's hold. The wallet leaves the IP's set only when no other relay holds it and none committed. */
+  private releaseSlot(slot: NewPayerSlot): void {
+    if (!slot.held) return;
+    slot.held = false;
+    const k = this.slotKey(slot.ip, slot.payer);
+    const h = this.slotHolders.get(k);
+    if (!h) return;
+    h.holders -= 1;
+    if (h.holders > 0) return;
+    this.slotHolders.delete(k);
+    if (h.committed) return;
+    const m = this.newPayersByIp.get(slot.ip);
+    m?.delete(slot.payer);
+    if (m && m.size === 0) this.newPayersByIp.delete(slot.ip);
+  }
+
+  private commitSlot(slot: NewPayerSlot): void {
+    if (!slot.held) return;
+    const h = this.slotHolders.get(this.slotKey(slot.ip, slot.payer));
+    if (h) h.committed = true;
   }
 
   private async relayPayInner(req: RelayPayRequest, ctx: { ip: string }, slot: NewPayerSlot): Promise<RelayPayResponse> {
@@ -399,12 +431,22 @@ export class RelayerService {
       if (!m.has(key) && m.size >= this.cfg.maxNewPayersPerIpPerHour) {
         this.reject("rate_limited", "Too many new wallets from this connection. Please try again later.");
       }
-      if (!m.has(key)) {
+      const sk = this.slotKey(clientIp, key);
+      const had = m.has(key);
+      if (!had) {
         m.set(key, nowS);
-        slot.added = true;
-        slot.ip = clientIp;
-        slot.payer = key;
+        this.newPayersByIp.set(clientIp, m);
       }
+      let h = this.slotHolders.get(sk);
+      if (!h) {
+        // A wallet already in the set with no holder record was committed by an earlier, finished relay.
+        h = { holders: 0, committed: had };
+        this.slotHolders.set(sk, h);
+      }
+      h.holders += 1;
+      slot.held = true;
+      slot.ip = clientIp;
+      slot.payer = key;
     }
 
     // 5. merchant registered, fee within cap, payout unchanged since the order was created
@@ -518,7 +560,7 @@ export class RelayerService {
           throw new Error("claim lost before broadcast");
         }
         persisted.hash = signed.hash;
-        slot.committed = true;
+        this.commitSlot(slot);
         this.db.recordSpend(signed.hash, nowS, estimate);
         this.relayed += 1;
         const sent = await this.broadcast(row.id, signed);
@@ -548,12 +590,10 @@ export class RelayerService {
 
   /** Distinct first-time payers relayed per client IP in the last hour (in memory, per process). */
   private newPayersFor(ip: string, nowS: number): Map<string, number> {
-    let m = this.newPayersByIp.get(ip);
-    if (!m) {
-      m = new Map();
-      this.newPayersByIp.set(ip, m);
-    }
+    // A fresh map is only attached to newPayersByIp once a wallet is added, so idle /64s leave no entry.
+    const m = this.newPayersByIp.get(ip) ?? new Map<string, number>();
     for (const [p, ts] of m) if (ts < nowS - HOUR) m.delete(p);
+    if (m.size === 0) this.newPayersByIp.delete(ip);
     return m;
   }
 

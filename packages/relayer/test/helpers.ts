@@ -170,6 +170,7 @@ export function makeCfg(over: Partial<Config> = {}): Config {
     firstTimePayerLossSharePercent: 5,
     firstTimePayerLossCapPercent: 100,
     maxNewPayersPerIpPerHour: 10,
+    trustProxyHops: 0,
     ...over,
   };
 }

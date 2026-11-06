@@ -118,3 +118,20 @@ describe("differential: raw log decoding", () => {
     expect(MERCHANT).toBeTruthy();
   });
 });
+
+describe("net on a full refund is negative by the relay fee (decision: merchant view)", () => {
+  const ev = (kind: "Paid" | "Refunded", logIndex: number, args: Record<string, string>): SpecEvent => ({ txHash: tx(logIndex + 1), logIndex, block: 100 + logIndex, timestamp: 1_800_000_000, address: ROUTER, kind, args });
+  const paid = ev("Paid", 0, { merchantId: order(1), orderId: order(2), payer: PAYER, payout: PAYOUT, value: "1000000", fee: "50000", relayer: RELAYER });
+  const full = ev("Refunded", 1, { merchantId: order(1), orderId: order(2), payer: PAYER, amount: "1000000", totalRefunded: "1000000", refundIndex: "0" });
+  it("spec and indexer both give -0.050000 and status refunded", () => {
+    const s = deriveRows([paid, full], { router: ROUTER, decimals: 6 })[0]!;
+    expect([s.net, s.status]).toEqual(["-0.050000", "refunded"]);
+    const raw: RawEvent[] = [paid, full].map((e) => ({ ...e, blockHash: tx(e.block) }));
+    const i = buildLedgerRows(raw, { router: ROUTER, decimals: 6 })[0]!;
+    expect([i.netUsdt, i.status]).toEqual(["-0.050000", "refunded"]);
+  });
+  it("a partial refund below value - fee stays positive", () => {
+    const part = ev("Refunded", 1, { ...full.args, amount: "500000", totalRefunded: "500000" });
+    expect(deriveRows([paid, part], { router: ROUTER, decimals: 6 })[0]!.net).toBe("0.450000");
+  });
+});

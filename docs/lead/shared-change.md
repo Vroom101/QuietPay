@@ -70,3 +70,5 @@ expected and is listed under "Broken on main right now".
 - **Refunds (shared-change #1):** `computeRefundNonce`, `buildRefundAuthorization`, `RefundQuote*`, `RefundRequest/Response`,
   mock endpoints `GET /v1/orders/:id/refund-quote` and `POST /v1/refund`, `Order.refundedAmount`.
 - **Pay nonce v2 (shared-change #2):** the contract commits the fee; see the table above.
+
+- **A (dashboard):** `net_usdt` can now be negative (`-0.050000` after a full refund). Render the sign; do not clamp. See decisions.md.

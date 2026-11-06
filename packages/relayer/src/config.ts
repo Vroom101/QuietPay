@@ -70,6 +70,11 @@ const EnvSchema = z.object({
   FIRST_TIME_PAYER_LOSS_CAP_PERCENT: z.coerce.number().int().min(0).max(1000).default(100),
   /** Distinct first-time payer addresses one client IP may relay for in a rolling hour. */
   MAX_NEW_PAYERS_PER_IP_PER_HOUR: z.coerce.number().int().positive().default(10),
+  /**
+   * Number of trusted reverse proxies in front of the relayer (Render adds 1). 0 (default) ignores
+   * X-Forwarded-For entirely and keys limits by the socket address. N > 0 takes the Nth entry from the right.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   /** How often the reconciliation loop re-checks every broadcast, unresolved transaction. */
   RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
 });
@@ -102,6 +107,7 @@ export interface Config {
   firstTimePayerLossSharePercent: number;
   firstTimePayerLossCapPercent: number;
   maxNewPayersPerIpPerHour: number;
+  trustProxyHops: number;
 }
 
 /** Lower bound for TX_MAX_AGE_SECONDS: the longest authorization window (10 min). */
@@ -150,5 +156,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     firstTimePayerLossSharePercent: e.FIRST_TIME_PAYER_LOSS_SHARE_PERCENT,
     firstTimePayerLossCapPercent: e.FIRST_TIME_PAYER_LOSS_CAP_PERCENT,
     maxNewPayersPerIpPerHour: e.MAX_NEW_PAYERS_PER_IP_PER_HOUR,
+    trustProxyHops: e.TRUST_PROXY_HOPS,
   };
 }

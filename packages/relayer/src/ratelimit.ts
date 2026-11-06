@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 /** Sliding-window rate limiter keyed by string. In-memory; resets on restart. */
 export class RateLimiter {
   private hits = new Map<string, number[]>();
@@ -56,7 +58,7 @@ function ipv6Groups(addr: string): number[] | null {
  * Rate-limit key for a client address. IPv4 is keyed exactly; an IPv4-mapped IPv6 address (::ffff:a.b.c.d,
  * also in hex groups) is keyed as that IPv4 address; any other IPv6 address is keyed by its /64, since one
  * host normally owns a whole /64 and could otherwise rotate through 2^64 addresses to reset per-IP limits.
- * Only the socket address is ever passed in here (X-Forwarded-For is never trusted).
+ * The input is the socket address, or the proxy-derived address from resolveClientIp when TRUST_PROXY_HOPS > 0.
  */
 export function clientKey(ip: string): string {
   const raw = ip.trim().toLowerCase();
@@ -67,4 +69,20 @@ export function clientKey(ip: string): string {
     return `${g[6] >> 8}.${g[6] & 0xff}.${g[7] >> 8}.${g[7] & 0xff}`;
   }
   return `${g.slice(0, 4).map((x) => x.toString(16)).join(":")}::/64`;
+}
+
+/**
+ * Client address behind N trusted reverse proxies. Each trusted proxy appends the address it saw to
+ * X-Forwarded-For, so the rightmost N entries are proxy-written and the Nth from the right is the client as
+ * seen by the outermost trusted proxy; anything further left is client-controlled and ignored. With hops <= 0
+ * the header is never read. A missing, short or malformed header falls back to the socket address.
+ */
+export function resolveClientIp(socketIp: string, xff: string | string[] | undefined, hops: number): string {
+  if (!(hops > 0) || xff === undefined) return socketIp;
+  const raw = Array.isArray(xff) ? xff.join(",") : xff;
+  const parts = raw.split(",").map((x) => x.trim());
+  if (parts.length < hops) return socketIp;
+  const pick = parts[parts.length - hops];
+  const bare = pick.replace(/^\[|\]$/g, "").split("%")[0];
+  return isIP(bare) ? bare : socketIp;
 }

@@ -16,5 +16,9 @@
       "better-sqlite3",
       "esbuild"
     ]
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "viem": "2.57.16"
   }
 }

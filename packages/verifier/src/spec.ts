@@ -126,7 +126,7 @@ export function eventSetDigest(events: { txHash: string; logIndex: number }[]): 
 
 /**
  * Ledger rules from the spec: one router row per (merchantId, orderId) from the FIRST Paid; refunded = the last
- * Refunded.totalRefunded in chain order; net = max(0, gross - fee - refunded); status by refunded vs gross; a
+ * Refunded.totalRefunded in chain order; net = gross - fee - refunded (may be negative); status by refunded vs gross; a
  * Transfer to `payTo` becomes a payto_transfer row unless it comes from the router or sits in a transaction that has
  * a router Paid or Refunded log. Rows are ordered by block then log index.
  */
@@ -175,7 +175,7 @@ export function deriveRows(events: SpecEvent[], cfg: { router: string; payTo?: s
     row.gross = amountText(value, cfg.decimals);
     row.fee = amountText(fee, cfg.decimals);
     row.refunded = amountText(refunded, cfg.decimals);
-    row.net = amountText(left > 0n ? left : 0n, cfg.decimals);
+    row.net = amountText(left, cfg.decimals);
     row.status = refunded === 0n ? "settled" : refunded >= value ? "refunded" : "partially_refunded";
     rows.push(row);
   }

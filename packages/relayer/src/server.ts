@@ -10,7 +10,7 @@ import {
   type ErrorCode,
 } from "@quietpay/shared";
 import type { RelayerService } from "./service.js";
-import { RateLimiter, clientKey } from "./ratelimit.js";
+import { RateLimiter, clientKey, resolveClientIp } from "./ratelimit.js";
 
 function safeEqual(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -25,6 +25,9 @@ function bearer(req: FastifyRequest): string | undefined {
 
 export function buildServer(svc: RelayerService): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: 16 * 1024 });
+
+  // X-Forwarded-For is only read when TRUST_PROXY_HOPS > 0 (explicit opt-in for a known proxy chain).
+  const ipOf = (req: FastifyRequest): string => resolveClientIp(req.ip, req.headers["x-forwarded-for"], svc.cfg.trustProxyHops ?? 0);
 
   app.addHook("onRequest", async (req, reply) => {
     reply.header("access-control-allow-origin", "*");
@@ -72,14 +75,14 @@ export function buildServer(svc: RelayerService): FastifyInstance {
   // Health is unauthenticated and costs RPC calls, so it gets its own small per-IP limit.
   const healthLimiter = new RateLimiter(60, 60_000);
   app.get("/v1/health", async (req) => {
-    if (!healthLimiter.allow(clientKey(req.ip))) throw new QuietpayError("rate_limited");
+    if (!healthLimiter.allow(clientKey(ipOf(req)))) throw new QuietpayError("rate_limited");
     return svc.health();
   });
 
   // Order creation is per-IP limited before the API-key check, so unauthenticated floods are counted too.
   const ordersLimiter = new RateLimiter(120, 60_000);
   app.post("/v1/orders", async (req, reply) => {
-    if (!ordersLimiter.allow(clientKey(req.ip))) throw new QuietpayError("rate_limited");
+    if (!ordersLimiter.allow(clientKey(ipOf(req)))) throw new QuietpayError("rate_limited");
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
     const body = CreateOrderRequest.parse(req.body);
@@ -100,7 +103,7 @@ export function buildServer(svc: RelayerService): FastifyInstance {
 
   app.post("/v1/relay/pay", async (req) => {
     const body = RelayPayRequest.parse(req.body);
-    return svc.relayPay(body, { ip: req.ip });
+    return svc.relayPay(body, { ip: ipOf(req) });
   });
 
   app.get("/v1/metrics", async (req, reply) => {

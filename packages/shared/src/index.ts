@@ -6,3 +6,4 @@ export * from "./qualifying.js";
 export * from "./deployments.js";
 export { paymentRouterAbi } from "./abi/PaymentRouter.js";
 // Node-only helpers live under "@quietpay/shared/webhook" so browser bundles stay clean.
+export * from "./fund-guard.js";

@@ -27,8 +27,8 @@ export function isoUtc(ts: number): string {
  *   (2) its transaction contains no router `Paid` or `Refunded` log.
  * That stops a router payment whose payout equals `facilitatorPayTo` from being counted twice.
  *
- * net = max(0, gross - relayFee - refunded). The router lets refunds reach the gross value, so the unclamped figure
- * could be negative (the relay fee is not returned); the ledger reports zero in that case.
+ * net = gross - relayFee - refunded (merchant view). It is negative after a refund beyond gross - fee, because the
+ * relay fee is not returned; it is NOT clamped, so summing net_usdt gives the merchant's real result.
  */
 export function buildLedgerRows(events: RawEvent[], cfg: LedgerConfig): LedgerRow[] {
   const d = cfg.decimals ?? token.decimals;
@@ -88,7 +88,7 @@ export function buildLedgerRows(events: RawEvent[], cfg: LedgerConfig): LedgerRo
     out.push({
       ...row,
       refundedUsdt: formatAmount(refunded, d),
-      netUsdt: formatAmount(net < 0n ? 0n : net, d),
+      netUsdt: formatAmount(net, d),
       status,
     });
   }

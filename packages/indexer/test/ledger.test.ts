@@ -50,7 +50,7 @@ describe("router rows", () => {
     expect(rows[0]).toMatchObject({ refundedUsdt: "8.000000", netUsdt: "16.950000", status: "partially_refunded", block: 200 });
   });
 
-  it("3. a full refund gives status refunded and net zero", () => {
+  it("3. a full refund gives status refunded and net minus the relay fee", () => {
     const rows = buildLedgerRows(
       [
         raw(paidLog({ block: 200, orderId: order(1), value: 25_000_000n, fee: 50_000n })),
@@ -59,7 +59,7 @@ describe("router rows", () => {
       ],
       cfg,
     );
-    expect(rows[0]).toMatchObject({ status: "refunded", refundedUsdt: "25.000000", netUsdt: "0.000000" });
+    expect(rows[0]).toMatchObject({ status: "refunded", refundedUsdt: "25.000000", netUsdt: "-0.050000" });
   });
 
   it("is independent of input order", () => {

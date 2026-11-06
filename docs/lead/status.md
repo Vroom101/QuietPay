@@ -27,3 +27,5 @@
 - 09:38 live indexer export (1 router row) saved; tag qualifying-v1
 - 11:10 verifier built; live sample verified OK against chain 1874; pen test rounds 1-3 fixed
 - 12:40 L0 reconcile written; baseline green (see reconcile.md)
+- 13:15 L4 range pinning + rpc2 + checkpoint; L1 invariants added
+- 13:50 L4 verifier independent of indexer + differential test

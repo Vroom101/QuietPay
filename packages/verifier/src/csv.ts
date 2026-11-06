@@ -54,6 +54,8 @@ export function checkStructure(text: string, decimals: number): { rows: CsvRow[]
   const issues: Issue[] = [];
   const add = (i: Omit<Issue, "check">) => issues.push({ check: "structure", ...i });
   const amount = new RegExp(`^(0|[1-9]\\d*)\\.\\d{${decimals}}$`);
+  // net_usdt alone may be negative (the relay fee is not returned on a full refund); "-0.000000" is never valid.
+  const netAmount = new RegExp(`^(0|-?[1-9]\\d*|-0(?=\\.\\d*[1-9]))\\.\\d{${decimals}}$`);
 
   if (text.includes("\r")) add({ code: "crlf_line_endings", message: "file contains \\r; the export uses \\n line endings only" });
   const body = text.replace(/\r/g, "");
@@ -95,7 +97,7 @@ export function checkStructure(text: string, decimals: number): { rows: CsvRow[]
     if (!ADDR.test(cells.payer)) bad("bad_hex", "payer", "is not a lowercase address");
     if (!HEX32.test(cells.tx_hash)) bad("bad_hex", "tx_hash", "is not a lowercase 32-byte hash");
     for (const f of AMOUNT_COLUMNS) {
-      if (!amount.test(cells[f])) bad("bad_amount", f, `is not a decimal with exactly ${decimals} places`);
+      if (!(f === "net_usdt" ? netAmount : amount).test(cells[f])) bad("bad_amount", f, `is not a decimal with exactly ${decimals} places`);
     }
     let intsOk = true;
     for (const f of ["block", "log_index"] as const) {

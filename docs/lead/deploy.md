@@ -14,7 +14,7 @@ This repo never deploys, mints or substitutes a token on a public network.
    ```
 3. Record the result in `contracts/deployments.json`, then `pnpm --filter @quietpay/shared sync:deployments`.
 4. Verify the source: `forge verify-contract <router> src/PaymentRouter.sol:PaymentRouter --chain-id 1874 --verifier blockscout --verifier-url https://explorer.testnet.whitechain.io/api/ --constructor-args $(cast abi-encode "constructor(address,address)" <usdt> <owner>)`.
-5. Host the relayer (`render.yaml`) and set its secrets in the dashboard.
+5. Host the relayer (`render.yaml`) and set its secrets in the dashboard. `render.yaml` sets `TRUST_PROXY_HOPS=1` (Render is one proxy hop), so per-client rate limits and the new-wallet limit key on the real client address taken as the last `X-Forwarded-For` entry. Leave it `0` anywhere the relayer is reachable without a proxy, otherwise clients could spoof their address.
 6. Live evidence goes in `docs/lead/live-usdt.md`.
 
 For local development only, `script/DeployLocal.s.sol` deploys a test mock token to anvil and refuses to run on chain 1874.

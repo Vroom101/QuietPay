@@ -53,8 +53,10 @@ export function assertQualifying(chainId: number, router: string, usdt: string):
 }
 
 function parseAmount(s: string, decimals: number): bigint | null {
-  const m = new RegExp(`^(\\d+)\\.(\\d{${decimals}})$`).exec(s);
-  return m ? BigInt(m[1]!) * 10n ** BigInt(decimals) + BigInt(m[2]!) : null;
+  const m = new RegExp(`^(-?)(\\d+)\\.(\\d{${decimals}})$`).exec(s);
+  if (!m) return null;
+  const v = BigInt(m[2]!) * 10n ** BigInt(decimals) + BigInt(m[3]!);
+  return m[1] ? -v : v;
 }
 
 /**
@@ -350,7 +352,7 @@ export function compareRows(csvRows: CsvRow[], expected: SpecRow[]): Issue[] {
 
 /**
  * Invariants from chain data, independent of buildSpecRows: for every CSV router row backed by a Paid log,
- * gross == Paid.value, fee == Paid.fee, refunded == latest Refunded.totalRefunded, net == max(0, gross - fee - refunded),
+ * gross == Paid.value, fee == Paid.fee, refunded == latest Refunded.totalRefunded, net == gross - fee - refunded (may be negative),
  * status consistent, and the USDT Transfers in the Paid tx are exactly what the router does:
  * payer -> router gross, router -> payout gross - fee, router -> relayer fee (if fee > 0).
  */
@@ -385,8 +387,8 @@ async function checkInvariants(
     if (refCsv !== null && refCsv !== refunded) issues.push({ ...at, code: "invariant_refunded", field: "refunded_usdt", expected: fmt(refunded), actual: r.cells.refunded_usdt, message: `refunded ${r.cells.refunded_usdt} != latest Refunded.totalRefunded ${fmt(refunded)}` });
     if (gross !== null && feeCsv !== null && refCsv !== null && net !== null) {
       const d = gross - feeCsv - refCsv;
-      const want = d < 0n ? 0n : d;
-      if (net !== want) issues.push({ ...at, code: "invariant_net", field: "net_usdt", expected: fmt(want), actual: r.cells.net_usdt, message: `net ${r.cells.net_usdt} != max(0, gross - fee - refunded) = ${fmt(want)}` });
+      const want = d;
+      if (net !== want) issues.push({ ...at, code: "invariant_net", field: "net_usdt", expected: fmt(want), actual: r.cells.net_usdt, message: `net ${r.cells.net_usdt} != gross - fee - refunded = ${fmt(want)}` });
       const status = refCsv === 0n ? "settled" : refCsv >= gross ? "refunded" : "partially_refunded";
       if (r.cells.status !== status) issues.push({ ...at, code: "invariant_status", field: "status", expected: status, actual: r.cells.status, message: `status ${r.cells.status} does not fit refunded ${r.cells.refunded_usdt} of gross ${r.cells.gross_usdt} (${status})` });
     }
