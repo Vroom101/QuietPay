@@ -1,0 +1,146 @@
+# Full QuietPay backend blueprint for Render (testnet). Every service uses the ONE workspace image
+# (deploy/Dockerfile) with a different start command. Render terminates HTTPS for each *.onrender.com URL.
+# Secrets are sync: false placeholders; set them in the Render dashboard (names listed in deploy/runbook.md).
+# Use this file as the Blueprint path; render.yaml and render.facilitator.yaml at the repo root are the older per-service files.
+#
+# INVARIANT: the relayer/facilitator is ONE service with ONE instance (numInstances 1) and ONE persistent disk.
+# Never scale it out: two relayer processes on one key collide on nonces (a second process on the same disk also refuses to start).
+services:
+  # ---------------------------------------------------------------- relayer + facilitator (single instance)
+  - type: web
+    name: quietpay-relayer
+    runtime: docker
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    dockerCommand: /app/deploy/start.sh relayer-facilitator
+    plan: starter
+    numInstances: 1
+    healthCheckPath: /v1/health
+    # Persistent disk for SQLite + local backups (snapshotted daily by Render; the scheduled backups add point-in-time files).
+    disk: { name: data, mountPath: /data, sizeGB: 2 }
+    envVars:
+      - { key: CHAIN_ID, value: "1874" }
+      - { key: RPC_URL, value: https://rpc.ankr.com/whitechain_testnet }
+      - { key: USDT_ADDRESS, value: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7" }
+      - { key: ROUTER_ADDRESS, value: "0xb9D475cdd817900B45C356169c6FdC379B942d82" }
+      - { key: DATABASE_PATH, value: /data/quietpay.db }
+      - { key: PORT, value: "8787" }
+      - { key: RELAYER_PRIVATE_KEY, sync: false }
+      - { key: OPERATOR_TOKEN, sync: false }
+      - { key: MERCHANT_API_KEYS, sync: false }
+      - { key: WEBHOOK_SECRET, sync: false }
+      - { key: PAID_API_PUBLIC_URL, sync: false }
+      - { key: FACILITATOR_PAYTO, sync: false }
+      - { key: FACILITATOR_MERCHANT_ID, sync: false }
+      - { key: MAX_GAS_PRICE, sync: false }
+      - { key: EXPLORER_BASE_URL, value: "https://testnet.whitechain.io" }
+      - { key: CORS_ORIGINS, sync: false }
+      # Render adds one proxy hop; without this every client shares one rate-limit key.
+      - { key: TRUST_PROXY_HOPS, value: "1" }
+      - { key: ALLOW_PRIVATE_WEBHOOKS, value: "0" }
+      - { key: LOSS_BUDGET_WBT_PER_HOUR, value: "0.05" }
+      - { key: PAYER_CAP_USDT, value: "100" }
+      - { key: MAX_GAS_LIMIT, value: "500000" }
+      - { key: LOW_BALANCE_WBT, value: "0.01" }
+      - { key: PENDING_RETRY_SECONDS, value: "30" }
+      - { key: MAX_REPLACEMENTS, value: "3" }
+      - { key: SETTLE_CONFIRMATIONS, value: "1" }
+      - { key: RELAY_FEE_USDT, value: "0.05" }
+      - { key: RATE_LIMIT_PER_MINUTE, value: "20" }
+      - { key: TOKEN_DOMAIN_NAME, value: "Tether USD" }
+      - { key: TOKEN_DOMAIN_VERSION, value: "1" }
+      - { key: MIN_VALID_SECONDS, value: "60" }
+      - { key: REVERTED_PAYER_MIN_VALID_SECONDS, value: "120" }
+      - { key: MAX_REVERTS_PER_DAY, value: "2" }
+      - { key: PAYER_LOSS_SHARE_PERCENT, value: "25" }
+      - { key: TX_MAX_AGE_SECONDS, value: "1800" }
+      - { key: FIRST_TIME_PAYER_LOSS_SHARE_PERCENT, value: "5" }
+      - { key: FIRST_TIME_PAYER_LOSS_CAP_PERCENT, value: "100" }
+      - { key: MAX_NEW_PAYERS_PER_IP_PER_HOUR, value: "10" }
+      - { key: RECONCILE_INTERVAL_SECONDS, value: "30" }
+      - { key: X402_QUOTE_AMOUNT, value: "10000" }
+      - { key: X402_SIGNAL_AMOUNT, value: "20000" }
+      - { key: X402_SETTLEMENT_WAIT_MS, value: "5000" }
+      # Backups: online SQLite backup every BACKUP_INTERVAL_SECONDS into BACKUP_DIR; the newest BACKUP_KEEP are kept.
+      - { key: BACKUP_DIR, value: /data/backups }
+      - { key: BACKUP_INTERVAL_SECONDS, value: "21600" }
+      - { key: BACKUP_KEEP, value: "14" }
+
+  # ---------------------------------------------------------------- paid API (x402 resource server)
+  - type: web
+    name: quietpay-paid-api
+    runtime: docker
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    dockerCommand: /app/deploy/start.sh paid-api
+    plan: starter
+    numInstances: 1
+    healthCheckPath: /health
+    envVars:
+      - { key: CHAIN_ID, value: "1874" }
+      - { key: USDT_ADDRESS, value: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7" }
+      - { key: PAID_API_PORT, value: "8790" }
+      - { key: PAID_API_PUBLIC_URL, sync: false }
+      - { key: FACILITATOR_URL, sync: false }
+      - { key: FACILITATOR_PAYTO, sync: false }
+      - { key: FACILITATOR_MERCHANT_ID, sync: false }
+      - { key: QUIETPAY_API_KEY, sync: false }
+      - { key: X402_QUOTE_AMOUNT, value: "10000" }
+      - { key: X402_SIGNAL_AMOUNT, value: "20000" }
+
+  # ---------------------------------------------------------------- merchant server (demo store API + webhook receiver)
+  - type: web
+    name: quietpay-merchant-server
+    runtime: docker
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    dockerCommand: /app/deploy/start.sh merchant-server
+    plan: starter
+    numInstances: 1
+    healthCheckPath: /health
+    disk: { name: store-data, mountPath: /store-data, sizeGB: 1 }
+    envVars:
+      - { key: HOST, value: "0.0.0.0" }
+      - { key: PORT, value: "3001" }
+      - { key: QUIETPAY_BASE_URL, sync: false }
+      - { key: QUIETPAY_API_KEY, sync: false }
+      - { key: QUIETPAY_WEBHOOK_SECRET, sync: false }
+      - { key: QUIETPAY_MERCHANT_ID, sync: false }
+      - { key: QUIETPAY_PAYOUT_ADDRESS, sync: false }
+      - { key: QUIETPAY_WEBHOOK_URL, sync: false }
+      - { key: QUIETPAY_STATE_FILE, value: /store-data/demo-store-state.json }
+      - { key: QUIETPAY_RECEIPT_DATABASE_PATH, value: /store-data/quietpay-receipts.db }
+      - { key: QUIETPAY_MERCHANT_DATABASE_PATH, value: /store-data/quietpay-merchant.db }
+      - { key: QUIETPAY_CHAIN_ID, value: "1874" }
+      - { key: QUIETPAY_ROUTER_ADDRESS, value: "0xb9D475cdd817900B45C356169c6FdC379B942d82" }
+      - { key: QUIETPAY_TOKEN_ADDRESS, value: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7" }
+      - { key: TOKEN_DOMAIN_NAME, value: "Tether USD" }
+      - { key: TOKEN_DOMAIN_VERSION, value: "1" }
+      # Optional refunds block: set both to enable it.
+      - { key: QUIETPAY_DASHBOARD_TOKEN, sync: false }
+      - { key: QUIETPAY_REFUND_SIGNER_PRIVATE_KEY, sync: false }
+
+  # ---------------------------------------------------------------- indexer merchant-ledger API
+  - type: web
+    name: quietpay-indexer-api
+    runtime: docker
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    dockerCommand: /app/deploy/start.sh indexer-api
+    plan: starter
+    numInstances: 1
+    healthCheckPath: /v1/health
+    disk: { name: indexer-data, mountPath: /indexer-data, sizeGB: 1 }
+    envVars:
+      - { key: RPC_URL, value: https://rpc.ankr.com/whitechain_testnet }
+      - { key: CHAIN_ID, value: "1874" }
+      - { key: ROUTER_ADDRESS, value: "0xb9D475cdd817900B45C356169c6FdC379B942d82" }
+      - { key: USDT_ADDRESS, value: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7" }
+      - { key: INDEXER_FROM_BLOCK, value: "12351795" }
+      - { key: INDEXER_CONFIRMATIONS, value: "2" }
+      - { key: INDEXER_DATABASE_PATH, value: /indexer-data/indexer.db }
+      - { key: INDEXER_POLL_MS, value: "5000" }
+      - { key: INDEXER_PORT, value: "8788" }
+      - { key: MERCHANT_API_KEYS, sync: false }
+      - { key: FACILITATOR_PAYTO, sync: false }
+      - { key: FACILITATOR_MERCHANT_ID, sync: false }
