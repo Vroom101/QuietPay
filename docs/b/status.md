@@ -3,3 +3,5 @@
 - 2026-11-06 16:57Z B2.1 F13 closed: settle() adopts a front-run before verify; real anvil front-run test (fails on old code); facilitator 28/28, relayer 361/361, paid-api 8/8
 - 2026-11-06 17:04Z B2.2 R16 reorg protection (SETTLE_CONFIRMATIONS), relayer 364/364; route matrix drafted
 - 2026-11-06 17:13Z B2.2 closed: R23 R19 R22 F4 F5 F18 S5 S8 P4 + paywall tests (sdk 93% lines); paywall now 503s on settlement_unresolved; facilitator 32, relayer 380, sdk 59, paid-api 9
+- 2026-11-06 23:20 IST B2.3-B2.5 closed: anvil suites guarded (CI refuses to skip, port/readiness checks, free ports), polling replaces sleeps, specific errors replace bare toThrow, entry-file smoke tests, route matrix tests for all 3 services (M1-M4 fixed), coverage: facilitator service.ts 90.5% branches, relayer preflight 92.6%, chain-extensions 97.6%, paid-api app.ts 94.7%, sdk 93% lines
+- 2026-11-06 23:30 IST B3: fast-check property sweep (webhooks, rate limiter, settlement idempotency) clean; audit triage written (zod -> blocked.md, fastify 4 in demo-store -> needs-from-others); mutation sample running
