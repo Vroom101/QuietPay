@@ -9,13 +9,13 @@ export function Cart() {
 
   return (
     <section className="cart-page">
-      <Link to="/#catalog" className="gateway-back"><Icon name="left" /> Continue shopping</Link>
+      <Link to="/shop#catalog" className="gateway-back"><Icon name="left" /> Continue shopping</Link>
       <h1>Your cart</h1>
       {count === 0 ? (
         <div className="cart-items cart-empty">
           <Icon name="bag" />
           <h2>Your cart is empty</h2>
-          <Link to="/#catalog" className="pill-button">Browse products <Icon name="arrow" /></Link>
+          <Link to="/shop#catalog" className="pill-button">Browse products <Icon name="arrow" /></Link>
         </div>
       ) : (
         <div className="cart-grid">

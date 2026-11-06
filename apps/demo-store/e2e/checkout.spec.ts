@@ -25,7 +25,7 @@ test("retries a delayed or failed receipt check using the same order ID", async 
 });
 
 test("checks out from the catalog and shows a receipt after a signed webhook", async ({ page, request }) => {
-  await page.goto("/");
+  await page.goto("/shop");
   await page.getByRole("button", { name: "Add Dot Notebook to cart", exact: true }).click();
   await page.getByRole("link", { name: "View cart", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Your cart" })).toBeVisible();
@@ -54,7 +54,7 @@ test("checks out from the catalog and shows a receipt after a signed webhook", a
 
 test("reviews a stablecoin quote and receives a clearly labeled demo receipt", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
+  await page.goto("/shop");
   await page.getByRole("button", { name: "Add Dot Notebook to cart", exact: true }).click();
   await page.getByRole("link", { name: "View cart", exact: true }).click();
   await page.getByRole("link", { name: "Proceed to checkout" }).click();

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { orderSettled } from "@quietpay/shared/fixtures";
 import { DashboardError, fixtureOrders, listOrders } from "../src/lib/api";
-import { toRow } from "../src/lib/view";
+import { demoOrderToDashboard, toRow } from "../src/lib/view";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -15,6 +15,7 @@ describe("listOrders", () => {
       useFixtures: true,
     });
     expect(orders).toEqual(fixtureOrders());
+    expect(new Set(orders.map((order) => order.id)).size).toBe(orders.length);
     expect(orders.map((o) => o.status)).toEqual(
       expect.arrayContaining([
         "created",
@@ -65,6 +66,12 @@ describe("listOrders", () => {
 });
 
 describe("toRow", () => {
+  it("converts recorded demo payments and cumulative refunds to dashboard base units", () => {
+    const order = { id: "demo-order", amount: "8.50", placedAt: 1800000000000, refunds: [{ id: "refund-1", amount: "1.25", createdAt: 1800000000000 }] };
+    const mapped = demoOrderToDashboard(order);
+    expect(mapped).toMatchObject({ amount: "8500000", refunded: "1250000", createdAt: 1800000000, status: "partially_refunded" });
+    expect(toRow(mapped).refund).toMatchObject({ remaining: "7.25 USDT", count: 1 });
+  });
   it("uses the backend's cumulative amount and count for refunded orders", () => {
     expect(toRow({ ...orderSettled, status: "partially_refunded", refunded: "5000000", refundCount: 1 }).refund).toEqual({
       label: "Partially refunded", refunded: "5.00 USDT", remaining: "20.00 USDT", count: 1,

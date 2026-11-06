@@ -52,7 +52,7 @@ export function Shop({ saved, toggleSaved }: { saved: string[]; toggleSaved: (id
             </div>
           </div>
           <div className="editorial-bar">
-            <Link to={`/?category=${activeSlide.category}#catalog`} className="collection-link">
+            <Link to={`/shop?category=${activeSlide.category}#catalog`} className="collection-link">
               <ProductImage product={slide === 0 ? PRODUCTS[0]! : lamp} className="collection-thumb" />
               <span><strong>{activeSlide.label}</strong><small>Explore the collection</small></span>
             </Link>

@@ -86,7 +86,7 @@ function RefundDialog({ order, onClose, onRefund }: { order: DemoOrder; onClose:
   );
 }
 
-export function BillingWorkspace() {
+export function BillingWorkspace({ onRefundRecorded }: { onRefundRecorded?: () => void }) {
   const [active, setActive] = useState<(typeof tabs)[number]>("Refunds");
   const [orders, setOrders] = useState<DemoOrder[]>([]);
   const [invoices, setInvoices] = useState<DemoInvoice[]>([]);
@@ -186,6 +186,7 @@ export function BillingWorkspace() {
             setRefund(undefined);
             setStatus("Demo refund recorded. Reopen the customer receipt to see it.");
             void load();
+            onRefundRecorded?.();
           }} />}
         </div>
       )}

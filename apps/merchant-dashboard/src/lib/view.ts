@@ -1,11 +1,26 @@
-import { formatUsdt, token, type Order, type OrderStatus } from "@quietpay/shared";
+import { formatUsdt, parseUsdt, token, type Order, type OrderStatus } from "@quietpay/shared";
+import type { DemoOrder } from "../../../demo-store/src/billing";
+
+export type DashboardOrder = Pick<Order, "id" | "status" | "amount" | "fee" | "createdAt" | "settledAt" | "refunded" | "refundCount" | "payer" | "reference" | "explorerUrl"> &
+  Partial<Pick<Order, "checkout" | "payout">>;
+
+export function demoOrderToDashboard(order: DemoOrder): DashboardOrder {
+  const amount = parseUsdt(order.amount);
+  const refunded = order.refunds.reduce((total, refund) => total + parseUsdt(refund.amount), 0n);
+  const placedAt = Math.floor(order.placedAt / 1000);
+  return {
+    id: order.id, amount: amount.toString(), fee: "0", refunded: refunded.toString(),
+    refundCount: order.refunds.length, createdAt: placedAt, settledAt: placedAt,
+    status: refunded === 0n ? "settled" : refunded >= amount ? "refunded" : "partially_refunded",
+  };
+}
 
 export interface OrderRow {
   id: string;
   status: OrderStatus;
   amount: string;
   fee: string;
-  payout: string;
+  payout: string | null;
   payer: string | null;
   explorerUrl: string | null;
   created: string;
@@ -21,7 +36,7 @@ function formatRefundAmount(amount: bigint): string {
   return `${digits.slice(0, -token.decimals)}.${fraction} USDT`;
 }
 
-function refundSummary(order: Order): OrderRow["refund"] {
+function refundSummary(order: DashboardOrder): OrderRow["refund"] {
   if (!["settled", "partially_refunded", "refunded"].includes(order.status) || order.refunded === undefined) return null;
   const amount = BigInt(order.amount);
   const refunded = BigInt(order.refunded);
@@ -33,13 +48,13 @@ function refundSummary(order: Order): OrderRow["refund"] {
   return { label, refunded: formatRefundAmount(refunded), remaining: formatRefundAmount(amount - refunded), count: order.refundCount };
 }
 
-export function toRow(o: Order): OrderRow {
+export function toRow(o: DashboardOrder): OrderRow {
   return {
     id: o.id,
     status: o.status,
     amount: `${formatUsdt(o.amount)} USDT`,
     fee: `${formatUsdt(o.fee)} USDT`,
-    payout: o.payout,
+    payout: o.payout ?? null,
     payer: o.payer ?? null,
     explorerUrl: o.explorerUrl ?? null,
     created: new Date(o.createdAt * 1000).toISOString().replace("T", " ").slice(0, 16) + " UTC",
