@@ -33,3 +33,4 @@
 - 15:00 L5/L7: scripts (fund-payer, tampered samples, qualify-check), feedback, README
 - 15:40 L2 property tests, removed-log tests, live sample re-verified
 - 18:40 final report written; mutation sweep killed (low memory), recorded in blocked.md
+- 20:40 finish run T0: baseline last green (relayer 324, shared 240, verifier 139, Foundry 118); gh unavailable so CI not read

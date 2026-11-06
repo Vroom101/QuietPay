@@ -3,6 +3,7 @@ export interface ExportMeta {
   toBlock: number;
   confirmations: number;
   eventSetHash: string;
+  hashVersion?: number;
   router: string;
   usdt: string;
   payTo: string | null;
@@ -40,6 +41,7 @@ export function parseSidecar(text: string): { meta: ExportMeta } | { error: stri
       toBlock: j.toBlock,
       confirmations: j.confirmations,
       eventSetHash: j.eventSetHash,
+      ...(typeof j.hashVersion === "number" ? { hashVersion: j.hashVersion } : {}),
       router: (j.router as string).toLowerCase(),
       usdt: (j.usdt as string).toLowerCase(),
       payTo: j.payTo === null ? null : (j.payTo as string).toLowerCase(),

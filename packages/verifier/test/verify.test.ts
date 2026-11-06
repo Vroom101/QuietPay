@@ -286,7 +286,7 @@ describe("qualifying guard on chain 1874", () => {
     const dep = getQualifyingDeployment();
     const chain = new FakeChain(dep.deployBlock + 100, 1874);
     const csv = COLS.join(",") + "\n";
-    const meta = { fromBlock: dep.deployBlock, toBlock: dep.deployBlock + 50, confirmations: 12, eventSetHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", router: dep.router, usdt: QUALIFYING_USDT, payTo: null, generatedAt: "x" };
+    const meta = { fromBlock: dep.deployBlock, toBlock: dep.deployBlock + 50, confirmations: 12, hashVersion: 2, eventSetHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", router: dep.router, usdt: QUALIFYING_USDT, payTo: null, generatedAt: "x" };
     const r = await verifyLedger({ csvText: csv, metaText: JSON.stringify(meta), src: chain, router: dep.router, usdt: QUALIFYING_USDT, expectedPayTo: null });
     expect(r.issues).toEqual([]);
     expect(r.chainId).toBe(1874);
