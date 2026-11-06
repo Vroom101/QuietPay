@@ -1,6 +1,6 @@
 {
-  "csv": "../../docs/lead/samples/live-sample.csv",
-  "meta": "../../docs/lead/samples/live-sample.csv.meta.json",
+  "csv": "C:/Users/avane/Desktop/QuietPay/docs/lead/samples/live-sample.csv",
+  "meta": "C:/Users/avane/Desktop/QuietPay/docs/lead/samples/live-sample.csv.meta.json",
   "ok": true,
   "verifier": "quietpay-verifier/0.1.0",
   "chainId": 1874,
@@ -10,14 +10,21 @@
   "fromBlock": 12351795,
   "toBlock": 12361516,
   "confirmations": 12,
-  "headBlock": 12367035,
-  "finalizedBlock": 12367023,
+  "headBlock": 12373231,
+  "finalizedBlock": 12373219,
   "rowsInCsv": 1,
   "rowsExpected": 1,
   "eventsInRange": 4,
   "eventSetHash": {
     "sidecar": "49c6a5bb26787ed991d50f108aafd7b0a400da86ceef489c57e7c7c5caa9e926",
     "recomputed": "49c6a5bb26787ed991d50f108aafd7b0a400da86ceef489c57e7c7c5caa9e926"
+  },
+  "anchored": true,
+  "checkpoint": {
+    "fromBlock": 12351795,
+    "toBlock": 12361516,
+    "eventCount": 4,
+    "eventSetHash": "49c6a5bb26787ed991d50f108aafd7b0a400da86ceef489c57e7c7c5caa9e926"
   },
   "checks": {
     "structure": "pass",
