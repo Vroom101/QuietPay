@@ -6,7 +6,7 @@ import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ERROR_CODES, ERROR_USER_MESSAGES, formatUsdt, recoverCheckoutSigner, type Order } from "@quietpay/shared";
 import { createMockRelayer } from "@quietpay/shared/mock-server";
-import { FIXTURE_ORDER_ID } from "@quietpay/shared/fixtures";
+import { FIXTURE_ORDER_ID, FIXTURE_ROUTER } from "@quietpay/shared/fixtures";
 import "../src/element.js";
 import type { QuietpayCheckout } from "../src/element.js";
 
@@ -36,6 +36,8 @@ function mount(orderId: string, relayerUrl = base) {
   const el = document.createElement("quietpay-checkout") as QuietpayCheckout;
   el.setAttribute("order-id", orderId);
   el.setAttribute("relayer-url", relayerUrl);
+  // The mock relayer serves the official chain/token/domain but a placeholder router; tell the widget to expect it.
+  el.setAttribute("router", FIXTURE_ROUTER);
   document.body.appendChild(el);
   return el;
 }
@@ -52,6 +54,7 @@ describe("quietpay-checkout against the mock relayer", () => {
   it("runs the full flow: amount, pay, poll, receipt", async () => {
     const order = await createOrder("25000000");
     const el = mount(order.id);
+    el.setAttribute("expected-amount", "25");
     await until(() => !!el.shadowRoot?.querySelector("button"));
     expect(text(el)).toContain(`${formatUsdt("25000000")} USDT`);
     const payer = el.shadowRoot!.querySelector("[data-testid=payer]")!.textContent!;

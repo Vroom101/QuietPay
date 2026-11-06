@@ -1,8 +1,8 @@
 import { LitElement, css, html, nothing } from "lit";
-import { formatUsdt, type Order } from "@quietpay/shared";
+import { formatUsdt, parseUsdt, type Order } from "@quietpay/shared";
 import type { PrivateKeyAccount } from "viem/accounts";
-import { WidgetError, fetchOrder, pollOrder, relayPay, signCheckout } from "./client.js";
-import { getOrCreateAccount } from "./keystore.js";
+import { WidgetError, fetchOrder, pollOrder, relayPay, signCheckout, verifyCheckout, type ExpectedCheckout } from "./client.js";
+import { KeystoreError, getOrCreateAccount } from "./keystore.js";
 import { GENERIC_MESSAGE, TIMEOUT_MESSAGE, messageForCode } from "./messages.js";
 
 type View = "loading" | "ready" | "paying" | "settled" | "error";
@@ -30,6 +30,17 @@ export class QuietpayCheckout extends LitElement {
   static properties = {
     orderId: { type: String, attribute: "order-id" },
     relayerUrl: { type: String, attribute: "relayer-url" },
+    // Expected checkout values. Defaults are the qualifying chain 1874, the official USDT, the deployed router and
+    // the token's EIP-712 domain; override only for local test chains. They come from the host page, never the relayer.
+    chainId: { type: Number, attribute: "chain-id" },
+    token: { type: String, attribute: "token" },
+    router: { type: String, attribute: "router" },
+    domainName: { type: String, attribute: "domain-name" },
+    domainVersion: { type: String, attribute: "domain-version" },
+    /** Decimal USDT amount (e.g. "25.5") the shop expects; the order must match it exactly. */
+    expectedAmount: { type: String, attribute: "expected-amount" },
+    /** Optional merchant payout address the shop pins. */
+    expectedPayout: { type: String, attribute: "expected-payout" },
     view: { state: true },
     order: { state: true },
     account: { state: true },
@@ -40,6 +51,13 @@ export class QuietpayCheckout extends LitElement {
 
   declare orderId: string;
   declare relayerUrl: string;
+  declare chainId: number | undefined;
+  declare token: string | undefined;
+  declare router: string | undefined;
+  declare domainName: string | undefined;
+  declare domainVersion: string | undefined;
+  declare expectedAmount: string | undefined;
+  declare expectedPayout: string | undefined;
   declare view: View;
   declare order: Order | undefined;
   declare account: PrivateKeyAccount | undefined;
@@ -92,8 +110,35 @@ export class QuietpayCheckout extends LitElement {
     this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
   }
 
+  /** What the checkout must look like, from the host page's attributes/properties (never from the relayer). */
+  private expectedCheckout(): ExpectedCheckout {
+    const opt = (s: string | undefined | null) => (s === undefined || s === null || s === "" ? undefined : s);
+    let amount: bigint | undefined;
+    const rawAmount = opt(this.expectedAmount);
+    if (rawAmount !== undefined) {
+      try {
+        amount = parseUsdt(rawAmount.trim());
+      } catch {
+        throw new WidgetError("checkout_config_invalid", "expected-amount is not a valid amount");
+      }
+    }
+    if (this.chainId !== undefined && this.chainId !== null && !Number.isSafeInteger(this.chainId)) {
+      throw new WidgetError("checkout_config_invalid", "chain-id is not an integer");
+    }
+    return {
+      orderId: this.orderId,
+      chainId: this.chainId ?? undefined,
+      token: opt(this.token),
+      router: opt(this.router),
+      domainName: opt(this.domainName),
+      domainVersion: opt(this.domainVersion),
+      amount,
+      payout: opt(this.expectedPayout),
+    };
+  }
+
   private fail(err: unknown) {
-    const code = err instanceof WidgetError ? err.code : "unknown";
+    const code = err instanceof WidgetError ? err.code : err instanceof KeystoreError && err.code === "unreadable" ? "wallet_unreadable" : "unknown";
     this.errorCode = code;
     if (code === "timeout") this.errorMessage = TIMEOUT_MESSAGE;
     else if (code === "network" && err instanceof WidgetError) this.errorMessage = err.message;
@@ -146,8 +191,12 @@ export class QuietpayCheckout extends LitElement {
         this.showOrder(order);
         return;
       }
+      // Never sign what the relayer hands us without checking it: chain, token, router, domain, amount, fee, payout
+      // and the nonce recomputed locally. A refusal throws WidgetError("checkout_*") and nothing is signed.
+      const expected = this.expectedCheckout();
+      verifyCheckout(order, expected);
       this.step = "signing";
-      const req = await signCheckout(account, order);
+      const req = await signCheckout(account, order, undefined, { expected });
       this.step = "sending";
       await relayPay(this.relayerUrl, req);
       this.step = "confirming";

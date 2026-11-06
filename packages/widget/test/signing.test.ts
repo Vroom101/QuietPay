@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { buildCheckoutAuthorization, recoverCheckoutSigner } from "@quietpay/shared";
-import { orderCreated } from "@quietpay/shared/fixtures";
+import { FIXTURE_ROUTER, orderCreated } from "@quietpay/shared/fixtures";
 import { signCheckout } from "../src/client.js";
 
 describe("signCheckout", () => {
   const account = privateKeyToAccount(generatePrivateKey());
   const now = 1_800_000_100;
+  // Mock fixtures use a placeholder router; chain, token and domain already match the qualifying values.
+  const fixtureExpected = { router: FIXTURE_ROUTER };
 
   it("uses the 5s back-dated / 300s window", async () => {
-    const req = await signCheckout(account, orderCreated, now);
+    const req = await signCheckout(account, orderCreated, now, { expected: fixtureExpected });
     expect(req.validAfter).toBe(now - 5);
     expect(req.validBefore).toBe(now + 300);
     expect(req.orderId).toBe(orderCreated.id);
@@ -17,7 +19,7 @@ describe("signCheckout", () => {
   });
 
   it("signature matches the shared builder and recovers the payer", async () => {
-    const req = await signCheckout(account, orderCreated, now);
+    const req = await signCheckout(account, orderCreated, now, { expected: fixtureExpected });
     const c = orderCreated.checkout;
     const input = {
       from: account.address,
@@ -38,7 +40,7 @@ describe("signCheckout", () => {
   });
 
   it("does not recover the payer if the amount is tampered with", async () => {
-    const req = await signCheckout(account, orderCreated, now);
+    const req = await signCheckout(account, orderCreated, now, { expected: fixtureExpected });
     const c = orderCreated.checkout;
     const recovered = await recoverCheckoutSigner(
       {
