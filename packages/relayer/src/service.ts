@@ -154,7 +154,7 @@ export class RelayerService {
       status: "created",
       reference: req.reference ?? null,
       webhook_url: req.webhookUrl ?? null,
-      nonce: computePayNonce({ merchantId, orderId: id, payout: m.payout, value: amount }),
+      nonce: computePayNonce({ merchantId, orderId: id, payout: m.payout, value: amount, fee }),
       payer: null,
       tx_hash: null,
       signature: null,

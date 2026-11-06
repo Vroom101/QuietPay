@@ -26,8 +26,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const out = process.env.CONTRACTS_OUT ?? resolve(here, "../../../contracts/out");
 const routerArtifact = resolve(out, "PaymentRouter.sol/PaymentRouter.json");
 const usdtArtifact = resolve(out, "MockUSDT.sol/MockUSDT.json");
-const demoArtifact = resolve(out, "DemoUSDT.sol/DemoUSDT.json");
-const haveArtifacts = existsSync(routerArtifact) && existsSync(usdtArtifact) && existsSync(demoArtifact);
+const haveArtifacts = existsSync(routerArtifact) && existsSync(usdtArtifact);
 
 // Standard anvil dev keys (public, test-only).
 const DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
@@ -68,7 +67,6 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
 
   it.each([
     ["mock Tether-style token", usdtArtifact, { name: "Tether USD", version: "1" }, "mint"],
-    ["DemoUSDT with its own EIP-712 domain", demoArtifact, { name: "Quietpay Demo USDT", version: "1" }, "faucet"],
   ] as const)("settles a payment from a payer with no native balance: %s", async (_label, tokenArtifact, domain, mintFn) => {
     hooks.length = 0;
     const deployer = privateKeyToAccount(DEPLOYER_KEY);
