@@ -121,6 +121,7 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   const receipts = config.receiptDatabasePath ? new ReceiptStore(config.receiptDatabasePath,
     JSON.stringify([config.baseUrl.replace(/\/+$/, ""), config.merchantId.toLowerCase()])) : undefined;
   app.addHook("onClose", async () => receipts?.close());
+  app.get("/health", async () => ({ ok: true })); // platform health check; reveals nothing
   app.get("/api/checkout/methods", async () => ({ methods: [{ id: "usdt", name: "Tether USD", symbol: "USDT", simulated: false }] }));
   const state = loadState(config.stateFile);
   const paid = new Map<string, PaidRecord>(Object.entries(state.paid));
