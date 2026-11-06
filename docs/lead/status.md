@@ -25,3 +25,4 @@
 - 08:35 test(dashboard): exact six-decimal expectations (CI)
 - 09:36 live payment + refund done on qualifying router; demo-store 400 fix
 - 09:38 live indexer export (1 router row) saved; tag qualifying-v1
+- 11:10 verifier built; live sample verified OK against chain 1874; pen test rounds 1-3 fixed

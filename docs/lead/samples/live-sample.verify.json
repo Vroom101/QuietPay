@@ -1,0 +1,33 @@
+{
+  "csv": "../../docs/lead/samples/live-sample.csv",
+  "meta": "../../docs/lead/samples/live-sample.csv.meta.json",
+  "ok": true,
+  "verifier": "quietpay-verifier/0.1.0",
+  "chainId": 1874,
+  "router": "0xb9d475cdd817900b45c356169c6fdc379b942d82",
+  "usdt": "0xcedfb56113143d55b2358b8cfbb0deb5ad2f55a7",
+  "payTo": null,
+  "fromBlock": 12351795,
+  "toBlock": 12361516,
+  "confirmations": 12,
+  "headBlock": 12367035,
+  "finalizedBlock": 12367023,
+  "rowsInCsv": 1,
+  "rowsExpected": 1,
+  "eventsInRange": 4,
+  "eventSetHash": {
+    "sidecar": "49c6a5bb26787ed991d50f108aafd7b0a400da86ceef489c57e7c7c5caa9e926",
+    "recomputed": "49c6a5bb26787ed991d50f108aafd7b0a400da86ceef489c57e7c7c5caa9e926"
+  },
+  "checks": {
+    "structure": "pass",
+    "sidecar": "pass",
+    "finality": "pass",
+    "rows": "pass",
+    "event_set_hash": "pass",
+    "invariants": "pass",
+    "timestamps": "pass"
+  },
+  "issues": [],
+  "trust": "Re-derived from chain logs and block headers served by the RPC node; the node itself is trusted. A payto_transfer row is a deposit, not proof of an x402 API purchase."
+}

@@ -20,7 +20,7 @@ The demo uses no other token.
 | Hosted relayer | **Not done** (runs locally only) | `render.yaml` is ready |
 | Browser checkout | **Not run in a real browser** | widget and store pass their unit tests against the mock relayer |
 | Indexer and ledger export | **Done**, live-evidenced | `docs/lead/ledger.md` |
-| Independent ledger verifier | **Not built** | `docs/lead/ledger.md` |
+| Independent ledger verifier | **Done**: the live sample re-derives from chain data, RESULT OK | `docs/lead/verifier.md`, `docs/lead/samples/live-sample.verify.json` |
 
 ### Explorer proof
 
@@ -78,7 +78,7 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 - Tokens sent directly to the router are not supported and cannot be recovered.
 - The relayer is a trusted gas sponsor: it can censor or pause, but cannot redirect funds or exceed the fee cap.
 - The rate limiter is in memory; the gas loss budget is persisted.
-- Not done yet: independent ledger verifier, hosted relayer, real browser checkout against the deployed router, relayer refund API and dashboard refund button, x402 agent settlement.
+- Not done yet: hosted relayer, real browser checkout against the deployed router, relayer refund API and dashboard refund button, x402 agent settlement.
 
 ## Security
 
