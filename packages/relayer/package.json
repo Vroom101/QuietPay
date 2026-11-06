@@ -8,7 +8,9 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "preflight": "tsx src/preflight.ts"
+    "preflight": "tsx src/preflight.ts",
+    "backup": "tsx src/db-cli.ts backup",
+    "restore": "tsx src/db-cli.ts restore"
   },
   "dependencies": {
     "@quietpay/shared": "workspace:*",

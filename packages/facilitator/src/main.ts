@@ -5,6 +5,8 @@ import {
   buildServer,
   preflight,
   WebhookWorker,
+  acquireInstanceLock,
+  recordDbIdentity,
 } from "@quietpay/relayer/core";
 import { loadConfig } from "./config.js";
 import { FacilitatorService } from "./service.js";
@@ -12,8 +14,11 @@ import { registerFacilitator } from "./server.js";
 const cfg = loadConfig(),
   log = (message: string, details?: Record<string, unknown>) =>
     console.log(JSON.stringify({ message, ...details }));
+acquireInstanceLock(cfg.relay.databasePath);
 log("chain preflight", await preflight(cfg.relay));
-const db = new Db(cfg.relay.databasePath),
+const db = new Db(cfg.relay.databasePath);
+recordDbIdentity(db, { chainId: cfg.relay.chainId, router: cfg.relay.router });
+const
   chain = makeChain({
     rpcUrl: cfg.relay.rpcUrl,
     chainId: cfg.relay.chainId,
