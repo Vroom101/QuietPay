@@ -20,6 +20,8 @@
     "@types/node": "^20.14.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0",
-    "@quietpay/indexer": "workspace:*"
+    "@quietpay/indexer": "workspace:*",
+    "@quietpay/agent-client": "workspace:*",
+    "@quietpay/agent-demo": "workspace:*"
   }
 }

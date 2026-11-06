@@ -28,4 +28,10 @@
 - One combined relayer/facilitator shares the wallet nonce manager, persisted gas budget, sender lock and pause controls.
 - SDK paywall middleware guards two demo API resources and uses exclusive delivery leases with at most one failed-delivery retry.
 - Anvil integration proves paid HTTP requests, duplicate rejection, concurrent checkout/agent wallet nonces and verified ledger export.
-- Official-client interoperability, the separate agent client/demo UI, hosted services and live testnet settlement remain pending.
+- Official-client interoperability, hosted services and live testnet settlement remain pending. The scripted agent client/demo is implemented below; a browser agent UI is not included.
+
+## Agent client and scripted demo: implemented locally
+- `packages/agent-client` negotiates x402 challenges, pins network/token/domain/recipient/origin, reserves a per-call/session budget before signing and records public settlement receipts.
+- Pending/unknown payments reuse the same authorization with `retry(id)`; concurrent requests cannot exceed the session budget or sign twice for an unresolved resource.
+- `apps/agent-demo` buys a quote and signal, prints receipt/explorer links and checks successful RPC receipts plus zero payer native balance.
+- Sessions and pending authorizations are in memory; crash recovery and durable shared agent budgets are not implemented. Live testnet proof and a browser demo UI remain pending.

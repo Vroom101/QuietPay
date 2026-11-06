@@ -137,3 +137,12 @@ Whitechain settlement are unverified. Dockerfiles and hosting configuration were
 but containers were not built or deployed during this implementation. The separate agent
 client/demo UI remains pending. See packages/facilitator/README.md for operation and the
 network-delivery acknowledgement limitation.
+
+## Agent client and scripted demo checkpoint
+
+- Added `packages/agent-client`: pinned chain/token/EIP-712 domain, exact origin/recipient allowlists, per-call and session limits, atomic concurrent reservations, public receipt logs and explicit same-payload retries.
+- Added `apps/agent-demo`: scripted quote then signal purchases, bounded pending/unknown retries, transaction/explorer output, RPC receipt checks and zero-native-balance checks.
+- New tests: 22 client cases and 2 scripted-demo cases. The existing facilitator Anvil test now additionally runs the actual client and `runDemo()` over HTTP: two distinct transactions, 30,000 additional token base units, zero payer native balance and all five agent transfers reconciled by the independent ledger verifier.
+- `pnpm -r test`: **235 passed**, including all three Anvil integrations, none skipped. Tests ran under Node 20 with the local Foundry 1.9.0 Anvil binary.
+- `pnpm -r typecheck` and `pnpm -r build`: passed. No Solidity changes in this checkpoint; the previous 37-test contract result is unchanged and was not rerun.
+- Client sessions, budgets and signed authorizations are in memory; process-crash recovery is not implemented. Deployment, live testnet explorer evidence, official-client interoperability and a browser agent UI remain pending. Dockerfiles were updated for workspace manifests but were not built or deployed.

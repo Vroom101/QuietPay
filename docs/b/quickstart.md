@@ -105,3 +105,7 @@ Run the combined facilitator with the existing relayer wallet/database and authe
 its calls with the merchant API key. See [facilitator operations](../../packages/facilitator/README.md)
 and [paid API usage](../../apps/paid-api/README.md). Resource execution follows confirmed
 settlement; timeouts must retry the same signed payload rather than authorizing twice.
+
+## Paying agent
+
+After starting the combined facilitator and paid API, follow [the agent demo setup](../../apps/agent-demo/README.md). Set a dedicated zero-native-balance test payer key, the API origin, recipient, RPC and explorer URL, then run `pnpm --filter @quietpay/agent-demo start`. It buys a quote and signal with a default total authorization budget of 30,000 base units and prints two public payment receipts. Keep the same process alive to retry uncertain payments; sessions are in memory.

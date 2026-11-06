@@ -65,3 +65,5 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 - Gasless partial/full refunds work locally. The merchant refundSigner supplies the full refund amount; the operator absorbs refund gas.
 - Refunds require this branch's router build; an older non-upgradeable deployment must be replaced and its addresses synchronized.
 - Ledger/export/verifier work locally; live exports need the deployed router and its deployment block. x402 facilitator/paid API are implemented locally; official-client interoperability and live settlement remain unverified.
+
+The [agent client](packages/agent-client/README.md) and [scripted demo](apps/agent-demo/README.md) now exercise the paid API with per-call/session spending limits, recipient/origin allowlists and same-authorization retries. Sessions are in memory; live testnet proof remains pending.

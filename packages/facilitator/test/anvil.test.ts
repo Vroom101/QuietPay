@@ -1,3 +1,5 @@
+import { createAgent } from "@quietpay/agent-client";
+import { runDemo } from "@quietpay/agent-demo";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
@@ -371,13 +373,58 @@ describe.skipIf(!ready)(
             functionName: "balanceOf",
             args: [address],
           }) as Promise<bigint>;
-        expect(await balance(payTo)).toBe(40000n);
+        // Exercise the actual client and scripted agent over HTTP against the real chain.
+        const agent = createAgent({
+          signer: payer,
+          chainId: 31337,
+          asset: token,
+          domainName: "Tether USD",
+          domainVersion: "1",
+          allowedOrigins: [apiUrl],
+          allowedPayTo: [payTo],
+          perCallLimit: 20000n,
+          sessionBudget: 30000n,
+          explorerUrl: "https://example.invalid",
+        });
+        // The facilitator waits for two confirmations. Mine as Anvil normally mines only on txs.
+        let mining = false;
+        const ticker = setInterval(() => {
+          if (mining) return;
+          mining = true;
+          void rpcCall("evm_mine").finally(() => {
+            mining = false;
+          });
+        }, 100);
+        try {
+          const demo = await runDemo(agent, apiUrl, { retryDelayMs: 25 });
+          expect(demo).toHaveLength(2);
+          expect(agent.reservedAmount).toBe(30000n);
+          const hashes = new Set(
+            demo.map((entry) => entry.payment.transaction),
+          );
+          expect(hashes.size).toBe(2);
+          for (const entry of demo) {
+            expect(entry.payment.explorerUrl).toContain(
+              `/tx/${entry.payment.transaction}`,
+            );
+            expect(
+              (
+                await pub.getTransactionReceipt({
+                  hash: entry.payment.transaction!,
+                })
+              ).status,
+            ).toBe("success");
+          }
+        } finally {
+          clearInterval(ticker);
+        }
+        expect(await balance(payTo)).toBe(70000n);
         expect(await balance(payout)).toBe(950000n);
-        expect(await balance(payer.address)).toBe(98960000n);
+        expect(await balance(payer.address)).toBe(98930000n);
         expect(await pub.getBalance({ address: payer.address })).toBe(0n);
         expect(
           db.raw.prepare("SELECT COUNT(*) n FROM x402_payments").get(),
-        ).toEqual({ n: 3 });
+        ).toEqual({ n: 5 });
         expect(db.attempts(created.id)).toHaveLength(1);
         expect(db.spentSince(0)).toBeGreaterThan(0n);
         await rpcCall("evm_mine");
@@ -393,7 +440,7 @@ describe.skipIf(!ready)(
           indexer = new Indexer(ledgerDb, makeReader(rpc, scope), scope);
         const exported = await indexer.export({ merchantId: merchant });
         const rows = readCsv(exported.csv);
-        expect(rows.filter((r) => r.source === "x402")).toHaveLength(3);
+        expect(rows.filter((r) => r.source === "x402")).toHaveLength(5);
         expect(rows.filter((r) => r.source === "router")).toHaveLength(1);
         expect(
           (
