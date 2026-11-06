@@ -194,9 +194,13 @@ export function buildServer(svc: RelayerService): FastifyInstance {
     return svc.relayPay(body, { ip: ipOf(req) });
   });
 
+  // refund-context does RPC reads, so a valid key is limited per client (/64 for IPv6) and per merchant.
+  const refundCtxIpLimiter = new RateLimiter(60, 60_000);
+  const refundCtxMerchantLimiter = new RateLimiter(60, 60_000);
   app.get<{ Params: { id: string } }>("/v1/orders/:id/refund-context", async (req, reply) => {
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
+    if (!refundCtxIpLimiter.allow(clientKey(ipOf(req))) || !refundCtxMerchantLimiter.allow(merchant.toLowerCase())) throw new QuietpayError("rate_limited");
     return svc.refunds.context(merchant as `0x${string}`, req.params.id as `0x${string}`);
   });
   app.get<{ Params: { id: string } }>("/v1/orders/:id/refunds", async (req, reply) => {
