@@ -22,6 +22,8 @@ export type IssueCode =
   | "empty_line"
   | "bad_cell_count"
   | "quoted_cell"
+  | "formula_cell"
+  | "control_char"
   | "bad_date"
   | "bad_source"
   | "bad_status"
