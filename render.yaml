@@ -28,6 +28,7 @@ services:
       - { key: SETTLE_CONFIRMATIONS, value: "1" }
       - { key: RELAY_FEE_USDT, value: "0.05" }
       - { key: RATE_LIMIT_PER_MINUTE, value: "20" }
+      - { key: ORDERS_PER_MINUTE_PER_MERCHANT, value: "1200" }
       - { key: TOKEN_DOMAIN_NAME, value: "Tether USD" }
       - { key: TOKEN_DOMAIN_VERSION, value: "1" }
       - { key: PORT, value: "8787" }

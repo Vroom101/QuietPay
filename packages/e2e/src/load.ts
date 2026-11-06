@@ -36,6 +36,7 @@ try {
     try { await newOrder(s, 1_000_000n); return 201; } catch (e) { return (e as { status?: number }).status ?? 0; }
   });
 
+  if (process.env.LOAD_SKIP_PAY) { await s.stop(); process.exit(0); }
   console.log('(waiting 65 s for the per-IP order limiter window to reset)');
   await new Promise((r) => setTimeout(r, 65_000));
   // End-to-end payments: N distinct payers pay N distinct orders concurrently; time until every order is settled.

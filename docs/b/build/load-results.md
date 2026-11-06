@@ -14,3 +14,7 @@ Findings
 2. The health route returns 429 after about 60 calls from one IP. A load balancer or monitor probing often from one address would be throttled.
 3. On the real chain throughput is bounded by one relayer key: transactions go out in nonce order, and each needs a block. Measured 15 per second is with instant blocks and does not apply to the testnet.
 4. One process and one SQLite file per relayer key (a deployment invariant): scale up, not out.
+
+## After the fix (same machine, same method)
+Valid API keys are now limited per merchant (`ORDERS_PER_MINUTE_PER_MERCHANT`, default 1200) instead of per IP. Invalid or missing keys keep the per-IP 120/min throttle and the failed-auth throttle. POST /v1/orders from one IP: 1,084 created in 4 s (about 270/s; before: 119 created, the rest 429). Reads: about 4,300 req/s (p99 39 ms). Health stays at 60 per minute per IP (monitors should poll at most once per second). The same cap still applies once per merchant per minute.
+Tests: `packages/relayer/test/build-load-limits.test.ts` (5). One earlier test (`pentest-round10` R10-A1) now raises the cap in its setup because its 10,000-request fill is otherwise throttled; its assertion is unchanged.
