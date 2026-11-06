@@ -1,0 +1,1 @@
+- W6 step 1: read-only GET /v1/x402/payments/:payer/:nonce + tests
