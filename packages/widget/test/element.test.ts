@@ -6,7 +6,7 @@ import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ERROR_CODES, ERROR_USER_MESSAGES, formatUsdt, recoverCheckoutSigner, type Order } from "@quietpay/shared";
 import { createMockRelayer } from "@quietpay/shared/mock-server";
-import { FIXTURE_ORDER_ID } from "@quietpay/shared/fixtures";
+import { FIXTURE_ORDER_ID, FIXTURE_ROUTER, makeOrder } from "@quietpay/shared/fixtures";
 import "../src/element.js";
 import type { QuietpayCheckout } from "../src/element.js";
 
@@ -36,6 +36,7 @@ function mount(orderId: string, relayerUrl = base) {
   const el = document.createElement("quietpay-checkout") as QuietpayCheckout;
   el.setAttribute("order-id", orderId);
   el.setAttribute("relayer-url", relayerUrl);
+  el.setAttribute("expected-router", FIXTURE_ROUTER);
   document.body.appendChild(el);
   return el;
 }
@@ -113,6 +114,26 @@ describe("quietpay-checkout against the mock relayer", () => {
     await until(() => text(el).includes("Payment complete"));
     expect(el.shadowRoot!.querySelector("button")).toBeNull();
     el.remove();
+  });
+
+  it("does not submit payment if the refreshed order changes the reviewed price", async () => {
+    const reviewed = makeOrder();
+    const changed = makeOrder({ amount: "99000000" });
+    let current = reviewed;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify(current)),
+    );
+    const el = mount(reviewed.id);
+    try {
+      await until(() => el.view === "ready");
+      current = changed;
+      await el.pay();
+      expect(el.errorCode).toBe("payment_details_changed");
+      expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith(`/v1/orders/${reviewed.id}`))).toBe(true);
+    } finally {
+      el.remove();
+      fetchMock.mockRestore();
+    }
   });
 
   it("maps relayer failures at pay time to plain words (simulation_failed)", async () => {

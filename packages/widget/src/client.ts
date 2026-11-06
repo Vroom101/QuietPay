@@ -3,6 +3,9 @@ import {
   GetOrderResponse,
   RelayPayResponse,
   buildCheckoutAuthorization,
+  computePayNonce,
+  deployments,
+  tokenDomain,
   type Order,
   type RelayPayRequest,
 } from "@quietpay/shared";
@@ -47,6 +50,9 @@ export async function fetchOrder(relayerUrl: string, orderId: string): Promise<O
   const body = await request(`${trim(relayerUrl)}/v1/orders/${orderId}`);
   const parsed = GetOrderResponse.safeParse(body);
   if (!parsed.success) throw new WidgetError("unknown", "malformed order");
+  if (parsed.data.id.toLowerCase() !== orderId.toLowerCase()) {
+    throw new WidgetError("payment_details_changed", "unexpected order ID");
+  }
   return parsed.data;
 }
 
@@ -61,20 +67,60 @@ export async function relayPay(relayerUrl: string, req: RelayPayRequest) {
   return parsed.data;
 }
 
+interface CheckoutExpectations {
+  router?: string;
+  amount?: string;
+  reviewedOrder?: Order;
+}
+
 /** Builds and signs the single ReceiveWithAuthorization the payer approves. */
 export async function signCheckout(
   account: PrivateKeyAccount,
   order: Order,
   nowSeconds: number = Math.floor(Date.now() / 1000),
+  expected: CheckoutExpectations = {},
 ): Promise<RelayPayRequest> {
+  const domain = tokenDomain();
+  const router = expected.router ?? deployments[String(domain.chainId)]?.router;
+  const c = order.checkout;
+  const reviewed = expected.reviewedOrder;
+  if (
+    !router || c.router.toLowerCase() !== router.toLowerCase() ||
+    c.chainId !== domain.chainId || c.token.toLowerCase() !== domain.verifyingContract.toLowerCase() ||
+    c.domain.name !== domain.name || c.domain.version !== domain.version ||
+    c.value !== order.amount || order.amount !== (expected.amount ?? reviewed?.amount ?? order.amount) ||
+    c.payout.toLowerCase() !== order.payout.toLowerCase() ||
+    (reviewed && (
+      order.id.toLowerCase() !== reviewed.id.toLowerCase() ||
+      order.amount !== reviewed.amount ||
+      order.merchantId.toLowerCase() !== reviewed.merchantId.toLowerCase() ||
+      order.payout.toLowerCase() !== reviewed.payout.toLowerCase()
+    ))
+  ) {
+    throw new WidgetError("payment_details_changed", "checkout details differ from the expected order");
+  }
+
+  const value = BigInt(c.value);
+  if (value <= 0n || value >= 2n ** 256n) {
+    throw new WidgetError("payment_details_changed", "invalid checkout amount");
+  }
+  const nonce = computePayNonce({
+    merchantId: order.merchantId as `0x${string}`,
+    orderId: order.id as `0x${string}`,
+    payout: order.payout as `0x${string}`,
+    value,
+  });
+  if (c.nonce.toLowerCase() !== nonce.toLowerCase()) {
+    throw new WidgetError("payment_details_changed", "unexpected checkout nonce");
+  }
+
   const validAfter = nowSeconds - 5;
   const validBefore = nowSeconds + 300;
-  const c = order.checkout;
   const td = buildCheckoutAuthorization({
     from: account.address,
     router: c.router as `0x${string}`,
-    value: BigInt(c.value),
-    nonce: c.nonce as `0x${string}`,
+    value,
+    nonce,
     validAfter: BigInt(validAfter),
     validBefore: BigInt(validBefore),
     chainId: c.chainId,

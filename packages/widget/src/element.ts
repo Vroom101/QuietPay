@@ -19,6 +19,8 @@ export class QuietpayCheckout extends LitElement {
   static properties = {
     orderId: { type: String, attribute: "order-id" },
     relayerUrl: { type: String, attribute: "relayer-url" },
+    expectedRouter: { type: String, attribute: "expected-router" },
+    expectedAmount: { type: String, attribute: "expected-amount" },
     view: { state: true },
     order: { state: true },
     account: { state: true },
@@ -29,6 +31,8 @@ export class QuietpayCheckout extends LitElement {
 
   declare orderId: string;
   declare relayerUrl: string;
+  declare expectedRouter: string | undefined;
+  declare expectedAmount: string | undefined;
   declare view: View;
   declare order: Order | undefined;
   declare account: PrivateKeyAccount | undefined;
@@ -85,6 +89,7 @@ export class QuietpayCheckout extends LitElement {
     const code = err instanceof WidgetError ? err.code : "unknown";
     this.errorCode = code;
     if (code === "timeout") this.errorMessage = TIMEOUT_MESSAGE;
+    else if (code === "payment_details_changed") this.errorMessage = "We couldn't verify the payment details. Check your order before trying again.";
     else if (code === "network" && err instanceof WidgetError) this.errorMessage = err.message;
     else this.errorMessage = messageForCode(code);
     this.view = "error";
@@ -117,18 +122,20 @@ export class QuietpayCheckout extends LitElement {
   }
 
   async pay() {
-    if (this.view === "paying") return;
+    const reviewedOrder = this.order;
+    if (this.view !== "ready" || !reviewedOrder) return;
+    const { orderId, relayerUrl } = this;
+    const expected = { router: this.expectedRouter, amount: this.expectedAmount, reviewedOrder };
     try {
       this.view = "paying";
       this.step = "sending";
       const account = this.account ?? (await getOrCreateAccount());
       this.account = account;
-      // Fresh copy of the order so the amount we sign is what the relayer holds now.
-      const order = await fetchOrder(this.relayerUrl, this.orderId);
-      this.order = order;
+      // Recheck the latest details against the order the customer saw.
+      const order = await fetchOrder(relayerUrl, orderId);
       if (order.status === "pending") {
         this.step = "confirming";
-        this.showOrder(await pollOrder(this.relayerUrl, this.orderId, { onUpdate: (o) => (this.order = o) }));
+        this.showOrder(await pollOrder(relayerUrl, orderId, { onUpdate: (o) => (this.order = o) }));
         return;
       }
       if (order.status !== "created") {
@@ -136,11 +143,11 @@ export class QuietpayCheckout extends LitElement {
         return;
       }
       this.step = "signing";
-      const req = await signCheckout(account, order);
+      const req = await signCheckout(account, order, undefined, expected);
       this.step = "sending";
-      await relayPay(this.relayerUrl, req);
+      await relayPay(relayerUrl, req);
       this.step = "confirming";
-      const final = await pollOrder(this.relayerUrl, this.orderId, {
+      const final = await pollOrder(relayerUrl, orderId, {
         onUpdate: (o) => (this.order = o),
       });
       this.showOrder(final);

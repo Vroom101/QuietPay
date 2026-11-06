@@ -1,10 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { QuietpayCheckout } from "@quietpay/widget/react";
+import { parseUsdt } from "@quietpay/shared";
+import { FIXTURE_ROUTER } from "@quietpay/shared/fixtures";
 import { useCart } from "../cart";
 import { PRODUCTS } from "../products";
 
-const RELAYER_URL = import.meta.env.VITE_RELAYER_URL ?? "http://localhost:8787";
+const MOCK_RELAYER_URL = "http://localhost:8787";
+const RELAYER_URL = import.meta.env.VITE_RELAYER_URL ?? MOCK_RELAYER_URL;
+const EXPECTED_ROUTER = import.meta.env.VITE_CHECKOUT_ROUTER ||
+  (RELAYER_URL === MOCK_RELAYER_URL ? FIXTURE_ROUTER : undefined);
 
 export function Checkout() {
   const { items, total, remove, clear, count } = useCart();
@@ -68,6 +73,8 @@ export function Checkout() {
           <QuietpayCheckout
             orderId={orderId}
             relayerUrl={RELAYER_URL}
+            expectedRouter={EXPECTED_ROUTER}
+            expectedAmount={parseUsdt(total).toString()}
             onSettled={() => {
               clear();
               nav(`/success/${orderId}`);

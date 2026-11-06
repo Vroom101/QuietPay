@@ -1,15 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { buildCheckoutAuthorization, recoverCheckoutSigner } from "@quietpay/shared";
-import { orderCreated } from "@quietpay/shared/fixtures";
+import { FIXTURE_ROUTER, makeOrder, orderCreated } from "@quietpay/shared/fixtures";
 import { signCheckout } from "../src/client.js";
 
 describe("signCheckout", () => {
   const account = privateKeyToAccount(generatePrivateKey());
   const now = 1_800_000_100;
+  const expected = { router: FIXTURE_ROUTER, reviewedOrder: orderCreated };
 
   it("uses the 5s back-dated / 300s window", async () => {
-    const req = await signCheckout(account, orderCreated, now);
+    const req = await signCheckout(account, orderCreated, now, expected);
     expect(req.validAfter).toBe(now - 5);
     expect(req.validBefore).toBe(now + 300);
     expect(req.orderId).toBe(orderCreated.id);
@@ -17,7 +18,7 @@ describe("signCheckout", () => {
   });
 
   it("signature matches the shared builder and recovers the payer", async () => {
-    const req = await signCheckout(account, orderCreated, now);
+    const req = await signCheckout(account, orderCreated, now, expected);
     const c = orderCreated.checkout;
     const input = {
       from: account.address,
@@ -32,13 +33,13 @@ describe("signCheckout", () => {
       domainVersion: c.domain.version,
     };
     // Same bytes as signing the shared builder's output directly.
-    const expected = await account.signTypedData(buildCheckoutAuthorization(input));
-    expect(req.signature as `0x${string}`).toBe(expected);
+    const expectedSignature = await account.signTypedData(buildCheckoutAuthorization(input));
+    expect(req.signature as `0x${string}`).toBe(expectedSignature);
     expect(await recoverCheckoutSigner(input, req.signature as `0x${string}`)).toBe(account.address);
   });
 
   it("does not recover the payer if the amount is tampered with", async () => {
-    const req = await signCheckout(account, orderCreated, now);
+    const req = await signCheckout(account, orderCreated, now, expected);
     const c = orderCreated.checkout;
     const recovered = await recoverCheckoutSigner(
       {
@@ -52,5 +53,23 @@ describe("signCheckout", () => {
       req.signature as `0x${string}`,
     );
     expect(recovered).not.toBe(account.address);
+  });
+
+  const checkout = orderCreated.checkout;
+  const otherAddress = "0x" + "99".repeat(20);
+  it.each([
+    ["router", { ...orderCreated, checkout: { ...checkout, router: otherAddress } }],
+    ["token", { ...orderCreated, checkout: { ...checkout, token: otherAddress } }],
+    ["chain", { ...orderCreated, checkout: { ...checkout, chainId: 1 } }],
+    ["domain name", { ...orderCreated, checkout: { ...checkout, domain: { ...checkout.domain, name: "Other" } } }],
+    ["domain version", { ...orderCreated, checkout: { ...checkout, domain: { ...checkout.domain, version: "99" } } }],
+    ["authorization value", { ...orderCreated, checkout: { ...checkout, value: "1" } }],
+    ["amount with a valid nonce", makeOrder({ amount: "1" })],
+    ["nonce", { ...orderCreated, checkout: { ...checkout, nonce: "0x" + "99".repeat(32) } }],
+  ] as const)("rejects a changed %s before calling the signer", async (_field, order) => {
+    const signTypedData = vi.fn(async () => { throw new Error("signer should not be called"); });
+    await expect(signCheckout({ ...account, signTypedData }, order, now, expected))
+      .rejects.toMatchObject({ code: "payment_details_changed" });
+    expect(signTypedData).not.toHaveBeenCalled();
   });
 });
