@@ -4,13 +4,17 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import type * as SdkApi from "@quietpay/merchant-sdk";
-import { formatUsdt } from "@quietpay/shared";
+import { formatUsdt, ORDER_TOKEN_HEADER } from "@quietpay/shared";
 import { CartError, priceCart } from "./catalog.js";
+import { registerCustomerRefunds, setPrivateHeaders, type CustomerRefundConfig } from "./customer-refund-routes.js";
+import { REDACTED_HEADERS } from "./customer-refunds.js";
 
 /** The frozen merchant-SDK surface this server relies on. */
 export type MerchantSdk = Pick<typeof SdkApi, "createOrder" | "getOrder" | "verifyWebhook"> & Partial<RefundSdk>;
 
-export interface StoreConfig {
+export interface StoreConfig extends Partial<Pick<CustomerRefundConfig, "customerRefundDatabasePath" | "customerRefundRateLimit" | "now">> {
+  /** Enable the Fastify logger; the order token and Authorization headers are always redacted. */
+  logger?: boolean | { stream?: NodeJS.WritableStream; level?: string };
   refunds?: MerchantRefundConfig;
   receiptDatabasePath?: string;
   baseUrl: string;
@@ -115,7 +119,11 @@ function loadState(file: string | undefined): PersistedState {
 }
 
 export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
-  const app: FastifyInstance = Fastify({ logger: false });
+  const app: FastifyInstance = Fastify({
+    logger: config.logger
+      ? { level: "info", redact: { paths: REDACTED_HEADERS, censor: "[redacted]" }, ...(typeof config.logger === "object" ? config.logger : {}) }
+      : false,
+  });
   const receipts = config.receiptDatabasePath ? new ReceiptStore(config.receiptDatabasePath,
     JSON.stringify([config.baseUrl.replace(/\/+$/, ""), config.merchantId.toLowerCase()])) : undefined;
   app.addHook("onClose", async () => receipts?.close());
@@ -144,6 +152,8 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
     writeFileSync(tmp, JSON.stringify(out));
     renameSync(tmp, config.stateFile);
   }
+
+  const customer = registerCustomerRefunds(app, sdk, config);
 
   app.post("/api/checkout", async (req, reply) => {
     // Every accepted call creates a relayer order under the store's API key, so the public endpoint is per-IP limited.
@@ -179,6 +189,10 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
         return reply.code(502).send({ error: "could not start checkout" });
       }
       // The widget pins these too (expected-amount / expected-payout) and refuses to sign anything else.
+      // The order status token is shown once; only its sha256 is kept. Never cache this response.
+      setPrivateHeaders(reply);
+      // It travels in a response header so the existing JSON body shape stays exactly as it was.
+      reply.header(ORDER_TOKEN_HEADER, customer.issueToken(order));
       return { orderId: order.id, amount: formatUsdt(amount), payout };
     } catch (e) {
       app.log.error(e);
@@ -189,7 +203,7 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   // Webhooks need the exact raw body for signature verification, so parse JSON as a string here only.
   app.register(async (hooks) => {
     hooks.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => done(null, body));
-    hooks.post("/webhooks/quietpay", async (req, reply) => {
+    hooks.post("/webhooks/quietpay", { bodyLimit: 64 * 1024 }, async (req, reply) => {
       const header = req.headers["quietpay-signature"];
       if (typeof header !== "string") return reply.code(400).send({ error: "missing signature" });
       let event;
@@ -204,6 +218,11 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
       // store, so reject events addressed to another merchant.
       if (event.data.merchantId.toLowerCase() !== merchantId) {
         return reply.code(400).send({ error: "event is for a different merchant" });
+      }
+
+      // A refund for an order this store never created is refused and nothing is stored.
+      if (event.type === "payment.refunded" && !customer.hasOrder(event.data.orderId)) {
+        return reply.code(400).send({ error: "unknown order" });
       }
 
       if (receipts?.hasEvent(event.id) || seenEvents.has(event.id)) return { received: true, duplicate: true };
@@ -228,6 +247,13 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
           ["settled", "partially_refunded", "refunded"].includes(order.status) &&
           order.amount === event.data.amount;
         if (confirmed) {
+          try {
+            customer.onSettled(orderId, order.amount, order.status);
+          } catch (e) {
+            app.log.error(e);
+            seenEvents.delete(event.id);
+            return reply.code(500).send({ error: "could not record settlement" });
+          }
           paid.set(orderId.toLowerCase(), {
             orderId: order.id,
             amount: order.amount,
@@ -240,14 +266,53 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
           app.log.warn({ eventId: event.id, orderId }, "payment.settled webhook did not match the relayer's order; ignored");
         }
       }
+      if (event.type === "payment.refunded") {
+        const orderId = event.data.orderId;
+        let order;
+        try {
+          // Same rule as settlement: never trust the body, re-read the order from the relayer first.
+          order = await sdk.getOrder({ baseUrl: config.baseUrl, orderId: orderId as `0x${string}` });
+        } catch (e) {
+          app.log.error(e);
+          seenEvents.delete(event.id);
+          return reply.code(502).send({ error: "could not confirm order with the relayer" });
+        }
+        const reported = order.refundedAmount ?? order.refunded;
+        const confirmed =
+          order.id.toLowerCase() === orderId.toLowerCase() &&
+          order.merchantId.toLowerCase() === merchantId &&
+          ["settled", "partially_refunded", "refunded"].includes(order.status) &&
+          order.amount === event.data.amount &&
+          (reported === undefined || BigInt(reported) >= BigInt(event.data.totalRefunded ?? "0"));
+        if (confirmed) {
+          let outcome;
+          try {
+            outcome = customer.onRefundEvent(event, req.body as string);
+          } catch (e) {
+            app.log.error(e);
+            seenEvents.delete(event.id);
+            return reply.code(500).send({ error: "could not record refund" });
+          }
+          if (outcome === "rejected") {
+            app.log.warn({ eventId: event.id, orderId }, "payment.refunded webhook was inconsistent with the stored order; rejected");
+            seenEvents.delete(event.id);
+            return reply.code(400).send({ error: "invalid refund event" });
+          }
+        } else {
+          app.log.warn({ eventId: event.id, orderId }, "payment.refunded webhook did not match the relayer's order; ignored");
+        }
+      }
       receipts?.record(event.id, paid.get(event.data.orderId.toLowerCase()));
       persist();
       return { received: true };
     });
   });
 
-  app.get("/api/orders/:id/paid", async (req) => {
+  app.get("/api/orders/:id/paid", async (req, reply) => {
     const id = (req.params as { id: string }).id.toLowerCase();
+    // Orders created with a status token need it; without a valid one the answer is exactly the unknown-order answer.
+    // Legacy orders (no token on file) keep the old behaviour.
+    if (customer.checkPaidAccess(req, reply, id) === "denied") return { paid: false };
     const rec = receipts?.get(id) ?? paid.get(id);
     return rec ? { paid: true, ...rec } : { paid: false };
   });
