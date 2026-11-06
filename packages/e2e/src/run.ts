@@ -21,7 +21,8 @@ process.on("SIGINT", () => { killAllTracked(); process.exit(130); });
 async function main(): Promise<number> {
   if (has("live")) {
     const { runLive } = await import("./live.js");
-    return runLive({ evidencePath: resolve(repoRoot, "docs/b/build/live-evidence.md"), confirmWrite: !has("no-evidence") });
+    await runLive({ evidencePath: resolve(repoRoot, "docs/b/build/live-evidence.md"), confirmWrite: !has("no-evidence") });
+    return 0;
   }
   const only = flag("only")?.split(",");
   const list = [...scenarios, ...(has("no-attacks") ? [] : attacks)].filter((s) => !only || only.includes(s.id));
