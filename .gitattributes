@@ -1,0 +1,3 @@
+# The ledger CSV is specified with LF endings; keep them on every platform.
+*.csv text eol=lf
+*.csv.meta.json text eol=lf
