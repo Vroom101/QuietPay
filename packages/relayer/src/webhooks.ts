@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { signWebhook, WEBHOOK_SIGNATURE_HEADER } from "@quietpay/shared/webhook";
-import { DELIVERY_BACKOFF_SECONDS, MAX_DELIVERY_ATTEMPTS, type Db } from "./db.js";
+import { DELIVERY_BACKOFF_SECONDS, MAX_DELIVERY_ATTEMPTS, type Db, type DeliveryRow } from "./db.js";
 
 // ------------------------------------------------------------------ per-merchant secrets
 
@@ -192,6 +192,12 @@ export async function deliveryTargetProblem(url: string, allowPrivate: boolean, 
 
 // ------------------------------------------------------------------ worker
 
+const SCAN_LIMIT = 200;
+const BATCH_LIMIT = 20;
+const MAX_CONCURRENCY = 8;
+const PER_MERCHANT_CAP = 3;
+const PER_HOST_CAP = 3;
+
 type FetchLike = (
   url: string,
   init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal; redirect?: "manual" | "error" | "follow" },
@@ -261,48 +267,83 @@ export class WebhookWorker {
     }
   }
 
-  private async runTick(): Promise<number> {
-    const due = this.db.dueDeliveries(this.now());
-    let delivered = 0;
-    for (const d of due) {
-      let ok = false;
-      const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), this.timeoutMs);
-      try {
-        const problem = await deliveryTargetProblem(d.url, this.allowPrivate, this.lookup);
-        const merchantId = this.merchantOf(d.order_id, d.body);
-        if (problem) {
-          this.log("webhook target refused", { id: d.id, reason: problem });
-        } else if (!merchantId) {
-          this.log("webhook has no merchant", { id: d.id });
-        } else {
-          // Abort signal for well-behaved fetches, plus a race so a fetch that ignores it cannot stall the worker.
-          const res = await withTimeout(this.doFetch(d.url, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              [WEBHOOK_SIGNATURE_HEADER]: signWebhook(merchantWebhookSecret(this.masterSecret, merchantId), d.body, this.now()),
-            },
-            body: d.body,
-            signal: ctl.signal,
-            redirect: "manual",
-          }), this.timeoutMs);
-          ok = res.status >= 200 && res.status < 300;
-        }
-      } catch (e) {
-        this.log("webhook delivery error", { id: d.id, err: String((e as Error).message).slice(0, 200) });
-      } finally {
-        clearTimeout(t);
-      }
-      if (ok) {
-        this.db.markDelivered(d.id, this.now());
-        delivered += 1;
-      } else {
-        const idx = Math.min(d.attempts, DELIVERY_BACKOFF_SECONDS.length - 1);
-        this.db.markAttempt(d.id, this.now() + DELIVERY_BACKOFF_SECONDS[idx]!);
-        if (d.attempts + 1 >= MAX_DELIVERY_ATTEMPTS) this.log("webhook gave up", { id: d.id });
-      }
+  private hostOf(url: string): string {
+    try {
+      return new URL(url).host.toLowerCase();
+    } catch {
+      return "?";
     }
+  }
+
+  private async deliverOne(d: DeliveryRow): Promise<boolean> {
+    let ok = false;
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), this.timeoutMs);
+    try {
+      const problem = await deliveryTargetProblem(d.url, this.allowPrivate, this.lookup);
+      const merchantId = this.merchantOf(d.order_id, d.body);
+      if (problem) {
+        this.log("webhook target refused", { id: d.id, reason: problem });
+      } else if (!merchantId) {
+        this.log("webhook has no merchant", { id: d.id });
+      } else {
+        // Abort signal for well-behaved fetches, plus a race so a fetch that ignores it cannot stall the worker.
+        const res = await withTimeout(this.doFetch(d.url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            [WEBHOOK_SIGNATURE_HEADER]: signWebhook(merchantWebhookSecret(this.masterSecret, merchantId), d.body, this.now()),
+          },
+          body: d.body,
+          signal: ctl.signal,
+          redirect: "manual",
+        }), this.timeoutMs);
+        ok = res.status >= 200 && res.status < 300;
+      }
+    } catch (e) {
+      this.log("webhook delivery error", { id: d.id, err: String((e as Error).message).slice(0, 200) });
+    } finally {
+      clearTimeout(t);
+    }
+    if (ok) {
+      this.db.markDelivered(d.id, this.now());
+    } else {
+      const idx = Math.min(d.attempts, DELIVERY_BACKOFF_SECONDS.length - 1);
+      this.db.markAttempt(d.id, this.now() + DELIVERY_BACKOFF_SECONDS[idx]!);
+      if (d.attempts + 1 >= MAX_DELIVERY_ATTEMPTS) this.log("webhook gave up", { id: d.id });
+    }
+    return ok;
+  }
+
+  /**
+   * One pass: due rows (oldest first) are selected fairly, at most PER_MERCHANT_CAP per merchant and PER_HOST_CAP per
+   * host per pass (the rest stay due, untouched, for the next pass), and delivered by a pool of MAX_CONCURRENCY
+   * workers. A tarpit endpoint therefore delays only its own deliveries; each row is still attempted once per pass,
+   * so retry/backoff accounting is unchanged.
+   */
+  private async runTick(): Promise<number> {
+    const due = this.db.dueDeliveries(this.now(), SCAN_LIMIT);
+    const perMerchant = new Map<string, number>();
+    const perHost = new Map<string, number>();
+    const batch: DeliveryRow[] = [];
+    for (const d of due) {
+      const m = this.merchantOf(d.order_id, d.body)?.toLowerCase() ?? `order:${d.order_id}`;
+      const h = this.hostOf(d.url);
+      if ((perMerchant.get(m) ?? 0) >= PER_MERCHANT_CAP || (perHost.get(h) ?? 0) >= PER_HOST_CAP) continue;
+      perMerchant.set(m, (perMerchant.get(m) ?? 0) + 1);
+      perHost.set(h, (perHost.get(h) ?? 0) + 1);
+      batch.push(d);
+      if (batch.length >= BATCH_LIMIT) break;
+    }
+    let delivered = 0;
+    let next = 0;
+    const worker = async () => {
+      while (next < batch.length) {
+        const d = batch[next++]!;
+        if (await this.deliverOne(d)) delivered += 1;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENCY, batch.length) }, worker));
     return delivered;
   }
 }

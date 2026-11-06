@@ -712,10 +712,10 @@ export class Db {
       .prepare("INSERT OR IGNORE INTO deliveries (id, order_id, url, body, attempts, next_attempt_at) VALUES (@id, @order_id, @url, @body, @attempts, @next_attempt_at)")
       .run(d);
   }
-  dueDeliveries(now: number): DeliveryRow[] {
+  dueDeliveries(now: number, limit = 20): DeliveryRow[] {
     return this.raw
-      .prepare("SELECT * FROM deliveries WHERE delivered_at IS NULL AND next_attempt_at<=? AND attempts<? ORDER BY next_attempt_at LIMIT 20")
-      .all(now, MAX_DELIVERY_ATTEMPTS) as DeliveryRow[];
+      .prepare("SELECT * FROM deliveries WHERE delivered_at IS NULL AND next_attempt_at<=? AND attempts<? ORDER BY next_attempt_at LIMIT ?")
+      .all(now, MAX_DELIVERY_ATTEMPTS, limit) as DeliveryRow[];
   }
   markDelivered(id: string, now: number) {
     this.raw.prepare("UPDATE deliveries SET delivered_at=? WHERE id=?").run(now, id);
