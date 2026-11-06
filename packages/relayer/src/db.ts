@@ -22,6 +22,23 @@ export interface OrderRow {
   settled_at: number | null;
   /** When the order was claimed for relay (unix seconds). The per-payer 24h window is measured from this. */
   relayed_at: number | null;
+  /**
+   * JSON snapshot of the relay fields taken by claimForRelay, so revertClaim can restore the exact
+   * previous state (status, payer, signature, window, tx_hash, relayed_at, failure_code). Cleared once the
+   * claim's transaction is broadcast.
+   */
+  claim_prev?: string | null;
+}
+
+interface ClaimSnapshot {
+  status: OrderStatus;
+  payer: string | null;
+  signature: string | null;
+  valid_after: number | null;
+  valid_before: number | null;
+  tx_hash: string | null;
+  relayed_at: number | null;
+  failure_code: string | null;
 }
 
 export type ClaimResult = "ok" | "over_cap" | "unavailable";
@@ -62,7 +79,8 @@ export class Db {
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL,
         settled_at INTEGER,
-        relayed_at INTEGER
+        relayed_at INTEGER,
+        claim_prev TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_orders_merchant ON orders(merchant_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_orders_payer ON orders(payer, created_at);
@@ -97,6 +115,7 @@ export class Db {
         this.raw.exec("UPDATE orders SET relayed_at = COALESCE(settled_at, created_at) WHERE payer IS NOT NULL AND relayed_at IS NULL");
       })();
     }
+    if (!cols.includes("claim_prev")) this.raw.exec("ALTER TABLE orders ADD COLUMN claim_prev TEXT");
     this.raw.exec("CREATE INDEX IF NOT EXISTS idx_orders_payer_relayed ON orders(payer, relayed_at)");
   }
 
@@ -133,6 +152,10 @@ export class Db {
    * payer's volume over [now - windowSeconds, now] plus this order stays within `payerCap`. The cap check
    * and the claim run in one IMMEDIATE transaction, so concurrent relays (in this process or another one
    * on the same database) cannot both pass the cap.
+   *
+   * The claim snapshots the previous relay fields into claim_prev and clears tx_hash (a failed order
+   * otherwise keeps its old, reverted hash), so `pending AND tx_hash IS NULL` always means "claimed, not
+   * yet broadcast", and revertClaim can restore the exact previous state.
    */
   claimForRelay(
     id: string,
@@ -140,33 +163,98 @@ export class Db {
     signature: string,
     validAfter: number,
     validBefore: number,
-    limits: { now: number; payerCap: bigint; windowSeconds: number },
+    limits: { now: number; payerCap: bigint; windowSeconds: number; claimGraceSeconds?: number },
   ): ClaimResult {
     const tx = this.raw.transaction((): ClaimResult => {
       const row = this.getOrder(id);
       if (!row || (row.status !== "created" && row.status !== "failed") || limits.now >= row.expires_at) return "unavailable";
-      if (this.payerVolume(payer, limits.now - limits.windowSeconds) + BigInt(row.amount) > limits.payerCap) return "over_cap";
+      const grace = limits.claimGraceSeconds ?? CLAIM_GRACE_SECONDS;
+      const vol = this.payerVolume(payer, limits.now - limits.windowSeconds, limits.now - grace);
+      if (vol + BigInt(row.amount) > limits.payerCap) return "over_cap";
+      const prev: ClaimSnapshot = {
+        status: row.status,
+        payer: row.payer,
+        signature: row.signature,
+        valid_after: row.valid_after,
+        valid_before: row.valid_before,
+        tx_hash: row.tx_hash,
+        relayed_at: row.relayed_at,
+        failure_code: row.failure_code,
+      };
       const r = this.raw
         .prepare(
-          `UPDATE orders SET status='pending', payer=?, signature=?, valid_after=?, valid_before=?, relayed_at=?
+          `UPDATE orders SET status='pending', payer=?, signature=?, valid_after=?, valid_before=?, relayed_at=?,
+             tx_hash=NULL, failure_code=NULL, claim_prev=?
            WHERE id=? AND status IN ('created','failed')`,
         )
-        .run(payer.toLowerCase(), signature, validAfter, validBefore, limits.now, id.toLowerCase());
+        .run(payer.toLowerCase(), signature, validAfter, validBefore, limits.now, JSON.stringify(prev), id.toLowerCase());
       return r.changes === 1 ? "ok" : "unavailable";
     });
     return tx.immediate();
   }
 
-  revertClaim(id: string) {
-    this.raw
-      .prepare(
-        "UPDATE orders SET status='created', payer=NULL, signature=NULL, valid_after=NULL, valid_before=NULL, relayed_at=NULL WHERE id=? AND status='pending' AND tx_hash IS NULL",
-      )
-      .run(id.toLowerCase());
+  /**
+   * Releases a claim that never reached broadcast, restoring the exact state from before the claim (a
+   * failed order goes back to failed with its old tx_hash, a created one to created). No-op once a tx
+   * hash has been recorded. Returns true if a claim was released.
+   */
+  revertClaim(id: string): boolean {
+    const tx = this.raw.transaction((): boolean => {
+      const row = this.getOrder(id);
+      if (!row || row.status !== "pending" || row.tx_hash !== null) return false;
+      let prev: ClaimSnapshot | null = null;
+      try {
+        prev = row.claim_prev ? (JSON.parse(row.claim_prev) as ClaimSnapshot) : null;
+      } catch {
+        prev = null;
+      }
+      // A claim without a snapshot predates claim_prev; those only ever came from `created` rows.
+      const p: ClaimSnapshot = prev ?? {
+        status: "created",
+        payer: null,
+        signature: null,
+        valid_after: null,
+        valid_before: null,
+        tx_hash: null,
+        relayed_at: null,
+        failure_code: row.failure_code,
+      };
+      const r = this.raw
+        .prepare(
+          `UPDATE orders SET status=?, payer=?, signature=?, valid_after=?, valid_before=?, tx_hash=?, relayed_at=?,
+             failure_code=?, claim_prev=NULL
+           WHERE id=? AND status='pending' AND tx_hash IS NULL`,
+        )
+        .run(p.status, p.payer, p.signature, p.valid_after, p.valid_before, p.tx_hash, p.relayed_at, p.failure_code, row.id);
+      return r.changes === 1;
+    });
+    return tx.immediate();
+  }
+
+  /** Claims that never reached broadcast (pending, no tx_hash) made before `claimedBefore` (unix seconds). */
+  staleClaims(claimedBefore: number): OrderRow[] {
+    return this.raw
+      .prepare("SELECT * FROM orders WHERE status='pending' AND tx_hash IS NULL AND (relayed_at IS NULL OR relayed_at<?)")
+      .all(claimedBefore) as OrderRow[];
   }
 
   setTxHash(id: string, txHash: string) {
-    this.raw.prepare("UPDATE orders SET tx_hash=? WHERE id=?").run(txHash, id.toLowerCase());
+    this.raw.prepare("UPDATE orders SET tx_hash=?, claim_prev=NULL WHERE id=?").run(txHash, id.toLowerCase());
+  }
+
+  /**
+   * Records the receipt outcome of a broadcast tx. Applies only while the order is still pending on
+   * exactly this hash, so a stale or duplicate tracker cannot overwrite a newer attempt or emit a second
+   * event. Returns true if this call made the transition.
+   */
+  finishTx(id: string, txHash: string, outcome: "settled" | "failed", extra: { failureCode?: string; settledAt?: number } = {}): boolean {
+    const r = this.raw
+      .prepare(
+        `UPDATE orders SET status=?, failure_code=COALESCE(?, failure_code), settled_at=COALESCE(?, settled_at)
+         WHERE id=? AND status='pending' AND tx_hash=?`,
+      )
+      .run(outcome, extra.failureCode ?? null, extra.settledAt ?? null, id.toLowerCase(), txHash);
+    return r.changes === 1;
   }
 
   setStatus(id: string, status: OrderStatus, extra?: { failureCode?: string; settledAt?: number }) {
@@ -175,11 +263,20 @@ export class Db {
       .run(status, extra?.failureCode ?? null, extra?.settledAt ?? null, id.toLowerCase());
   }
 
-  /** Sum of amounts this payer has pending or settled, relayed since `since` (unix seconds). */
-  payerVolume(payer: string, since: number): bigint {
+  /**
+   * Sum of amounts this payer has moved or is moving, relayed since `since` (unix seconds): settled
+   * orders, pending orders with a broadcast tx, and in-flight claims (pending, no tx yet) made at or after
+   * `inflightSince`. In-flight claims must count so concurrent relays cannot both pass the cap; an older
+   * claim with no tx is a crashed attempt that moved nothing and is ignored (releaseStaleClaims frees it).
+   * Rejected attempts are reverted to their previous state, so they never count.
+   */
+  payerVolume(payer: string, since: number, inflightSince: number = since): bigint {
     const rows = this.raw
-      .prepare("SELECT amount FROM orders WHERE payer=? AND status IN ('pending','settled') AND relayed_at>=?")
-      .all(payer.toLowerCase(), since) as { amount: string }[];
+      .prepare(
+        `SELECT amount FROM orders WHERE payer=? AND relayed_at>=? AND (
+           status='settled' OR (status='pending' AND (tx_hash IS NOT NULL OR relayed_at>=?)))`,
+      )
+      .all(payer.toLowerCase(), since, inflightSince) as { amount: string }[];
     return rows.reduce((a, r) => a + BigInt(r.amount), 0n);
   }
 
@@ -231,6 +328,8 @@ export class Db {
 }
 
 export const MAX_DELIVERY_ATTEMPTS = 7;
+/** A claim still without a tx hash after this many seconds is a dead attempt (crashed before broadcast). */
+export const CLAIM_GRACE_SECONDS = 120;
 /** Backoff seconds after the Nth failed attempt (1-indexed). */
 export const DELIVERY_BACKOFF_SECONDS = [5, 30, 120, 600, 1800, 3600, 7200];
 

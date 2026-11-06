@@ -19,6 +19,10 @@ export interface StoreConfig {
    * When omitted (tests), state is in memory only.
    */
   stateFile?: string;
+  /** Max POST /api/checkout calls per IP per window (default 20). */
+  checkoutRateLimit?: number;
+  /** Length of the checkout rate-limit window in ms (default 60 000). */
+  checkoutRateWindowMs?: number;
 }
 
 export interface PaidRecord {
@@ -39,6 +43,47 @@ interface PersistedState {
 
 /** Processed event ids are kept this long. Signatures older than 300 s are rejected anyway (see verifyWebhook). */
 const SEEN_EVENT_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** Default checkout limit: requests per IP per window. Overridable through StoreConfig for tests. */
+const DEFAULT_CHECKOUT_LIMIT = 20;
+const DEFAULT_CHECKOUT_WINDOW_MS = 60_000;
+/** Hard cap on tracked IPs so a flood of spoofed or distinct addresses cannot grow memory without bound. */
+const MAX_TRACKED_IPS = 10_000;
+
+/**
+ * Small fixed-window per-IP limiter kept in memory (resets on restart). Expired windows are swept at most once
+ * per window, and if the table is still full after a sweep the oldest entries are dropped.
+ */
+function createIpLimiter(limit: number, windowMs: number, now: () => number = Date.now) {
+  const windows = new Map<string, { count: number; resetAt: number }>();
+  let lastSweep = now();
+
+  function sweep(t: number) {
+    for (const [ip, w] of windows) if (w.resetAt <= t) windows.delete(ip);
+    lastSweep = t;
+  }
+
+  return {
+    /** Returns true if the request is allowed (and counts it), false if the IP is over its limit. */
+    allow(ip: string): boolean {
+      const t = now();
+      if (t - lastSweep >= windowMs) sweep(t);
+      let w = windows.get(ip);
+      if (!w || w.resetAt <= t) {
+        if (!w && windows.size >= MAX_TRACKED_IPS) {
+          // Map iterates in insertion order, so this drops the oldest tracked IP.
+          const oldest = windows.keys().next().value;
+          if (oldest !== undefined) windows.delete(oldest);
+        }
+        w = { count: 0, resetAt: t + windowMs };
+        windows.set(ip, w);
+      }
+      if (w.count >= limit) return false;
+      w.count += 1;
+      return true;
+    },
+  };
+}
 
 function loadState(file: string | undefined): PersistedState {
   const empty: PersistedState = { seenEvents: Object.create(null), paid: Object.create(null) };
@@ -64,6 +109,10 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   const paid = new Map<string, PaidRecord>(Object.entries(state.paid));
   const seenEvents = new Map<string, number>(Object.entries(state.seenEvents));
   const merchantId = config.merchantId.toLowerCase();
+  const checkoutLimiter = createIpLimiter(
+    config.checkoutRateLimit ?? DEFAULT_CHECKOUT_LIMIT,
+    config.checkoutRateWindowMs ?? DEFAULT_CHECKOUT_WINDOW_MS,
+  );
 
   /**
    * Persist after every change (atomic write via rename). Without a stateFile the records live in memory only:
@@ -82,6 +131,8 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   }
 
   app.post("/api/checkout", async (req, reply) => {
+    // Every accepted call creates a relayer order under the store's API key, so the public endpoint is per-IP limited.
+    if (!checkoutLimiter.allow(req.ip)) return reply.code(429).send({ error: "too many checkout requests, try again shortly" });
     // SECURITY: the browser sends only product ids and quantities. The total is computed here from the
     // server-side catalog (server/catalog.ts); any client-supplied price or total (e.g. `cartTotal`) is ignored.
     const items = (req.body as { items?: unknown } | null)?.items;
@@ -121,8 +172,9 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
         return reply.code(400).send({ error: "invalid webhook" });
       }
 
-      // The relayer signs every merchant's webhooks with one shared secret, so a valid signature alone does not
-      // prove the event is for THIS store. Reject events addressed to another merchant.
+      // Each merchant has its own derived webhook secret, HMAC-SHA256(master WEBHOOK_SECRET, merchantId), so a valid
+      // signature shows the event came from a holder of this store's secret. It does not prove the event is for THIS
+      // store, so reject events addressed to another merchant.
       if (event.data.merchantId.toLowerCase() !== merchantId) {
         return reply.code(400).send({ error: "event is for a different merchant" });
       }

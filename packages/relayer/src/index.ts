@@ -15,6 +15,7 @@ const svc = new RelayerService({ cfg, db, chain, log });
 const worker = new WebhookWorker(db, cfg.webhookSecret, undefined, undefined, log, { allowPrivate: cfg.allowPrivateWebhooks });
 
 svc.recoverPending();
+setInterval(() => svc.releaseStaleClaims(), 60_000).unref(); // sweep claims that were never broadcast
 worker.start();
 
 const app = buildServer(svc);

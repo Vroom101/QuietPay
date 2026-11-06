@@ -13,7 +13,7 @@ import {
   type RelayPayResponse,
 } from "@quietpay/shared";
 import type { WebhookEvent } from "@quietpay/shared/webhook";
-import { rowToOrder, type Db, type OrderRow } from "./db.js";
+import { CLAIM_GRACE_SECONDS, rowToOrder, type Db, type OrderRow } from "./db.js";
 import type { ChainPort, PayArgs } from "./chain.js";
 import type { Config } from "./config.js";
 import { RateLimiter } from "./ratelimit.js";
@@ -52,6 +52,8 @@ export class RelayerService {
   private relayed = 0;
   private readonly rejected = new Map<string, number>();
   private readonly tracking = new Set<string>();
+  /** Orders this process has claimed and not yet broadcast or released; never treated as stale. */
+  private readonly inflight = new Set<string>();
 
   constructor(d: ServiceDeps) {
     this.cfg = d.cfg;
@@ -94,13 +96,46 @@ export class RelayerService {
     return this.db.listOrders(merchantId).map((r) => this.toOrder(this.expireIfNeeded(r)));
   }
 
-  /** Created and failed orders stop being relayable at expiresAt. */
+  /**
+   * Lazy maintenance on read: a claim that never reached broadcast (process died before setTxHash) is
+   * released back to its previous state after a short grace; created and failed orders stop being
+   * relayable at expiresAt.
+   */
   private expireIfNeeded(row: OrderRow): OrderRow {
+    if (this.isStaleClaim(row) && this.db.revertClaim(row.id)) {
+      this.log("released stale claim", { order: row.id });
+      row = this.db.getOrder(row.id) ?? row;
+    }
     if ((row.status === "created" || row.status === "failed") && this.now() >= row.expires_at) {
       this.db.setStatus(row.id, "expired");
       return { ...row, status: "expired" };
     }
     return row;
+  }
+
+  private isStaleClaim(row: OrderRow): boolean {
+    return (
+      row.status === "pending" &&
+      row.tx_hash === null &&
+      !this.inflight.has(row.id) &&
+      (row.relayed_at === null || row.relayed_at < this.now() - CLAIM_GRACE_SECONDS)
+    );
+  }
+
+  /**
+   * Releases every claim that never reached broadcast within the grace period (crash between claim and
+   * setTxHash). Claims still being processed by this process are left alone. Returns how many were released.
+   */
+  releaseStaleClaims(): number {
+    let n = 0;
+    for (const row of this.db.staleClaims(this.now() - CLAIM_GRACE_SECONDS)) {
+      if (this.inflight.has(row.id)) continue;
+      if (this.db.revertClaim(row.id)) {
+        n += 1;
+        this.log("released stale claim", { order: row.id });
+      }
+    }
+    return n;
   }
 
   async health() {
@@ -278,6 +313,7 @@ export class RelayerService {
       }
       this.reject("already_settled");
     }
+    this.inflight.add(row.id);
 
     const args: PayArgs = {
       merchantId: row.merchant_id as Hex,
@@ -321,13 +357,16 @@ export class RelayerService {
       void this.track(row.id, hash);
       return { orderId: row.id as Hex, status: "pending", txHash: hash };
     } catch (e) {
+      // Nothing was broadcast (setTxHash runs right after sendPay returns): restore the exact pre-claim
+      // state so a rejected attempt neither locks the order nor counts toward the payer's cap.
+      this.db.revertClaim(row.id);
       if (!(e instanceof QuietpayError)) {
         this.log("broadcast failed", { order: row.id, err: String((e as Error).message).slice(0, 300) });
-        this.db.revertClaim(row.id);
         this.reject("simulation_failed", "This payment could not be sent. You have not been charged.");
       }
-      this.db.revertClaim(row.id);
       throw e;
+    } finally {
+      this.inflight.delete(row.id);
     }
   }
 
@@ -342,12 +381,12 @@ export class RelayerService {
       const row = this.db.getOrder(orderId);
       if (!row) return;
       this.db.recordSpend(hash, this.now(), r.gasUsed * r.effectiveGasPrice);
+      // Transition only if the order is still pending on this exact hash: a duplicate or stale tracker
+      // (e.g. after a restart, or for a hash a newer attempt replaced) changes nothing and emits no event.
       if (r.status === "success") {
-        this.db.setStatus(orderId, "settled", { settledAt: this.now() });
-        this.enqueueWebhook(orderId, "payment.settled");
+        if (this.db.finishTx(orderId, hash, "settled", { settledAt: this.now() })) this.enqueueWebhook(orderId, "payment.settled");
       } else {
-        this.db.setStatus(orderId, "failed", { failureCode: "simulation_failed" });
-        this.enqueueWebhook(orderId, "payment.failed");
+        if (this.db.finishTx(orderId, hash, "failed", { failureCode: "simulation_failed" })) this.enqueueWebhook(orderId, "payment.failed");
       }
     } catch (e) {
       this.log("tracking error; will retry on restart", { order: orderId, err: String((e as Error).message).slice(0, 200) });
@@ -356,8 +395,14 @@ export class RelayerService {
     }
   }
 
-  /** Re-attach to transactions that were pending when the process stopped. */
+  /**
+   * Startup recovery. Claims that never reached broadcast are released to their previous state (a failed
+   * order stays failed: its old reverted hash is not re-tracked). Orders pending on a broadcast tx are
+   * re-attached; track() only transitions an order still pending on that same hash, so this cannot emit a
+   * second payment.failed / payment.settled event.
+   */
   recoverPending() {
+    this.releaseStaleClaims();
     for (const row of this.db.pendingOrders()) void this.track(row.id, row.tx_hash as Hex);
   }
 

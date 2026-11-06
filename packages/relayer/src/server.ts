@@ -76,7 +76,10 @@ export function buildServer(svc: RelayerService): FastifyInstance {
     return svc.health();
   });
 
+  // Order creation is per-IP limited before the API-key check, so unauthenticated floods are counted too.
+  const ordersLimiter = new RateLimiter(120, 60_000);
   app.post("/v1/orders", async (req, reply) => {
+    if (!ordersLimiter.allow(req.ip)) throw new QuietpayError("rate_limited");
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
     const body = CreateOrderRequest.parse(req.body);

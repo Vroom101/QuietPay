@@ -75,6 +75,13 @@ function classifyV6(ip: string): IpClass {
   const g = expandV6(ip);
   const embeddedV4 = () => `${g[6]! >> 8}.${g[6]! & 255}.${g[7]! >> 8}.${g[7]! & 255}`;
   const zeros = (n: number) => g.slice(0, n).every((x) => x === 0);
+  // Transition / translation ranges that tunnel to or translate into IPv4 (possibly internal) targets.
+  // No legitimate webhook endpoint uses them, so they are refused outright, even with allowPrivate:
+  //   IPv4-translated ::ffff:0:a.b.c.d, 6to4 2002::/16, Teredo 2001::/32, NAT64 local-use 64:ff9b:1::/48.
+  if (zeros(4) && g[4] === 0xffff && g[5] === 0) return "forbidden";
+  if (g[0] === 0x2002) return "forbidden";
+  if (g[0] === 0x2001 && g[1] === 0) return "forbidden";
+  if (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 1) return "forbidden";
   // IPv4-mapped (::ffff:a.b.c.d), IPv4-compatible (::a.b.c.d) and NAT64 (64:ff9b::a.b.c.d): judge the embedded IPv4.
   if (zeros(5) && g[5] === 0xffff) return classifyV4(embeddedV4());
   if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return classifyV4(embeddedV4());
