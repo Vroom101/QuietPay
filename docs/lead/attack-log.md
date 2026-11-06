@@ -14,3 +14,4 @@ Earlier rounds on the relayer, widget and demo store are in `pentest-round-1.md`
 | L3/L4-R1 | hardening | verifier | Opus | quoted CSV cells accepted; `--rpc2` compares ledger logs only; same-tx deposit hiding by a contract relayer | Low | open (see blocked.md) |
 | L3/L4-R1 | rejected | indexer, verifier | Opus | fake token / look-alike contract forging a row | n/a | rejected: both filter by router and USDT address |
 | L1-R1/R3 | logic, token behaviour | PaymentRouter | Opus read-only | payout legs not balance-checked; plain Ownable lock; zero ids accepted | Low x3 | accepted, pinned in ExpectedLimitations.t.sol, no redeploy |
+| L-R9 | integration, DoS | relayer | Opus attacker (other session) | throttle locked out valid merchant/operator; one merchant's slow webhook delayed all | Medium/Low | fixed, round-9 commit |
