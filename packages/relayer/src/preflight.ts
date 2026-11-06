@@ -43,3 +43,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try { console.log(JSON.stringify(await preflight(loadConfig()))); }
   catch (e) { console.error("Preflight failed:", (e as Error).message); process.exitCode = 1; }
 }
+
+export { runPreflight, formatPreflight, preflightToJson, settingsFromEnv, fundNeeds, PREFLIGHT_CODES, TOKEN_FACTS, normaliseAddress } from "./preflight-checks.js";
+export type { PreflightResult, PreflightCheck, PreflightSettings, PreflightDeps } from "./preflight-checks.js";
