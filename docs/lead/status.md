@@ -29,3 +29,4 @@
 - 12:40 L0 reconcile written; baseline green (see reconcile.md)
 - 13:15 L4 range pinning + rpc2 + checkpoint; L1 invariants added
 - 13:50 L4 verifier independent of indexer + differential test
+- 14:30 R1 on indexer/verifier: net unclamped, sidecar pins config, unanchored label, docs
