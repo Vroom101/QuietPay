@@ -72,4 +72,29 @@ describe("signCheckout", () => {
       .rejects.toMatchObject({ code: "payment_details_changed" });
     expect(signTypedData).not.toHaveBeenCalled();
   });
+
+  it("signs for a separately configured DemoUSDT token and rejects incomplete or mismatched settings", async () => {
+    const demo = { token: `0x${"88".repeat(20)}` as const, domainName: "Quietpay Demo USDT", domainVersion: "1" };
+    const order = {
+      ...orderCreated,
+      checkout: { ...checkout, token: demo.token, domain: { name: demo.domainName, version: demo.domainVersion } },
+    };
+    const req = await signCheckout(account, order, now, { ...expected, ...demo });
+    const recovered = await recoverCheckoutSigner({
+      ...demo,
+      from: req.payer as `0x${string}`,
+      router: FIXTURE_ROUTER,
+      value: BigInt(checkout.value),
+      nonce: checkout.nonce as `0x${string}`,
+      validAfter: BigInt(req.validAfter),
+      validBefore: BigInt(req.validBefore),
+    }, req.signature as `0x${string}`);
+    expect(recovered).toBe(account.address);
+    for (const config of [expected, { ...expected, token: demo.token }, { ...expected, ...demo, domainVersion: "2" }]) {
+      const signTypedData = vi.fn(async () => { throw new Error("signer should not be called"); });
+      await expect(signCheckout({ ...account, signTypedData }, order, now, config))
+        .rejects.toMatchObject({ code: "payment_details_changed" });
+      expect(signTypedData).not.toHaveBeenCalled();
+    }
+  });
 });

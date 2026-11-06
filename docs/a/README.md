@@ -37,6 +37,12 @@ Copy `apps/demo-store/.env.example` to `.env` to override `QUIETPAY_BASE_URL`, `
 
 SDK: `@quietpay/merchant-sdk` was not in this worktree, so `server/sdk-stub.ts` implements the frozen interface. To switch, change the one import line in `server/index.ts`.
 
+### Connect the store to the hosted relayer
+
+Set `VITE_RELAYER_URL` and `QUIETPAY_BASE_URL` in `apps/demo-store/.env` to the hosted relayer URL. Set `VITE_CHECKOUT_ROUTER` to the deployed router unless the address is already in the shared deployment file. For DemoUSDT, set `VITE_CHECKOUT_TOKEN` to its deployed address, `VITE_CHECKOUT_DOMAIN_NAME="Quietpay Demo USDT"`, and `VITE_CHECKOUT_DOMAIN_VERSION=1`. Get these values from the deployment handoff. Restart the Vite server after changing them.
+
+Set `QUIETPAY_API_KEY` and `QUIETPAY_MERCHANT_ID` for the registered merchant. Set `QUIETPAY_WEBHOOK_URL` to the publicly reachable store endpoint ending in `/webhooks/quietpay`, and use the same `QUIETPAY_WEBHOOK_SECRET` as the relayer. Fund the payer address shown in the widget with demo tokens, complete checkout, and check that the store confirms the payment after the webhook arrives. Keep the payer's WBT balance at zero for this run.
+
 ## apps/merchant-dashboard
 
 ```

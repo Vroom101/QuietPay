@@ -21,6 +21,9 @@ export class QuietpayCheckout extends LitElement {
     relayerUrl: { type: String, attribute: "relayer-url" },
     expectedRouter: { type: String, attribute: "expected-router" },
     expectedAmount: { type: String, attribute: "expected-amount" },
+    expectedToken: { type: String, attribute: "expected-token" },
+    expectedDomainName: { type: String, attribute: "expected-domain-name" },
+    expectedDomainVersion: { type: String, attribute: "expected-domain-version" },
     view: { state: true },
     order: { state: true },
     account: { state: true },
@@ -33,6 +36,9 @@ export class QuietpayCheckout extends LitElement {
   declare relayerUrl: string;
   declare expectedRouter: string | undefined;
   declare expectedAmount: string | undefined;
+  declare expectedToken: string | undefined;
+  declare expectedDomainName: string | undefined;
+  declare expectedDomainVersion: string | undefined;
   declare view: View;
   declare order: Order | undefined;
   declare account: PrivateKeyAccount | undefined;
@@ -125,7 +131,14 @@ export class QuietpayCheckout extends LitElement {
     const reviewedOrder = this.order;
     if (this.view !== "ready" || !reviewedOrder) return;
     const { orderId, relayerUrl } = this;
-    const expected = { router: this.expectedRouter, amount: this.expectedAmount, reviewedOrder };
+    const expected = {
+      router: this.expectedRouter,
+      amount: this.expectedAmount,
+      token: this.expectedToken ?? undefined,
+      domainName: this.expectedDomainName ?? undefined,
+      domainVersion: this.expectedDomainVersion ?? undefined,
+      reviewedOrder,
+    };
     try {
       this.view = "paying";
       this.step = "sending";

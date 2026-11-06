@@ -1,4 +1,5 @@
 import {
+  Address,
   ErrorResponse,
   GetOrderResponse,
   RelayPayResponse,
@@ -71,6 +72,9 @@ interface CheckoutExpectations {
   router?: string;
   amount?: string;
   reviewedOrder?: Order;
+  token?: string;
+  domainName?: string;
+  domainVersion?: string;
 }
 
 /** Builds and signs the single ReceiveWithAuthorization the payer approves. */
@@ -80,7 +84,12 @@ export async function signCheckout(
   nowSeconds: number = Math.floor(Date.now() / 1000),
   expected: CheckoutExpectations = {},
 ): Promise<RelayPayRequest> {
-  const domain = tokenDomain();
+  const { token, domainName, domainVersion } = expected;
+  const hasTokenOverride = token !== undefined || domainName !== undefined || domainVersion !== undefined;
+  if (hasTokenOverride && (!Address.safeParse(token).success || !domainName?.trim() || !domainVersion?.trim())) {
+    throw new WidgetError("payment_details_changed", "incomplete trusted token configuration");
+  }
+  const domain = tokenDomain({ token: token as `0x${string}` | undefined, name: domainName, version: domainVersion });
   const router = expected.router ?? deployments[String(domain.chainId)]?.router;
   const c = order.checkout;
   const reviewed = expected.reviewedOrder;

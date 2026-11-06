@@ -75,6 +75,9 @@ export function Checkout() {
             relayerUrl={RELAYER_URL}
             expectedRouter={EXPECTED_ROUTER}
             expectedAmount={parseUsdt(total).toString()}
+            expectedToken={import.meta.env.VITE_CHECKOUT_TOKEN || undefined}
+            expectedDomainName={import.meta.env.VITE_CHECKOUT_DOMAIN_NAME || undefined}
+            expectedDomainVersion={import.meta.env.VITE_CHECKOUT_DOMAIN_VERSION || undefined}
             onSettled={() => {
               clear();
               nav(`/success/${orderId}`);

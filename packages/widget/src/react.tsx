@@ -7,12 +7,18 @@ export interface QuietpayCheckoutProps {
   relayerUrl: string;
   expectedRouter?: string;
   expectedAmount?: string;
+  expectedToken?: string;
+  expectedDomainName?: string;
+  expectedDomainVersion?: string;
   onSettled?: (order: Order) => void;
   onError?: (err: { code: string; message: string }) => void;
 }
 
 /** React wrapper around the <quietpay-checkout> custom element. */
-export function QuietpayCheckout({ orderId, relayerUrl, expectedRouter, expectedAmount, onSettled, onError }: QuietpayCheckoutProps) {
+export function QuietpayCheckout({
+  orderId, relayerUrl, expectedRouter, expectedAmount, expectedToken,
+  expectedDomainName, expectedDomainVersion, onSettled, onError,
+}: QuietpayCheckoutProps) {
   const ref = useRef<HTMLElement>(null);
   const cbs = useRef({ onSettled, onError });
   cbs.current = { onSettled, onError };
@@ -36,5 +42,8 @@ export function QuietpayCheckout({ orderId, relayerUrl, expectedRouter, expected
     "relayer-url": relayerUrl,
     "expected-router": expectedRouter,
     "expected-amount": expectedAmount,
+    "expected-token": expectedToken,
+    "expected-domain-name": expectedDomainName,
+    "expected-domain-version": expectedDomainVersion,
   });
 }

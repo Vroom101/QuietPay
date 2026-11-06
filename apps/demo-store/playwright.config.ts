@@ -28,7 +28,13 @@ export default defineConfig({
     {
       command: "vite --strictPort",
       url: storeUrl,
-      env: { VITE_RELAYER_URL: relayerUrl, VITE_CHECKOUT_ROUTER: "" },
+      env: {
+        VITE_RELAYER_URL: relayerUrl,
+        VITE_CHECKOUT_ROUTER: "",
+        VITE_CHECKOUT_TOKEN: "",
+        VITE_CHECKOUT_DOMAIN_NAME: "",
+        VITE_CHECKOUT_DOMAIN_VERSION: "",
+      },
     },
   ],
 });
