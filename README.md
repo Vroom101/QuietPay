@@ -53,7 +53,8 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 ## Limitations
 
 - Demo-grade payer wallet: a random key encrypted with AES-GCM in IndexedDB. Not production custody.
-- USDT only, testnet only, no audit. No INR conversion or production custody is claimed.
+- Testnet demo uses `DemoUSDT`, a valueless stand-in with a public faucet, because the official test USDT has no
+  faucet. It is not Tether. Mainnet is a config change to the real USDT. USDT only, testnet only, no audit. No INR conversion or production custody is claimed.
 - The relayer is a trusted gas sponsor: it can censor or pause, but cannot redirect funds or exceed the fee cap.
 - The rate limiter is in memory; the gas loss budget is persisted.
 - Not done yet: live deployment and first real payment, hosted relayer, explorer verification, a browser run of the widget.
