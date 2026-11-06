@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+.remember/
+.DS_Store

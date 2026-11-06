@@ -1,0 +1,6 @@
+/contracts/ @lead
+/packages/shared/ @lead
+/packages/widget/ @a
+/apps/ @a
+/packages/relayer/ @b
+/packages/merchant-sdk/ @b
