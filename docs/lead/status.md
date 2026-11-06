@@ -62,3 +62,5 @@ After round 9: 1,149 tests passed across the current workspace suites (the
 affected shared/SDK/relayer/facilitator suites were rerun); 12 optional tests
 remain skipped locally.
 - 20:40 finish run T0: baseline last green (relayer 324, shared 240, verifier 139, Foundry 118); gh unavailable so CI not read
+- 21:20 T1 a-d done; mutation sweep running
+- 21:50 mutation sweep done 58/60 killed, 2 killed by new tests; trailers removed from pushed history (backup branches local)
