@@ -22,18 +22,48 @@ export function canReportMoney(orders: DashboardOrder[]) {
     orders.every((order) => order.status !== "partially_refunded" || order.refunded !== undefined);
 }
 
-export function DashboardMetrics({ orders, demo }: { orders: DashboardOrder[]; demo: boolean }) {
+/** Plain words for the chart legend: "created" is a checkout that has not been paid (yet). */
+const STATUS_LABELS: Partial<Record<string, string>> = { created: "open (not paid yet)", pending: "paying", expired: "expired (abandoned)" };
+
+export interface Metric { label: string; value: string; unit: string; icon: string; detail: string }
+
+/**
+ * The four overview cards. Pure, so the numbers and their explanations can be tested.
+ * - Net revenue = per paid order: amount - relay fee - refunded. It is negative when a refund is larger than what the
+ *   merchant received, because the relay fee is not returned to the payer on a refund.
+ * - Checkout completion = paid / (paid + failed + expired). Abandoned carts expire after about 10 minutes and are
+ *   counted here, not called payment failures; checkouts still open are not decided yet and are left out.
+ */
+export function buildMetrics(orders: DashboardOrder[], demo: boolean): Metric[] {
   const paid = orders.filter(paidOrder);
   const gross = paid.reduce((sum, order) => sum + BigInt(order.amount), 0n);
   const net = paid.reduce((sum, order) => sum + orderNet(order), 0n);
   const decided = paid.length + orders.filter((order) => order.status === "failed" || order.status === "expired").length;
+  const open = orders.filter((order) => order.status === "created" || order.status === "pending").length;
   const monetary = orders.length > 0 && canReportMoney(orders);
-  const metrics = [
-    { label: demo ? "Demo payments after refunds" : "Net revenue", value: monetary ? displayUsdt(net) : "—", unit: "USDT", icon: "↗", detail: demo ? "Relay fees excluded from this feed" : "After relay fees and refunds" },
+  const netDetail = demo
+    ? "Relay fees excluded from this feed"
+    : net < 0n
+      ? "Negative because refunds were larger than what you received: the relay fee is not returned on a refund"
+      : "After relay fees and refunds";
+  return [
+    { label: demo ? "Demo payments after refunds" : "Net revenue", value: monetary ? displayUsdt(net) : "—", unit: "USDT", icon: "↗", detail: netDetail },
     { label: "Successful payments", value: String(paid.length), unit: "", icon: "✓", detail: "Includes orders later refunded" },
     { label: "Average order value", value: monetary && paid.length ? displayUsdt(gross / BigInt(paid.length)) : "—", unit: "USDT", icon: "◇", detail: "Based on gross paid orders" },
-    { label: "Payment success rate", value: !demo && decided ? `${(100 * paid.length / decided).toFixed(1)}%` : "—", unit: "", icon: "%", detail: demo ? "Demo feed records completed payments" : "Among paid, failed, and expired orders" },
+    {
+      label: demo ? "Payment success rate" : "Checkout completion rate",
+      value: !demo && decided ? `${(100 * paid.length / decided).toFixed(1)}%` : "—",
+      unit: "",
+      icon: "%",
+      detail: demo ? "Demo feed records completed payments" : `Paid out of finished checkouts (paid, failed or abandoned) · ${open} still open`,
+    },
   ];
+}
+
+export function DashboardMetrics({ orders, demo }: { orders: DashboardOrder[]; demo: boolean }) {
+  const metrics = buildMetrics(orders, demo);
+  const monetary = orders.length > 0 && canReportMoney(orders);
+  const paid = orders.filter(paidOrder);
 
   const byDay = new Map<string, { gross: bigint; net: bigint }>();
   for (const order of paid) {
@@ -92,7 +122,7 @@ export function DashboardMetrics({ orders, demo }: { orders: DashboardOrder[]; d
           <h2 id="status-title">Payment status breakdown</h2>
           <div className="md-status-chart">
             <div className="md-donut" aria-hidden="true" style={{ background: stops.length ? `conic-gradient(${stops.join(", ")})` : "#bad1e4" }}><span>{orders.length}<small>orders</small></span></div>
-            <ul>{statuses.map(({ status, count, color }) => <li key={status}><i style={{ background: color }} /><span>{status.replace(/_/g, " ")}</span><strong>{count}</strong></li>)}</ul>
+            <ul>{statuses.map(({ status, count, color }) => <li key={status}><i style={{ background: color }} /><span>{STATUS_LABELS[status] ?? status.replace(/_/g, " ")}</span><strong>{count}</strong></li>)}</ul>
           </div>
         </section>
       </div>
