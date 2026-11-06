@@ -24,3 +24,22 @@
   `rebuild` upserts all. Both are tested to give identical rows.
 - **Sample export.** The sample's x402 row is a deployer-to-payout transfer, not real facilitator traffic.
 - **Optional env.** `FACILITATOR_PAYTO` (empty disables x402 rows), `DEPLOY_BLOCK`, `POLL_SECONDS`, `GENERATED_AT`.
+
+## Router hardening (Phase 1)
+- **Fee commitment.** Fee is part of the pay nonce (`quietpay.pay.v2`). Refund nonces are unchanged. `maxRelayFee` stays as a
+  second cap. No maximum fee-share registry field was added.
+- **Refund signer rotation.** Owner-only (the registry is operator-controlled in this MVP). Rotating back to an old key
+  re-enables that key's unused, unexpired authorizations (windows are at most 10 minutes); noted, not mitigated.
+- **Balance delta.** Costs two extra `balanceOf` calls per pull (a few thousand gas). The router supports only the official
+  test USDT, which this check protects; a lossy token makes the router fail closed.
+- **Signature `v`.** `0/1` recovery ids are normalized to `27/28`.
+- **Opus review (read-only), result.** No exploitable issue in the four changes. Accepted or deferred items:
+  - *Price is not bound on-chain* (Medium): `value` is whatever the payer signs, so a payer who guesses an order id could
+    settle it with a different value. Mitigation lives in the relayer, which only relays orders it issued and rejects
+    amounts that differ from the order (`amount_mismatch`, signature recovered against the order's own value), plus
+    random 32-byte order ids. A merchant-signed quote checked in `pay` would change the frozen interface; not done.
+  - *Fee recipient is `msg.sender`*: another allowlisted relayer could front-run a signature and take the fee. Accepted
+    as the cost of relayer failover; the payer and merchant are unaffected.
+  - *`Ownable2Step`, refunds while paused, a rescue function for tokens sent directly to the router*: considered and not
+    added (the spec says a paused router reverts refunds; direct transfers are documented as unrecoverable).
+  - *The payer's wallet shows an opaque nonce*: documented limitation; consent depends on the widget showing the fee.

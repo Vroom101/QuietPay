@@ -287,12 +287,14 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
             from, address(this), value, validAfter, validBefore, nonce, v, r, s
         );
         // Fee-on-transfer or otherwise lossy tokens would leave the router short; refuse them outright.
-        if (token.balanceOf(address(this)) - before_ != value) revert TokenAmountMismatch();
+        uint256 after_ = token.balanceOf(address(this));
+        if (after_ < before_ || after_ - before_ != value) revert TokenAmountMismatch();
     }
 
     function _split(bytes calldata sig) private pure returns (bytes32 r, bytes32 s, uint8 v) {
         r = bytes32(sig[0:32]);
         s = bytes32(sig[32:64]);
         v = uint8(sig[64]);
+        if (v < 27) v += 27; // accept wallets that return the recovery id as 0/1
     }
 }

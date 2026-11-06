@@ -313,4 +313,14 @@ contract PaymentRouterHardeningTest is Test {
         router.setRefundSigner(keccak256("nobody"), attacker);
         vm.stopPrank();
     }
+
+    // ------------------------------------------------------------ signature v normalisation (Opus review)
+
+    function test_signatureWithRecoveryIdZeroOrOneIsAccepted() public {
+        bytes memory sig = _paySig();
+        sig[64] = bytes1(uint8(sig[64]) - 27); // 27/28 -> 0/1, as some wallets return
+        vm.prank(relayer);
+        router.pay(MERCHANT, ORDER, payer, PRICE, FEE, vA, vB, sig);
+        assertTrue(router.receipts(MERCHANT, ORDER).settled);
+    }
 }
