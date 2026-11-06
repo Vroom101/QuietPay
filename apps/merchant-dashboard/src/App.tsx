@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { Order } from "@quietpay/shared";
 import { DashboardError, listOrders } from "./lib/api";
-import { STATUS_STYLES, shortHex, toRow } from "./lib/view";
+import { STATUS_STYLES, safeHttpUrl, shortHex, toRow } from "./lib/view";
 
 const MERCHANT_URL = import.meta.env.VITE_MERCHANT_API_URL || "/api/merchant";
 const USE_FIXTURES = import.meta.env.VITE_USE_FIXTURES === "1";

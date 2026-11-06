@@ -1,214 +1,226 @@
-import { describe, it, expect } from "vitest";
-import { IndexDb } from "../src/db.js";
-import { Indexer } from "../src/indexer.js";
-import { buildLedger } from "../src/ledger.js";
-import { readCsv } from "../src/csv.js";
-import {
-  makeEnv,
-  scope,
-  MERCHANT,
-  OTHER,
-  ORDER,
-  hash,
-  address,
-} from "./helpers.js";
+import { describe, expect, it } from "vitest";
+import { IndexerDb, buildExport, eventSetHash, indexOnce, rebuild } from "../src/index.js";
+import { FakeChain, PAYER, PAYTO, ROUTER, cfg, order, paidLog, refundedLog, transferLog, txHash } from "./fake.js";
 
-describe("persisted event indexer", () => {
-  it("indexes only confirmed blocks and pages across a 1,000-block boundary without gaps", async () => {
-    const e = makeEnv(1000);
-    e.chain.head = 2005;
-    await e.chain.paid(1000);
-    await e.chain.paid(1001, OTHER, hash(202));
-    await e.chain.paid(2004, MERCHANT, hash(203));
-    await e.indexer.sync();
-    expect(e.db.cursor).toBe(2003);
-    expect(e.chain.pages).toEqual([
-      { from: 1, to: 1000 },
-      { from: 1001, to: 2000 },
-      { from: 2001, to: 2003 },
-    ]);
-    expect(e.db.events()).toHaveLength(2);
-    e.chain.head++;
-    await e.indexer.sync();
-    expect(e.db.events()).toHaveLength(3);
-    e.db.close();
+const noSleep = async () => undefined;
+
+function setup(headBlock = 400) {
+  const chain = new FakeChain(headBlock);
+  const db = new IndexerDb(":memory:");
+  return { chain, db, config: cfg(), run: () => indexOnce({ db, src: chain, cfg: cfg(), sleep: noSleep }) };
+}
+
+function seed(chain: FakeChain) {
+  chain.add(
+    paidLog({ block: 150, orderId: order(1), value: 25_000_000n, fee: 50_000n }),
+    refundedLog({ block: 160, orderId: order(1), amount: 5_000_000n, total: 5_000_000n, index: 0 }),
+    paidLog({ block: 170, orderId: order(2), value: 1_000_000n, fee: 0n }),
+    transferLog({ block: 180, from: PAYER, to: PAYTO, value: 1_500_000n }),
+    refundedLog({ block: 190, orderId: order(1), amount: 2_000_000n, total: 7_000_000n, index: 1 }),
+  );
+}
+
+describe("indexing", () => {
+  it("6. running index twice produces no duplicate rows", async () => {
+    const { chain, db, run } = setup();
+    seed(chain);
+    const first = await run();
+    const rowsAfterFirst = db.ledger();
+    const eventsAfterFirst = db.events().length;
+    const second = await run();
+    expect(first.newEvents).toBe(5);
+    expect(second.newEvents).toBe(0);
+    expect(db.ledger()).toEqual(rowsAfterFirst);
+    expect(db.events()).toHaveLength(eventsAfterFirst);
+    expect(rowsAfterFirst.map((r) => r.source)).toEqual(["router", "router", "payto_transfer"]);
   });
-  it("deduplicates logs and produces the same checkpoint after rebuilding a deleted database", async () => {
-    const e = makeEnv();
-    await e.chain.paid();
-    await e.chain.refund();
-    e.chain.duplicate = true;
-    await Promise.all([e.indexer.sync(), e.indexer.sync()]);
-    expect(e.db.events()).toHaveLength(2);
-    const first = await e.indexer.export({ merchantId: MERCHANT });
-    const otherDb = new IndexDb(":memory:", scope),
-      other = new Indexer(otherDb, e.chain, scope, 2);
-    const second = await other.export({ merchantId: MERCHANT });
-    expect(second.csv).toBe(first.csv);
-    expect(second.meta.eventSetHash).toBe(first.meta.eventSetHash);
-    e.db.close();
-    otherDb.close();
+
+  it("re-reading the same block range inserts nothing new (keyed by tx_hash, log_index)", async () => {
+    const { chain, db, run } = setup();
+    seed(chain);
+    await run();
+    const before = db.events();
+    // Force a re-scan from the deploy block.
+    db.raw.prepare("DELETE FROM state").run();
+    await run();
+    expect(db.events()).toEqual(before);
   });
-  it("reopens persisted state and resumes without fetching prior pages", async () => {
-    const e = makeEnv();
-    await e.chain.paid();
-    await e.indexer.sync();
-    const reopened = new IndexDb(e.db.raw.serialize(), scope),
-      next = new Indexer(reopened, e.chain, scope, 3);
-    e.chain.pages = [];
-    e.chain.head = 15;
-    await next.sync();
-    expect(e.chain.pages[0]?.from).toBe(11);
-    expect(reopened.events()).toHaveLength(1);
-    e.db.close();
-    reopened.close();
+
+  it("7. rebuild from raw events gives rows identical to the incremental run", async () => {
+    const { chain, db, run, config } = setup(300);
+    seed(chain);
+    await run(); // finalized = 288
+    // More activity arrives later, so the ledger is built across several incremental runs.
+    chain.add(paidLog({ block: 292, orderId: order(3), value: 9_000_000n, fee: 0n }));
+    chain.add(refundedLog({ block: 295, orderId: order(3), amount: 9_000_000n, total: 9_000_000n, index: 0 }));
+    chain.head = 320;
+    await run();
+    const incremental = db.ledger();
+    expect(incremental.length).toBeGreaterThan(3);
+    const rebuilt = rebuild(db, config);
+    expect(db.ledger()).toEqual(incremental);
+    expect(rebuilt.map((r) => r.key).sort()).toEqual(incremental.map((r) => r.key).sort());
+    // And a rebuild after wiping the derived table still matches.
+    db.clearLedger();
+    rebuild(db, config);
+    expect(db.ledger()).toEqual(incremental);
   });
-  it("rolls back orphaned refunds and replaces them with the new canonical history", async () => {
-    const e = makeEnv();
-    await e.chain.paid();
-    await e.chain.refund();
-    await e.indexer.sync();
-    expect(buildLedger(e.db.events()).orders[0]?.refunded).toBe("5.000000");
-    await e.chain.reorg(4);
-    await e.chain.refund(5, "1000000");
-    await e.indexer.sync();
-    expect(buildLedger(e.db.events()).orders[0]?.refunded).toBe("1.000000");
-    expect(e.db.events().some((r) => r.event.blockNumber === 4)).toBe(false);
-    e.db.close();
+
+  it("8. a reorg inside the unfinalized window changes nothing in the finalized ledger, and rows are right after re-read", async () => {
+    const { chain, db, run } = setup(300); // finalized = 288
+    seed(chain);
+    // A payment in the unfinalized window (block 295 > 288), which will be reorged away.
+    const ghost = paidLog({ block: 295, orderId: order(9), value: 3_000_000n, fee: 0n });
+    chain.add(ghost);
+    await run();
+    const finalizedRows = db.ledger();
+    expect(finalizedRows.some((r) => r.orderId === order(9))).toBe(false); // not stored: not final yet
+    expect(db.getCursor()!.block).toBe(288);
+
+    // Reorg: the ghost payment disappears, a different one lands in its place, hashes change above the cursor.
+    chain.logs = chain.logs.filter((l) => l !== ghost);
+    chain.add(paidLog({ block: 296, orderId: order(10), value: 4_000_000n, fee: 0n }));
+    chain.fork = 1;
+    chain.forkAbove = 288; // the reorg is confined to the unfinalized window
+    await run();
+    expect(db.ledger().filter((r) => finalizedRows.some((f) => f.key === r.key))).toEqual(finalizedRows); // finalized part untouched
+    expect(db.ledger().some((r) => r.orderId === order(9))).toBe(false); // the reorged-out payment never appears
+
+    // Chain advances; block 296 is now final and is read correctly.
+    chain.head = 320;
+    await run();
+    const keys = db.ledger().map((r) => r.orderId);
+    expect(keys).toContain(order(10));
+    expect(keys).not.toContain(order(9));
   });
-  it("handles a deep reorg and a shorter chain safely", async () => {
-    const e = makeEnv();
-    await e.chain.paid();
-    await e.indexer.sync();
-    await e.chain.reorg(1);
-    e.chain.head = 5;
-    await e.chain.paid(3);
-    await e.indexer.sync();
-    expect(e.db.cursor).toBe(3);
-    expect(e.db.events()).toHaveLength(1);
-    expect(e.db.events()[0]?.event.blockNumber).toBe(3);
-    e.db.close();
+
+  it("stops instead of guessing when a reorg is deeper than the confirmation depth", async () => {
+    const { chain, run } = setup(300);
+    seed(chain);
+    await run();
+    chain.fork = 1; // every block hash changes, including the stored cursor block
+    chain.head = 330;
+    await expect(run()).rejects.toThrow(/reorg deeper/);
   });
-  it("does not advance the cursor past an RPC failure and resumes from the failed page", async () => {
-    const e = makeEnv();
-    await e.chain.paid();
-    e.chain.failAt = 4;
-    await expect(e.indexer.sync()).rejects.toThrow("RPC unavailable");
-    expect(e.db.cursor).toBe(3);
-    expect(e.indexer.lastError).toContain("RPC unavailable");
-    e.chain.failAt = undefined;
-    await e.indexer.sync();
-    expect(e.db.cursor).toBe(10);
-    expect(e.indexer.lastError).toBeNull();
-    e.db.close();
-  });
-  it("bounds work per sync and refuses exports beyond the indexed cursor", async () => {
-    const e = makeEnv(2, 1);
-    await e.chain.paid();
-    await e.indexer.sync();
-    expect(e.db.cursor).toBe(2);
-    await expect(e.indexer.export({ toBlock: 10 })).rejects.toThrow(
-      "not fully indexed",
-    );
-    e.db.close();
-  });
-  it("keeps refund-only export ranges complete using earlier payment context", async () => {
-    const e = makeEnv();
-    await e.chain.paid();
-    await e.chain.refund();
-    const bundle = await e.indexer.export({
-      fromBlock: 4,
-      toBlock: 4,
-      merchantId: MERCHANT,
-    });
-    const rows = readCsv(bundle.csv);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      gross_usdt: "0.000000",
-      refunded_usdt: "5.000000",
-      net_usdt: "-5.000000",
-      status: "partially_refunded",
-    });
-    e.db.close();
-  });
-  it("keeps full refunds in payer accounting and shows the merchant's sponsored fee as negative net", async () => {
-    const e = makeEnv();
-    await e.chain.paid();
-    await e.chain.refund(4, "25000000");
-    const ledger = await e.indexer.ledger(MERCHANT);
-    expect(ledger.orders[0]).toMatchObject({
-      gross: "25.000000",
-      fee: "0.050000",
-      refunded: "25.000000",
-      net: "-0.050000",
-      status: "refunded",
-      refundCount: 1,
-    });
-    expect(ledger.totals.net).toBe("-0.050000");
-    e.db.close();
-  });
-  it("refuses wrong networks, mismatched database scope and invalid page sizes", async () => {
-    const e = makeEnv();
-    e.chain.chainId = 1;
-    await expect(e.indexer.sync()).rejects.toThrow("chain ID");
-    expect(
-      () =>
-        new IndexDb(e.db.raw.serialize(), { ...scope, router: address(99) }),
-    ).toThrow("different");
-    expect(() => new Indexer(e.db, e.chain, scope, 1001)).toThrow("Page size");
-    e.db.close();
-  });
-  it("never commits a log whose hash disagrees with its block", async () => {
-    const e = makeEnv();
-    const paid = await e.chain.paid();
-    paid.blockHash = hash(999999);
-    await expect(e.indexer.sync()).rejects.toThrow("canonical block");
-    expect(e.db.cursor).toBe(0);
-    e.db.close();
-  });
-  it("removes formerly confirmed data when the confirmation policy increases", async () => {
-    const e = makeEnv();
-    await e.chain.paid();
-    await e.chain.refund(8);
-    await e.indexer.sync();
-    const stricter = { ...scope, confirmations: 5 };
-    const db = new IndexDb(e.db.raw.serialize(), stricter),
-      indexer = new Indexer(db, e.chain, stricter, 3);
-    await indexer.sync();
-    expect(db.cursor).toBe(7);
-    expect(db.events()).toHaveLength(1);
-    expect((await indexer.ledger(MERCHANT)).orders[0]?.refunded).toBe(
-      "0.000000",
-    );
-    db.close();
-    e.db.close();
-  });
-  it("rejects conflicting duplicates without partially committing a page", async () => {
-    const e = makeEnv();
-    const event = await e.chain.paid();
-    e.chain.events.push({ ...event, value: "26000000" });
-    await expect(e.indexer.sync()).rejects.toThrow("Conflicting log");
-    expect(e.db.cursor).toBe(0);
-    e.db.close();
-  });
-  it("retries a page if the chain reorganizes during its RPC reads", async () => {
-    const e = makeEnv();
-    await e.chain.paid();
-    const getEvents = e.chain.getEvents.bind(e.chain);
-    let changed = false;
-    e.chain.getEvents = async (from, to) => {
-      const rows = await getEvents(from, to);
-      if (!changed) {
-        changed = true;
-        await e.chain.reorg(1);
-      }
-      return rows;
-    };
-    await expect(e.indexer.sync()).rejects.toThrow("Chain changed");
-    expect(e.db.cursor).toBe(0);
-    await e.indexer.sync();
-    expect(e.db.cursor).toBe(10);
-    expect(e.db.events()).toHaveLength(0);
-    e.db.close();
+
+  it("only stores blocks up to head - confirmations", async () => {
+    const { chain, db, run } = setup(195); // finalized = 183: the refund at block 190 is not final
+    seed(chain);
+    await run();
+    expect(db.getCursor()!.block).toBe(183);
+    expect(db.events().every((e) => e.block <= 183)).toBe(true);
+    expect(db.ledger().find((r) => r.orderId === order(1))!.refundedUsdt).toBe("5.000000");
+    chain.head = 210;
+    await run();
+    expect(db.ledger().find((r) => r.orderId === order(1))!.refundedUsdt).toBe("7.000000");
   });
 });
+
+describe("export", () => {
+  it("9. two exports of the same range are byte-for-byte identical and the eventSetHash matches", async () => {
+    const { chain, db, run, config } = setup();
+    seed(chain);
+    await run();
+    const a = buildExport(db, config, { from: 100, to: 300, generatedAt: "2026-11-06T00:00:00.000Z" });
+    const b = buildExport(db, config, { from: 100, to: 300, generatedAt: "2026-11-06T00:00:00.000Z" });
+    expect(Buffer.from(a.csv)).toEqual(Buffer.from(b.csv));
+    expect(JSON.stringify(a.meta)).toBe(JSON.stringify(b.meta));
+    expect(a.meta.eventSetHash).toBe(b.meta.eventSetHash);
+    expect(a.meta.eventSetHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(a.meta).toMatchObject({ fromBlock: 100, toBlock: 300, confirmations: 12 });
+
+    // Same hash from a different database filled by a fresh index run, and after a rebuild.
+    const other = setup();
+    seed(other.chain);
+    other.chain.logs = [...chain.logs];
+    await other.run();
+    rebuild(other.db, config);
+    expect(buildExport(other.db, config, { from: 100, to: 300 }).csv).toBe(a.csv);
+    expect(buildExport(other.db, config, { from: 100, to: 300 }).meta.eventSetHash).toBe(a.meta.eventSetHash);
+  });
+
+  it("eventSetHash is the SHA-256 of the sorted tx_hash:log_index lines", () => {
+    const evs = [
+      { txHash: "0xbb", logIndex: 1 },
+      { txHash: "0xaa", logIndex: 2 },
+    ];
+    expect(eventSetHash(evs)).toBe(eventSetHash([...evs].reverse()));
+    expect(eventSetHash(evs)).not.toBe(eventSetHash([evs[0]!]));
+  });
+
+  it("12. an export never includes blocks above the finalized head", async () => {
+    const { chain, db, run, config } = setup(195); // finalized = 183
+    seed(chain);
+    await run();
+    const res = buildExport(db, config, { from: 100, to: 10_000 });
+    expect(res.meta.toBlock).toBe(183);
+    expect(res.rows.every((r) => r.block <= 183)).toBe(true);
+    const asOf = res.rows.find((r) => r.orderId === order(1))!;
+    expect(asOf.refundedUsdt).toBe("5.000000"); // the block-190 refund is not final, so it is not applied
+  });
+
+  it("filters rows to the requested range but applies refunds up to the range end", async () => {
+    const { chain, db, run, config } = setup();
+    seed(chain);
+    await run();
+    const res = buildExport(db, config, { from: 165, to: 300 });
+    expect(res.rows.map((r) => r.block)).toEqual([170, 180]); // the block-150 order is outside the range
+    expect(buildExport(db, config, { from: 100, to: 175 }).rows.find((r) => r.orderId === order(1))!.refundedUsdt).toBe("5.000000");
+  });
+});
+
+describe("paging and rpc errors", () => {
+  it("10. a 5,500 block range is read in pages of at most 1,000, and -32062 halves the page", async () => {
+    const chain = new FakeChain(6000);
+    const db = new IndexerDb(":memory:");
+    const requests: [number, number][] = [];
+    chain.add(paidLog({ block: 3000, orderId: order(1), value: 1_000_000n, fee: 0n }));
+    const config = cfg({ deployBlock: 100, confirmations: 0, facilitatorPayTo: undefined });
+    await indexOnce({ db, src: chain, cfg: { ...config }, sleep: noSleep, onRequest: (f, t) => requests.push([f, t]) });
+    expect(requests[0]![0]).toBe(100);
+    expect(requests.at(-1)![1]).toBe(6000);
+    expect(Math.max(...requests.map(([f, t]) => t - f + 1))).toBeLessThanOrEqual(1000);
+    expect(requests.length).toBeGreaterThanOrEqual(6); // 5,901 blocks / 1,000 per page
+    expect(db.ledger()).toHaveLength(1);
+
+    // Now an endpoint that only accepts 300 blocks: the page halves 1000 -> 500 -> 250 and the run still succeeds.
+    const strict = new FakeChain(6000);
+    strict.maxRange = 300;
+    strict.add(paidLog({ block: 3000, orderId: order(1), value: 1_000_000n, fee: 0n }));
+    const db2 = new IndexerDb(":memory:");
+    const reqs2: [number, number][] = [];
+    await indexOnce({ db: db2, src: strict, cfg: { ...config }, sleep: noSleep, onRequest: (f, t) => reqs2.push([f, t]) });
+    expect(strict.errors).toBe(2); // 1000 and 500 were rejected, then 250 worked
+    expect(reqs2.slice(0, 3).map(([f, t]) => t - f + 1)).toEqual([1000, 500, 250]);
+    expect(Math.max(...reqs2.slice(3).map(([f, t]) => t - f + 1))).toBeLessThanOrEqual(250);
+    expect(db2.ledger()).toHaveLength(1);
+    expect(db2.getCursor()!.block).toBe(6000);
+  });
+
+  it("backs off on rate limits and retries", async () => {
+    const chain = new FakeChain(500);
+    chain.add(paidLog({ block: 200, orderId: order(1), value: 1n, fee: 0n }));
+    let failures = 2;
+    const real = chain.getLogs.bind(chain);
+    chain.getLogs = async (q) => {
+      if (failures-- > 0) throw Object.assign(new Error("429 Too Many Requests"), { code: 429 });
+      return real(q);
+    };
+    const sleeps: number[] = [];
+    const db = new IndexerDb(":memory:");
+    await indexOnce({ db, src: chain, cfg: cfg({ confirmations: 0, facilitatorPayTo: undefined }), sleep: async (ms) => void sleeps.push(ms) });
+    expect(sleeps).toEqual([500, 1000]);
+    expect(db.ledger()).toHaveLength(1);
+  });
+
+  it("does not swallow unexpected errors", async () => {
+    const chain = new FakeChain(500);
+    chain.getLogs = async () => {
+      throw new Error("boom");
+    };
+    await expect(indexOnce({ db: new IndexerDb(":memory:"), src: chain, cfg: cfg({ confirmations: 0 }), sleep: noSleep })).rejects.toThrow("boom");
+  });
+});
+
+void ROUTER;
+void txHash;

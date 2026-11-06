@@ -22,6 +22,8 @@ services:
       - { key: WEBHOOK_SECRET, sync: false }
       - { key: LOSS_BUDGET_WBT_PER_HOUR, value: "0.05" }
       - { key: PAYER_CAP_USDT, value: "100" }
+      # Render terminates TLS in one proxy hop; without this every client shares one rate-limit key.
+      - { key: TRUST_PROXY_HOPS, value: "1" }
       - { key: MAX_GAS_PRICE, sync: false }
       - { key: EXPLORER_BASE_URL, sync: false }
       - { key: MAX_GAS_LIMIT, value: "500000" }

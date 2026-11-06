@@ -1,104 +1,137 @@
 import Database from "better-sqlite3";
-import {
-  normalizeScope,
-  type Scope,
-  type Block,
-  type RecordedEvent,
-  eventKey,
-} from "./model.js";
+import type { LedgerRow, RawEvent, RawKind } from "./types.js";
 
-export class IndexDb {
+export class IndexerDb {
   readonly raw: Database.Database;
-  readonly scope: Scope;
-  constructor(path: string | Buffer, scope: Scope) {
-    this.scope = normalizeScope(scope);
+
+  constructor(path: string) {
     this.raw = new Database(path);
     this.raw.pragma("journal_mode = WAL");
-    this.raw
-      .exec(`CREATE TABLE IF NOT EXISTS index_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS index_blocks (number INTEGER PRIMARY KEY, hash TEXT NOT NULL, timestamp INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS index_events (id TEXT PRIMARY KEY, block_number INTEGER NOT NULL, log_index INTEGER NOT NULL, body TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS idx_events_block ON index_events(block_number,log_index);`);
-    // Confirmation depth may increase; sync rolls the stored cursor back to the new safe head.
-    const { confirmations: _depth, ...identity } = this.scope;
-    const binding = JSON.stringify(identity);
-    const stored = this.raw
-      .prepare("SELECT value FROM index_settings WHERE key='scope'")
-      .get() as { value: string } | undefined;
-    if (stored && stored.value !== binding) {
-      this.raw.close();
-      throw new Error(
-        "Database belongs to a different chain/router/token/scope",
+    this.raw.exec(`
+      CREATE TABLE IF NOT EXISTS raw_events (
+        tx_hash TEXT NOT NULL,
+        log_index INTEGER NOT NULL,
+        block INTEGER NOT NULL,
+        block_hash TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        address TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        args TEXT NOT NULL,
+        PRIMARY KEY (tx_hash, log_index)
       );
-    }
-    this.raw
-      .prepare("INSERT OR IGNORE INTO index_settings VALUES ('scope',?)")
-      .run(binding);
-  }
-  get cursor(): number {
-    const row = this.raw
-      .prepare("SELECT value FROM index_settings WHERE key='cursor'")
-      .get() as { value: string } | undefined;
-    return row ? Number(row.value) : this.scope.deploymentBlock - 1;
-  }
-  block(number: number): Block | undefined {
-    return this.raw
-      .prepare("SELECT number,hash,timestamp FROM index_blocks WHERE number=?")
-      .get(number) as Block | undefined;
-  }
-  checkpoints(): Block[] {
-    return this.raw
-      .prepare(
-        "SELECT number,hash,timestamp FROM index_blocks ORDER BY number DESC",
-      )
-      .all() as Block[];
-  }
-  events(to = this.cursor): RecordedEvent[] {
-    return (
-      this.raw
-        .prepare(
-          "SELECT body FROM index_events WHERE block_number<=? ORDER BY block_number,log_index,id",
-        )
-        .all(to) as { body: string }[]
-    ).map((row) => JSON.parse(row.body) as RecordedEvent);
-  }
-  private setCursor(number: number) {
-    this.raw
-      .prepare(
-        "INSERT INTO index_settings VALUES ('cursor',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-      )
-      .run(String(number));
-  }
-  commit(to: number, page: { blocks: Block[]; events: RecordedEvent[] }) {
-    this.raw.transaction(() => {
-      const block = this.raw.prepare(
-        "INSERT OR REPLACE INTO index_blocks VALUES (@number,@hash,@timestamp)",
+      CREATE INDEX IF NOT EXISTS idx_raw_block ON raw_events(block, log_index);
+      CREATE TABLE IF NOT EXISTS ledger (
+        key TEXT PRIMARY KEY,
+        date_utc TEXT NOT NULL,
+        source TEXT NOT NULL,
+        order_id TEXT NOT NULL,
+        merchant_id TEXT NOT NULL,
+        payer TEXT NOT NULL,
+        gross_usdt TEXT NOT NULL,
+        relay_fee_usdt TEXT NOT NULL,
+        refunded_usdt TEXT NOT NULL,
+        net_usdt TEXT NOT NULL,
+        status TEXT NOT NULL,
+        tx_hash TEXT NOT NULL,
+        block INTEGER NOT NULL,
+        log_index INTEGER NOT NULL
       );
-      for (const b of page.blocks) block.run(b);
-      const insert = this.raw.prepare(
-        "INSERT INTO index_events VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING",
-      );
-      for (const e of page.events) {
-        const id = eventKey(e.event),
-          body = JSON.stringify(e);
-        const existing = this.raw
-          .prepare("SELECT body FROM index_events WHERE id=?")
-          .get(id) as { body: string } | undefined;
-        if (existing && existing.body !== body)
-          throw new Error(`Conflicting stored log ${id}`);
-        insert.run(id, e.event.blockNumber, e.event.logIndex, body);
-      }
-      this.setCursor(to);
-    })();
+      CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    `);
   }
-  rollback(to: number) {
-    this.raw.transaction(() => {
-      this.raw.prepare("DELETE FROM index_events WHERE block_number>?").run(to);
-      this.raw.prepare("DELETE FROM index_blocks WHERE number>?").run(to);
-      this.setCursor(to);
-    })();
-  }
+
   close() {
     this.raw.close();
+  }
+
+  // ---- cursor: last FINALIZED block scanned
+  getCursor(): { block: number; hash: string } | undefined {
+    const b = this.raw.prepare("SELECT value FROM state WHERE key='cursor_block'").get() as { value: string } | undefined;
+    const h = this.raw.prepare("SELECT value FROM state WHERE key='cursor_hash'").get() as { value: string } | undefined;
+    return b && h ? { block: Number(b.value), hash: h.value } : undefined;
+  }
+
+  setCursor(block: number, hash: string) {
+    const up = this.raw.prepare("INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+    up.run("cursor_block", String(block));
+    up.run("cursor_hash", hash);
+  }
+
+  // ---- raw events (idempotent on (tx_hash, log_index))
+  insertEvents(events: RawEvent[]): number {
+    const stmt = this.raw.prepare(
+      `INSERT OR IGNORE INTO raw_events (tx_hash, log_index, block, block_hash, timestamp, address, kind, args)
+       VALUES (@txHash, @logIndex, @block, @blockHash, @timestamp, @address, @kind, @args)`,
+    );
+    let n = 0;
+    for (const e of events) n += stmt.run({ ...e, args: JSON.stringify(e.args) }).changes;
+    return n;
+  }
+
+  /** Raw events with block <= toBlock (optionally >= fromBlock), ordered by block then log index. */
+  events(opts: { fromBlock?: number; toBlock?: number } = {}): RawEvent[] {
+    const rows = this.raw
+      .prepare("SELECT * FROM raw_events WHERE block >= ? AND block <= ? ORDER BY block, log_index")
+      .all(opts.fromBlock ?? 0, opts.toBlock ?? Number.MAX_SAFE_INTEGER) as {
+      tx_hash: string;
+      log_index: number;
+      block: number;
+      block_hash: string;
+      timestamp: number;
+      address: string;
+      kind: string;
+      args: string;
+    }[];
+    return rows.map((r) => ({
+      txHash: r.tx_hash,
+      logIndex: r.log_index,
+      block: r.block,
+      blockHash: r.block_hash,
+      timestamp: r.timestamp,
+      address: r.address,
+      kind: r.kind as RawKind,
+      args: JSON.parse(r.args) as Record<string, string>,
+    }));
+  }
+
+  // ---- ledger (derived; safe to wipe and rebuild)
+  upsertLedger(rows: LedgerRow[]) {
+    const stmt = this.raw.prepare(
+      `INSERT INTO ledger (key, date_utc, source, order_id, merchant_id, payer, gross_usdt, relay_fee_usdt, refunded_usdt, net_usdt, status, tx_hash, block, log_index)
+       VALUES (@key, @dateUtc, @source, @orderId, @merchantId, @payer, @grossUsdt, @relayFeeUsdt, @refundedUsdt, @netUsdt, @status, @txHash, @block, @logIndex)
+       ON CONFLICT(key) DO UPDATE SET date_utc=excluded.date_utc, source=excluded.source, order_id=excluded.order_id,
+         merchant_id=excluded.merchant_id, payer=excluded.payer, gross_usdt=excluded.gross_usdt,
+         relay_fee_usdt=excluded.relay_fee_usdt, refunded_usdt=excluded.refunded_usdt, net_usdt=excluded.net_usdt,
+         status=excluded.status, tx_hash=excluded.tx_hash, block=excluded.block, log_index=excluded.log_index`,
+    );
+    for (const r of rows) stmt.run(r);
+  }
+
+  clearLedger() {
+    this.raw.prepare("DELETE FROM ledger").run();
+  }
+
+  ledger(): LedgerRow[] {
+    const rows = this.raw.prepare("SELECT * FROM ledger ORDER BY block, log_index").all() as Record<string, unknown>[];
+    return rows.map((r) => ({
+      key: r.key as string,
+      dateUtc: r.date_utc as string,
+      source: r.source as LedgerRow["source"],
+      orderId: r.order_id as string,
+      merchantId: r.merchant_id as string,
+      payer: r.payer as string,
+      grossUsdt: r.gross_usdt as string,
+      relayFeeUsdt: r.relay_fee_usdt as string,
+      refundedUsdt: r.refunded_usdt as string,
+      netUsdt: r.net_usdt as string,
+      status: r.status as LedgerRow["status"],
+      txHash: r.tx_hash as string,
+      block: r.block as number,
+      logIndex: r.log_index as number,
+    }));
+  }
+
+  transaction<T>(fn: () => T): T {
+    return this.raw.transaction(fn)();
   }
 }

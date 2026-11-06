@@ -1,166 +1,169 @@
-import { IndexDb } from "./db.js";
-import { readPage } from "./chain.js";
-import { normalizeScope, type Scope, type ChainReader } from "./model.js";
-import { createExport } from "./export.js";
-import { buildLedger, formatAmount } from "./ledger.js";
+import { createHash } from "node:crypto";
+import { pad, type Hex } from "viem";
+import { IndexerDb } from "./db.js";
+import { decodeRouterLog, decodeTransferLog, TRANSFER_TOPIC } from "./decode.js";
+import { buildLedgerRows, toCsv } from "./ledger.js";
+import { getLogsPaged, type LogSource } from "./rpc.js";
+import type { ChainLog, ExportMeta, LedgerRow, RawEvent } from "./types.js";
 
-export class Indexer {
-  readonly scope: Scope;
-  private running: Promise<void> | undefined;
-  private timer: NodeJS.Timeout | undefined;
-  head: number | null = null;
-  lastError: string | null = null;
-  constructor(
-    readonly db: IndexDb,
-    readonly chain: ChainReader,
-    scope: Scope,
-    readonly pageSize = 1000,
-    readonly maxPagesPerSync = 20,
-  ) {
-    this.scope = normalizeScope(scope);
-    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000)
-      throw new Error("Page size must be between 1 and 1,000");
-    if (!Number.isInteger(maxPagesPerSync) || maxPagesPerSync < 1)
-      throw new Error("Invalid page limit");
-    if (JSON.stringify(db.scope) !== JSON.stringify(this.scope))
-      throw new Error("Store scope does not match indexer scope");
-  }
-  sync(): Promise<void> {
-    if (this.running) return this.running;
-    this.running = this.syncOnce()
-      .then(
-        () => {
-          this.lastError = null;
-        },
-        (e) => {
-          this.lastError = String(e);
-          throw e;
-        },
-      )
-      .finally(() => {
-        this.running = undefined;
-      });
-    return this.running;
-  }
-  private async syncOnce() {
-    if ((await this.chain.getChainId()) !== this.scope.chainId)
-      throw new Error("RPC chain ID does not match index scope");
-    this.head = await this.chain.getHead();
-    const floor = this.scope.deploymentBlock - 1,
-      target = Math.max(floor, this.head - this.scope.confirmations);
-    if (this.db.cursor > target) this.db.rollback(target);
-    // A tip hash commits its entire ancestry. Sparse event/page checkpoints suffice for rollback.
-    if (this.db.cursor >= this.scope.deploymentBlock) {
-      const canonical = await this.chain.getBlock(this.db.cursor);
-      if (
-        canonical.hash.toLowerCase() !==
-        this.db.block(this.db.cursor)?.hash.toLowerCase()
-      ) {
-        let ancestor = floor;
-        for (const b of this.db.checkpoints()) {
-          if (
-            (await this.chain.getBlock(b.number)).hash.toLowerCase() ===
-            b.hash.toLowerCase()
-          ) {
-            ancestor = b.number;
-            break;
-          }
-        }
-        this.db.rollback(ancestor);
-      }
-    }
-    for (
-      let pages = 0;
-      this.db.cursor < target && pages < this.maxPagesPerSync;
-      pages++
-    ) {
-      const previous = this.db.cursor,
-        from = previous + 1,
-        to = Math.min(target, from + this.pageSize - 1);
-      const page = await readPage(this.chain, from, to);
-      if (
-        previous >= this.scope.deploymentBlock &&
-        (await this.chain.getBlock(previous)).hash.toLowerCase() !==
-          this.db.block(previous)?.hash.toLowerCase()
-      )
-        throw new Error("Reorg crossed the page anchor; retry sync");
-      this.db.commit(to, page);
+export interface IndexerConfig {
+  router: string;
+  usdt: string;
+  /** Bare USDT Transfers to this address are recorded as payto_transfer deposits (not x402 proof). Optional. */
+  facilitatorPayTo?: string;
+  /** A block is final after this many confirmations. A setting, not a proof of finality. */
+  confirmations: number;
+  /** First block to scan (the router's deploy block). */
+  deployBlock: number;
+  decimals?: number;
+  pageSize?: number;
+}
+
+export interface Deps {
+  db: IndexerDb;
+  src: LogSource;
+  cfg: IndexerConfig;
+  sleep?: (ms: number) => Promise<void>;
+  log?: (msg: string) => void;
+  onRequest?: (from: number, to: number) => void;
+}
+
+const lc = (s: string) => s.toLowerCase();
+
+export interface IndexResult {
+  from: number;
+  to: number;
+  newEvents: number;
+  head: number;
+  finalized: number;
+}
+
+function ledgerCfg(cfg: IndexerConfig) {
+  return { router: cfg.router, facilitatorPayTo: cfg.facilitatorPayTo, decimals: cfg.decimals };
+}
+
+/**
+ * Catches up once. Only FINALIZED blocks (head - confirmations) are ever stored, and the cursor only advances to a
+ * finalized block, so a reorg inside the unfinalized window cannot leave stale rows: those blocks are simply read
+ * again on the next run, once they are final. Finalized data is never deleted. If the stored cursor block hash no
+ * longer matches the chain, a reorg deeper than `confirmations` happened and the indexer stops instead of guessing.
+ */
+export async function indexOnce(d: Deps): Promise<IndexResult> {
+  const { db, src, cfg } = d;
+  const head = await src.getBlockNumber();
+  const finalized = head - cfg.confirmations;
+  const cursor = db.getCursor();
+  const start = cursor ? cursor.block + 1 : cfg.deployBlock;
+
+  if (cursor) {
+    const onChain = await src.getBlock(cursor.block);
+    if (onChain.hash !== cursor.hash) {
+      throw new Error(
+        `reorg deeper than ${cfg.confirmations} confirmations at block ${cursor.block}; ` +
+          `refusing to continue. Raise CONFIRMATIONS and re-index from a fresh database.`,
+      );
     }
   }
-  async snapshot(to?: number) {
-    await this.sync();
-    const cursor = this.db.cursor,
-      end = to ?? cursor;
-    if (end < this.scope.deploymentBlock || end > cursor)
-      throw new Error("Requested range is not fully indexed and confirmed");
-    const anchor = await this.chain.getBlock(cursor);
-    if (anchor.hash.toLowerCase() !== this.db.block(cursor)?.hash.toLowerCase())
-      throw new Error("Indexed history changed; retry sync");
-    const history = this.db.events(end),
-      endBlock = await this.chain.getBlock(end);
-    if ((await this.chain.getBlock(cursor)).hash !== anchor.hash)
-      throw new Error("Chain changed during snapshot; retry");
-    return {
-      history,
-      toBlock: end,
-      toBlockHash: endBlock.hash,
-      indexedThrough: cursor,
-    };
+  if (finalized < start) return { from: start, to: finalized, newEvents: 0, head, finalized };
+
+  const paging = { pageSize: cfg.pageSize, sleep: d.sleep, onRequest: d.onRequest };
+  const routerLogs = await getLogsPaged(src, { address: cfg.router }, start, finalized, paging);
+  const decoded: { log: ChainLog; kind: RawEvent["kind"]; args: Record<string, string> }[] = [];
+  for (const log of routerLogs) {
+    const ev = decodeRouterLog(log);
+    if (ev) decoded.push({ log, ...ev });
   }
-  async export(
-    options: { fromBlock?: number; toBlock?: number; merchantId?: string } = {},
-  ) {
-    const snapshot = await this.snapshot(options.toBlock),
-      from = options.fromBlock ?? this.scope.deploymentBlock;
-    if (
-      !Number.isSafeInteger(from) ||
-      from < this.scope.deploymentBlock ||
-      from > snapshot.toBlock
-    )
-      throw new Error("Invalid export range");
-    return createExport(snapshot.history, this.scope, {
-      fromBlock: from,
-      toBlock: snapshot.toBlock,
-      toBlockHash: snapshot.toBlockHash,
-      merchantId: options.merchantId,
-    });
+  if (cfg.facilitatorPayTo) {
+    const toTopic = pad(cfg.facilitatorPayTo as Hex, { size: 32 }).toLowerCase();
+    const transfers = await getLogsPaged(src, { address: cfg.usdt, topics: [TRANSFER_TOPIC, null, toTopic] }, start, finalized, paging);
+    for (const log of transfers) {
+      const ev = decodeTransferLog(log);
+      if (ev) decoded.push({ log, ...ev });
+    }
   }
-  async ledger(merchantId: string, limit = 100) {
-    const snapshot = await this.snapshot();
-    const ledger = buildLedger(snapshot.history);
-    const entries = ledger.entries.filter(
-      (r) => r.merchant_id === merchantId.toLowerCase(),
+
+  const blocks = new Map<number, number>(); // block -> timestamp
+  for (const { log } of decoded) {
+    if (!blocks.has(log.blockNumber)) blocks.set(log.blockNumber, (await src.getBlock(log.blockNumber)).timestamp);
+  }
+  const events: RawEvent[] = decoded.map(({ log, kind, args }) => ({
+    txHash: lc(log.transactionHash),
+    logIndex: log.logIndex,
+    block: log.blockNumber,
+    blockHash: lc(log.blockHash),
+    timestamp: blocks.get(log.blockNumber)!,
+    address: lc(log.address),
+    kind,
+    args,
+  }));
+
+  const finalizedHash = (await src.getBlock(finalized)).hash;
+  const newEvents = db.transaction(() => {
+    const n = db.insertEvents(events);
+    db.setCursor(finalized, finalizedHash);
+    // Recompute rows for everything touched by this batch (orders whose Paid/Refunded arrived, new transfers).
+    const all = buildLedgerRows(db.events(), ledgerCfg(cfg));
+    const touchedOrders = new Set(
+      events.filter((e) => e.kind === "Paid" || e.kind === "Refunded").map((e) => `${e.args.merchantId}:${e.args.orderId}`),
     );
-    const units = (s: string) => BigInt(s.replace(".", ""));
-    const sum = (
-      field: "gross_usdt" | "relay_fee_usdt" | "refunded_usdt" | "net_usdt",
-    ) => formatAmount(entries.reduce((v, r) => v + units(r[field]), 0n));
-    return {
-      indexedThrough: snapshot.indexedThrough,
-      toBlock: snapshot.toBlock,
-      totals: {
-        gross: sum("gross_usdt"),
-        fee: sum("relay_fee_usdt"),
-        refunded: sum("refunded_usdt"),
-        net: sum("net_usdt"),
-      },
-      orders: ledger.orders
-        .filter((o) => o.merchantId === merchantId.toLowerCase())
-        .reverse()
-        .slice(0, limit),
-      entries: entries.slice(-limit).reverse(),
-    };
-  }
-  start(intervalMs = 5000, log: (error: unknown) => void = () => undefined) {
-    if (this.timer) return;
-    this.timer = setInterval(() => {
-      void this.sync().catch(log);
-    }, intervalMs);
-    this.timer.unref();
-  }
-  async stop() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = undefined;
-    await this.running?.catch(() => undefined);
-  }
+    const touchedTxs = new Set(events.map((e) => `${e.txHash}:${e.logIndex}`));
+    db.upsertLedger(all.filter((r) => touchedOrders.has(r.key) || touchedTxs.has(r.key)));
+    return n;
+  });
+  d.log?.(`indexed blocks ${start}-${finalized}: ${events.length} events (${newEvents} new)`);
+  return { from: start, to: finalized, newEvents, head, finalized };
+}
+
+/** Wipes the derived ledger and recomputes it from raw events. Raw events are untouched. */
+export function rebuild(db: IndexerDb, cfg: IndexerConfig): LedgerRow[] {
+  const rows = buildLedgerRows(db.events(), ledgerCfg(cfg));
+  db.transaction(() => {
+    db.clearLedger();
+    db.upsertLedger(rows);
+  });
+  return rows;
+}
+
+export function eventSetHash(events: Pick<RawEvent, "txHash" | "logIndex">[]): string {
+  const lines = events.map((e) => `${lc(e.txHash)}:${e.logIndex}`).sort();
+  return createHash("sha256").update(lines.join("\n")).digest("hex");
+}
+
+export interface ExportResult {
+  csv: string;
+  meta: ExportMeta;
+  rows: LedgerRow[];
+}
+
+/**
+ * Builds the CSV and sidecar for [from, to]. `to` is clamped to the finalized cursor, so non-final blocks are never
+ * included. Rows are those whose payment (or payto_transfer deposit) landed in range, with refunds applied up to `to`.
+ * The CSV is a pure function of the stored raw events, so the same range always gives the same bytes.
+ */
+export function buildExport(
+  db: IndexerDb,
+  cfg: IndexerConfig,
+  opts: { from?: number; to?: number; generatedAt?: string },
+): ExportResult {
+  const cursor = db.getCursor();
+  const finalizedHead = cursor?.block ?? cfg.deployBlock - 1;
+  const from = opts.from ?? cfg.deployBlock;
+  const to = Math.min(opts.to ?? finalizedHead, finalizedHead);
+  const upTo = db.events({ toBlock: to });
+  const rows = buildLedgerRows(upTo, ledgerCfg(cfg)).filter((r) => r.block >= from && r.block <= to);
+  const inRange = upTo.filter((e) => e.block >= from);
+  return {
+    csv: toCsv(rows),
+    rows,
+    meta: {
+      fromBlock: from,
+      toBlock: to,
+      confirmations: cfg.confirmations,
+      eventSetHash: eventSetHash(inRange),
+      router: cfg.router.toLowerCase(),
+      usdt: cfg.usdt.toLowerCase(),
+      payTo: cfg.facilitatorPayTo ? cfg.facilitatorPayTo.toLowerCase() : null,
+      generatedAt: opts.generatedAt ?? new Date().toISOString(),
+    },
+  };
 }

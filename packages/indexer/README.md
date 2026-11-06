@@ -1,3 +1,5 @@
+> This document covers the preserved merchant ledger HTTP API under `@quietpay/indexer/api`. Main's indexer CLI remains `pnpm --filter @quietpay/indexer cli`; the independent verifier is unchanged.
+
 # Quietpay ledger, export and verifier
 
 This read-only service rebuilds accounting from PaymentRouter Paid, Refunded and merchant
@@ -39,9 +41,9 @@ confirmation depth are indexed. The database must be distinct from the relayer d
 
 ```powershell
 pnpm --filter @quietpay/indexer start
-pnpm --filter @quietpay/indexer cli sync
-pnpm --filter @quietpay/indexer cli export --out ./export --merchant 0xYOUR_MERCHANT_ID
-pnpm --filter @quietpay/indexer cli verify --csv ./export.csv --meta ./export.meta.json --merchant 0xYOUR_MERCHANT_ID
+pnpm --filter @quietpay/indexer api:cli sync
+pnpm --filter @quietpay/indexer api:cli export --out ./export --merchant 0xYOUR_MERCHANT_ID
+pnpm --filter @quietpay/indexer api:cli verify --csv ./export.csv --meta ./export.meta.json --merchant 0xYOUR_MERCHANT_ID
 ```
 
 Export writes export.csv and export.meta.json and refuses to overwrite existing files.

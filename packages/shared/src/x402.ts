@@ -29,7 +29,7 @@ export const X402Requirements = z.object({
   scheme: z.literal("exact"),
   network: z.string().regex(/^eip155:[1-9][0-9]*$/),
   asset: Address,
-  amount: Amount.max(78).refine((v) => BigInt(v) < 2n ** 256n),
+  amount: Amount,
   payTo: Address,
   maxTimeoutSeconds: z.number().int().min(1).max(600),
   extra: z.object({
@@ -43,7 +43,7 @@ export type X402Requirements = z.infer<typeof X402Requirements>;
 export const X402Authorization = z.object({
   from: Address,
   to: Address,
-  value: Amount.max(78).refine((v) => BigInt(v) < 2n ** 256n),
+  value: Amount,
   validAfter: uint,
   validBefore: uint,
   nonce: Bytes32,

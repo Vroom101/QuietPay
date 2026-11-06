@@ -1,8 +1,19 @@
 import { LitElement, css, html, nothing } from "lit";
-import { formatUsdt, type Order } from "@quietpay/shared";
+import { formatUsdt, parseUsdt, type Order } from "@quietpay/shared";
 import type { PrivateKeyAccount } from "viem/accounts";
-import { WidgetError, fetchOrder, pollOrder, relayPay, signCheckout } from "./client.js";
-import { getOrCreateAccount } from "./keystore.js";
+import {
+  WidgetError,
+  fetchOrder,
+  pinDisplayedOrder,
+  pollOrder,
+  relayPay,
+  signCheckout,
+  verifyCheckout,
+  verifyDisplayedOrder,
+  type DisplayedOrder,
+  type ExpectedCheckout,
+} from "./client.js";
+import { KeystoreError, getOrCreateAccount } from "./keystore.js";
 import { GENERIC_MESSAGE, TIMEOUT_MESSAGE, messageForCode } from "./messages.js";
 
 type View = "loading" | "ready" | "paying" | "settled" | "error";
@@ -15,10 +26,32 @@ const STEPS: Record<string, string> = {
 
 const short = (s: string) => `${s.slice(0, 8)}...${s.slice(-6)}`;
 
+/** Returns the URL only when it parses as http(s); javascript:, data:, vbscript: etc. yield null. */
+export function safeHttpUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export class QuietpayCheckout extends LitElement {
   static properties = {
     orderId: { type: String, attribute: "order-id" },
     relayerUrl: { type: String, attribute: "relayer-url" },
+    // Expected checkout values. Defaults are the qualifying chain 1874, the official USDT, the deployed router and
+    // the token's EIP-712 domain; override only for local test chains. They come from the host page, never the relayer.
+    chainId: { type: Number, attribute: "chain-id" },
+    token: { type: String, attribute: "token" },
+    router: { type: String, attribute: "router" },
+    domainName: { type: String, attribute: "domain-name" },
+    domainVersion: { type: String, attribute: "domain-version" },
+    /** Decimal USDT amount (e.g. "25.5") the shop expects; the order must match it exactly. */
+    expectedAmount: { type: String, attribute: "expected-amount" },
+    /** Optional merchant payout address the shop pins. */
+    expectedPayout: { type: String, attribute: "expected-payout" },
     view: { state: true },
     order: { state: true },
     account: { state: true },
@@ -29,12 +62,27 @@ export class QuietpayCheckout extends LitElement {
 
   declare orderId: string;
   declare relayerUrl: string;
+  declare chainId: number | undefined;
+  declare token: string | undefined;
+  declare router: string | undefined;
+  declare domainName: string | undefined;
+  declare domainVersion: string | undefined;
+  declare expectedAmount: string | undefined;
+  declare expectedPayout: string | undefined;
   declare view: View;
   declare order: Order | undefined;
   declare account: PrivateKeyAccount | undefined;
   declare step: string;
   declare errorMessage: string;
   declare errorCode: string;
+
+  /**
+   * The order exactly as it was first loaded and shown to the payer. Set by load() only, never from host attributes
+   * or from the fetch made at Pay time; pay() refuses to sign anything that differs from it.
+   */
+  #displayed: Readonly<DisplayedOrder> | undefined;
+  /** Increments on every load() so a slow, superseded load cannot pin or display a stale order. */
+  #loadSeq = 0;
 
   constructor() {
     super();
@@ -81,8 +129,35 @@ export class QuietpayCheckout extends LitElement {
     this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
   }
 
+  /** What the checkout must look like, from the host page's attributes/properties (never from the relayer). */
+  private expectedCheckout(): ExpectedCheckout {
+    const opt = (s: string | undefined | null) => (s === undefined || s === null || s === "" ? undefined : s);
+    let amount: bigint | undefined;
+    const rawAmount = opt(this.expectedAmount);
+    if (rawAmount !== undefined) {
+      try {
+        amount = parseUsdt(rawAmount.trim());
+      } catch {
+        throw new WidgetError("checkout_config_invalid", "expected-amount is not a valid amount");
+      }
+    }
+    if (this.chainId !== undefined && this.chainId !== null && !Number.isSafeInteger(this.chainId)) {
+      throw new WidgetError("checkout_config_invalid", "chain-id is not an integer");
+    }
+    return {
+      orderId: this.orderId,
+      chainId: this.chainId ?? undefined,
+      token: opt(this.token),
+      router: opt(this.router),
+      domainName: opt(this.domainName),
+      domainVersion: opt(this.domainVersion),
+      amount,
+      payout: opt(this.expectedPayout),
+    };
+  }
+
   private fail(err: unknown) {
-    const code = err instanceof WidgetError ? err.code : "unknown";
+    const code = err instanceof WidgetError ? err.code : err instanceof KeystoreError && err.code === "unreadable" ? "wallet_unreadable" : "unknown";
     this.errorCode = code;
     if (code === "timeout") this.errorMessage = TIMEOUT_MESSAGE;
     else if (code === "network" && err instanceof WidgetError) this.errorMessage = err.message;
@@ -95,7 +170,7 @@ export class QuietpayCheckout extends LitElement {
     this.order = o;
     if (["settled", "partially_refunded", "refunded"].includes(o.status)) {
       this.view = "settled";
-      this.emit(o.status === "settled" ? "quietpay:settled" : "quietpay:refunded", { order: o });
+      this.emit("quietpay:settled", { order: o });
     } else if (o.status === "expired") {
       this.fail(new WidgetError("order_expired", ""));
     } else if (o.status === "failed") {
@@ -107,11 +182,18 @@ export class QuietpayCheckout extends LitElement {
 
   async load() {
     if (!this.orderId || !this.relayerUrl) return;
+    const seq = ++this.#loadSeq;
+    this.#displayed = undefined;
     this.view = "loading";
     try {
       this.account = await getOrCreateAccount();
-      this.showOrder(await fetchOrder(this.relayerUrl, this.orderId));
+      const order = await fetchOrder(this.relayerUrl, this.orderId);
+      if (seq !== this.#loadSeq) return;
+      // Pin what is about to be displayed; this is what the payer agrees to when clicking Pay.
+      this.#displayed = pinDisplayedOrder(order);
+      this.showOrder(order);
     } catch (e) {
+      if (seq !== this.#loadSeq) return;
       this.fail(e);
     }
   }
@@ -123,10 +205,13 @@ export class QuietpayCheckout extends LitElement {
       this.step = "sending";
       const account = this.account ?? (await getOrCreateAccount());
       this.account = account;
-      // Fresh copy of the order so the amount we sign is what the relayer holds now.
+      // The order the payer saw and clicked Pay on. Without it there is nothing the payer agreed to.
+      const displayed = this.#displayed;
+      if (!displayed) throw new WidgetError("checkout_display_mismatch", "checkout refused: no displayed order to pay");
+      // Fresh copy of the order so the status is current. Its identity must still be the displayed one (below).
       const order = await fetchOrder(this.relayerUrl, this.orderId);
-      this.order = order;
       if (order.status === "pending") {
+        this.order = order;
         this.step = "confirming";
         this.showOrder(await pollOrder(this.relayerUrl, this.orderId, { onUpdate: (o) => (this.order = o) }));
         return;
@@ -135,8 +220,16 @@ export class QuietpayCheckout extends LitElement {
         this.showOrder(order);
         return;
       }
+      // The relayer may change status/expiry, but never what was displayed: id, merchant, amount, fee, payout, nonce,
+      // chain, token, router, domain. Any difference is refused before signing and before the screen is updated.
+      verifyDisplayedOrder(order, displayed);
+      this.order = order;
+      // Never sign what the relayer hands us without checking it: chain, token, router, domain, amount, fee, payout
+      // and the nonce recomputed locally. A refusal throws WidgetError("checkout_*") and nothing is signed.
+      const expected = this.expectedCheckout();
+      verifyCheckout(order, expected);
       this.step = "signing";
-      const req = await signCheckout(account, order);
+      const req = await signCheckout(account, order, undefined, { expected, displayed });
       this.step = "sending";
       await relayPay(this.relayerUrl, req);
       this.step = "confirming";
@@ -188,13 +281,12 @@ export class QuietpayCheckout extends LitElement {
         break;
       case "settled":
         body = html`
-          <div class="ok">${o?.status === "refunded" ? "Refund complete." : o?.status === "partially_refunded" ? "Partially refunded." : "Payment complete. Thank you!"}</div>
-          ${o?.refunded && o.refunded !== "0" ? html`<div>Refunded: ${formatUsdt(o.refunded)} USDT</div>` : nothing}
+          <div class="ok">Payment complete. Thank you!</div>
           ${o ? html`<div class="amount">${formatUsdt(o.amount)} USDT</div>` : nothing}
           ${o?.payer ? html`<div class="row"><span>Paid by</span><code>${o.payer}</code></div>` : nothing}
           ${o?.txHash ? html`<div class="row"><span>Receipt</span><code data-testid="receipt">${o.txHash}</code></div>` : nothing}
-          ${o?.explorerUrl
-            ? html`<a href=${o.explorerUrl} target="_blank" rel="noopener noreferrer">View receipt online</a>`
+          ${safeHttpUrl(o?.explorerUrl)
+            ? html`<a href=${safeHttpUrl(o?.explorerUrl)} target="_blank" rel="noopener noreferrer">View receipt online</a>`
             : nothing}
         `;
         break;

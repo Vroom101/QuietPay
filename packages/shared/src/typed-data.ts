@@ -11,8 +11,10 @@ import tokenJson from "../token.json";
 
 export const token = tokenJson;
 
-/** keccak256("quietpay.pay.v1") */
-export const PAY_TAG = keccak256(stringToHex("quietpay.pay.v1"));
+/** keccak256("quietpay.pay.v2"). v2 binds the relay fee into the nonce. */
+export const PAY_TAG = keccak256(stringToHex("quietpay.pay.v2"));
+/** keccak256("quietpay.refund.v1") */
+export const REFUND_TAG = keccak256(stringToHex("quietpay.refund.v1"));
 /** validBefore may be at most this many seconds after validAfter. */
 export const MAX_AUTH_WINDOW_SECONDS = 600;
 
@@ -32,20 +34,26 @@ export function merchantIdFromSlug(slug: string): Hex {
   return keccak256(stringToHex(slug));
 }
 
-/** Must match PaymentRouter.computeNonce. */
+/**
+ * Must match PaymentRouter.computeNonce: keccak256(abi.encode(PAY_TAG, merchantId, orderId, payout, value, fee)).
+ * `fee` is required with no default: the payer signs the exact fee they were quoted, and the router recomputes the
+ * nonce from the fee the relayer submits, so a different fee makes the token reject the signature.
+ */
 export function computePayNonce(args: {
   merchantId: Hex;
   orderId: Hex;
   payout: Address;
   value: bigint;
+  fee: bigint;
 }): Hex {
   return keccak256(
-    encodeAbiParameters(parseAbiParameters("bytes32, bytes32, bytes32, address, uint256"), [
+    encodeAbiParameters(parseAbiParameters("bytes32, bytes32, bytes32, address, uint256, uint256"), [
       PAY_TAG,
       args.merchantId,
       args.orderId,
       args.payout,
       args.value,
+      args.fee,
     ]),
   );
 }
@@ -114,32 +122,41 @@ export function checkAuthWindow(validAfter: number, validBefore: number, nowSeco
   return null;
 }
 
-/** Format base units (6 decimals) for display, e.g. 25000000n -> "25.00". */
-export function formatUsdt(value: bigint | string, decimals: number = token.decimals): string {
-  const v = BigInt(value);
-  const base = 10n ** BigInt(decimals);
-  const whole = v / base;
-  const frac = (v % base).toString().padStart(decimals, "0").slice(0, 2);
-  return `${whole.toString()}.${frac}`;
+/** Must match PaymentRouter.computeRefundNonce. `payer` comes from the receipt, never from the caller. */
+export function computeRefundNonce(args: {
+  merchantId: Hex;
+  orderId: Hex;
+  payer: Address;
+  amount: bigint;
+  refundIndex: bigint | number;
+}): Hex {
+  return keccak256(
+    encodeAbiParameters(parseAbiParameters("bytes32, bytes32, bytes32, address, uint256, uint256"), [
+      REFUND_TAG,
+      args.merchantId,
+      args.orderId,
+      args.payer,
+      args.amount,
+      BigInt(args.refundIndex),
+    ]),
+  );
 }
 
-export function parseUsdt(amount: string): bigint {
-  const [w, f = ""] = amount.split(".");
-  return BigInt(w || "0") * 10n ** BigInt(token.decimals) + BigInt(f.padEnd(token.decimals, "0").slice(0, token.decimals));
+export interface RefundAuthorizationInput extends Omit<CheckoutAuthorizationInput, "from" | "value"> {
+  /** The merchant's refundSigner wallet. It signs; the router forwards to the stored payer. */
+  refundSigner: Address;
+  /** Refund amount in token base units. */
+  amount: bigint;
 }
 
-/** Refund nonces bind the original payer, order, amount and sequential refund index. */
-export const REFUND_TAG = keccak256(stringToHex("quietpay.refund.v1"));
-export function computeRefundNonce(args: { merchantId: Hex; orderId: Hex; payer: Address; amount: bigint; refundIndex: bigint }): Hex {
-  return keccak256(encodeAbiParameters(parseAbiParameters("bytes32, bytes32, bytes32, address, uint256, uint256"),
-    [REFUND_TAG, args.merchantId, args.orderId, args.payer, args.amount, args.refundIndex]));
+/** Same ReceiveWithAuthorization shape as checkout: from = refundSigner, to = router, value = refund amount. */
+export function buildRefundAuthorization(i: RefundAuthorizationInput | (Omit<RefundAuthorizationInput, "nonce"> & {
+  merchantId: Hex; orderId: Hex; payer: Address; refundIndex: bigint | number;
+})) {
+  const { refundSigner, amount, ...rest } = i;
+  return buildCheckoutAuthorization({ ...rest, nonce: "nonce" in i ? i.nonce : computeRefundNonce(i), from: refundSigner, value: amount });
 }
 
-export function buildRefundAuthorization(args: {
-  merchantId: Hex; orderId: Hex; payer: Address; refundSigner: Address; router: Address;
-  amount: bigint; refundIndex: bigint; validAfter: bigint; validBefore: bigint;
-  chainId?: number; token?: Address; domainName?: string; domainVersion?: string;
-}) {
-  return buildCheckoutAuthorization({ ...args, from: args.refundSigner, value: args.amount,
-    nonce: computeRefundNonce(args) });
+export function recoverRefundSigner(input: RefundAuthorizationInput, signature: Hex): Promise<Address> {
+  return recoverTypedDataAddress({ ...buildRefundAuthorization(input), signature });
 }

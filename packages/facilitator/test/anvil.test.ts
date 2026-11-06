@@ -41,7 +41,7 @@ import {
   makeReader,
   verifyExport,
   readCsv,
-} from "@quietpay/indexer";
+} from "@quietpay/indexer/api";
 import { makeCfg } from "../../relayer/test/helpers.js";
 import { FacilitatorService } from "../src/service.js";
 import { registerFacilitator } from "../src/server.js";
@@ -105,7 +105,7 @@ describe.skipIf(!ready)(
         JSON.parse(
           readFileSync(join(out, `${name}.sol/${name}.json`), "utf8"),
         ) as { abi: Abi; bytecode: { object: Hex } };
-      const tokenArtifact = artifact("MockUSDT"),
+      const tokenArtifact = artifact("MockTransferAuthToken"),
         routerArtifact = artifact("PaymentRouter");
       const token = (
         await pub.waitForTransactionReceipt({

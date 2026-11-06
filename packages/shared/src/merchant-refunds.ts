@@ -4,7 +4,7 @@ import { Amount, Bytes32, Refund, RefundContext } from "./schemas.js";
 export const MerchantRefundRequest = z
   .object({
     requestId: z.string().uuid(),
-    amount: Amount.max(78),
+    amount: Amount,
     refundIndex: z.number().int().nonnegative(),
   })
   .strict();

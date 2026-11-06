@@ -1,7 +1,7 @@
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
 import { buildCheckoutAuthorization, type Order } from "@quietpay/shared";
-import type { ChainPort, MerchantRegistry, PayArgs, TxReceipt, PreparedTx, RefundArgs, OrderReceipt } from "../src/chain.js";
+import type { ChainPort, MerchantRegistry, PayArgs, SignedTx, TxReceipt, RefundArgs, OrderReceipt, PreparedTx } from "../src/chain.js";
 import type { Config } from "../src/config.js";
 import { Db } from "../src/db.js";
 import { RelayerService } from "../src/service.js";
@@ -25,8 +25,27 @@ export class FakeChain implements ChainPort {
   gas = 150_000n;
   receiptStatus: "success" | "reverted" = "success";
   holdReceipt = false;
+  /** Pay calls the node accepted (one entry per distinct tx, however often its bytes are re-sent). */
   sent: PayArgs[] = [];
+  /** Every tx signed (accepted or not). */
+  signed: SignedTx[] = [];
   simulations = 0;
+  /**
+   * How sendRawTx behaves: "ok"; "reject" (throws, the node never saw the tx); "accept-then-throw" (the
+   * node accepted it but the client errored, e.g. a timeout); "hang" (never returns: a crash mid-send).
+   */
+  sendMode: "ok" | "reject" | "accept-then-throw" | "hang" = "ok";
+  sendCalls = 0;
+  /** Hashes the node knows (mempool or mined). */
+  known = new Set<Hex>();
+  /** Per-hash receipt overrides. */
+  receipts = new Map<Hex, TxReceipt>();
+  nextNonce = 0;
+  confirmedNonce = 0;
+  resyncs = 0;
+  /** Zero-value self-transfers signed to fill or cancel a nonce (signCancel). */
+  cancels: (SignedTx & { gasPrice: bigint })[] = [];
+  private byRaw = new Map<Hex, { hash: Hex; args?: PayArgs; nonce: number }>();
   private resolveReceipt: ((r: TxReceipt) => void) | null = null;
 
   async getMerchant() {
@@ -38,62 +57,112 @@ export class FakeChain implements ChainPort {
   async isSettled() {
     return this.settledOnChain;
   }
-  async simulatePay() {
+  async simulatePay(_args?: PayArgs) {
     this.simulations += 1;
     if (this.simulateFails) throw new Error("execution reverted: invalid signature");
     return this.gas;
   }
-  async authorizationUsed() { return false; }
-  async simulateTransfer() { throw new Error("Configure a transfer fake for x402 tests"); return 0n; }
-  async prepareTransfer(): Promise<PreparedTx> { throw new Error("Configure a transfer fake for x402 tests"); }
-  async getGasPrice() {
-    return this.gasPrice;
-  }
   refundBalance = 1_000_000_000n;
-  orderReceipts = new Map<string, OrderReceipt>();
-  async getOrderReceipt(_merchant: Hex, orderId: Hex): Promise<OrderReceipt> {
-    return this.orderReceipts.get(orderId) ?? { payer: payer.address, value: 25_000_000n, refunded: 0n, refundCount: 0n, settled: true };
-  }
-  async getTokenBalance() { return this.refundBalance; }
-  async simulateRefund() {
-    if (this.simulateFails) throw new Error("refund simulation failed");
-    return this.gas;
-  }
-  refundPrepared: { args: RefundArgs; tx: PreparedTx }[] = [];
-  async prepareRefund(args: RefundArgs, gas: bigint, gasPrice: bigint, nonce?: number): Promise<PreparedTx> {
-    const hash = ("0x" + (this.prepared.length + this.refundPrepared.length + 1).toString(16).padStart(64, "0")) as Hex;
-    const tx = { hash, raw: hash, nonce: nonce ?? this.prepared.length + this.refundPrepared.length, gas, gasPrice };
-    this.refundPrepared.push({ tx, args });
-    return tx;
-  }
-  prepared: { tx: PreparedTx; args: PayArgs }[] = [];
   balance = 10n ** 18n;
   receiptFails = false;
   broadcastFails = false;
-  async getReceipt(): Promise<TxReceipt | null> {
-    if (this.receiptFails || this.holdReceipt) return null;
-    return { status: this.receiptStatus, gasUsed: this.gas, effectiveGasPrice: this.gasPrice, blockNumber: 1n };
+  orderReceipts = new Map<string, OrderReceipt>();
+  refundPrepared: { args: RefundArgs; tx: PreparedTx }[] = [];
+  prepared: { args: PayArgs; tx: PreparedTx }[] = [];
+  async getOrderReceipt(_merchant: Hex, orderId: Hex): Promise<OrderReceipt> {
+    return this.orderReceipts.get(orderId) ?? { payer: payer.address, value: 25000000n, refunded: 0n, refundCount: 0n, settled: true };
   }
   async getBalance() { return this.balance; }
-  async preparePay(args: PayArgs, gas: bigint, gasPrice: bigint, nonce?: number): Promise<PreparedTx> {
-    const hash = ("0x" + (this.prepared.length + this.refundPrepared.length + 1).toString(16).padStart(64, "0")) as Hex;
-    const tx = { hash, raw: hash, nonce: nonce ?? this.prepared.length + this.refundPrepared.length, gas, gasPrice };
-    this.prepared.push({ tx, args });
-    return tx;
+  async getTokenBalance() { return this.refundBalance; }
+  async authorizationUsed(_payer?: Hex, _nonce?: Hex) { return false; }
+  async simulateTransfer() { throw new Error("Configure a transfer fake for x402 tests"); return 0n; }
+  async prepareTransfer(): Promise<PreparedTx> { throw new Error("Configure a transfer fake for x402 tests"); }
+  async simulateRefund() { if (this.simulateFails) throw new Error("refund simulation failed"); return this.gas; }
+  async prepareRefund(args: RefundArgs, gas: bigint, gasPrice: bigint, nonce?: number): Promise<PreparedTx> {
+    const hash = ("0x" + (100000 + this.refundPrepared.length).toString(16).padStart(64,"0")) as Hex;
+    const tx = { hash, raw: hash, nonce: nonce ?? this.nextNonce++, gas, gasPrice };
+    this.refundPrepared.push({ args, tx }); return tx;
   }
-  async broadcast(raw: Hex) {
-    if (this.broadcastFails) throw new Error("network unavailable");
+  async preparePay(args: PayArgs, gas: bigint, gasPrice: bigint): Promise<PreparedTx> {
+    return { ...await this.signPay(args), gas, gasPrice };
+  }
+  async broadcast(raw: Hex): Promise<Hex> {
+    if (this.broadcastFails) throw new Error("uncertain broadcast");
     const refund = this.refundPrepared.find(p => p.tx.raw === raw);
-    if (refund) return refund.tx.hash;
-    const p = this.prepared.find(p => p.tx.raw === raw)!;
-    if (!this.sent.includes(p.args)) this.sent.push(p.args);
-    return p.tx.hash;
+    if (refund) { this.known.add(refund.tx.hash); return refund.tx.hash; }
+    return this.sendRawTx(raw);
   }
-  waitForReceipt(): Promise<TxReceipt> {
+  async getGasPrice() {
+    return this.gasPrice;
+  }
+  async signPay(args: PayArgs): Promise<SignedTx> {
+    const nonce = this.nextNonce++;
+    const i = this.signed.length + 1;
+    const hash = ("0x" + i.toString(16).padStart(64, "0")) as Hex;
+    const raw = ("0xf0" + i.toString(16).padStart(8, "0")) as Hex;
+    this.byRaw.set(raw, { hash, args, nonce });
+    const s = { hash, raw, nonce };
+    this.signed.push(s);
+    return s;
+  }
+  async signCancel(nonce: number, gasPrice: bigint): Promise<SignedTx> {
+    const i = this.cancels.length + 1;
+    const hash = ("0xcc" + i.toString(16).padStart(62, "0")) as Hex;
+    const raw = ("0xcc" + i.toString(16).padStart(8, "0")) as Hex;
+    this.byRaw.set(raw, { hash, nonce });
+    const s = { hash, raw, nonce };
+    this.cancels.push({ ...s, gasPrice });
+    return s;
+  }
+  async sendRawTx(raw: Hex): Promise<Hex> {
+    this.sendCalls += 1;
+    const t = this.byRaw.get(raw);
+    if (!t) throw new Error("rlp: invalid transaction");
+    switch (this.sendMode) {
+      case "reject":
+        throw new Error("ECONNRESET rpc");
+      case "accept-then-throw":
+        this.accept(t);
+        throw new Error("The request took too long to respond.");
+      case "hang":
+        return new Promise<Hex>(() => undefined);
+      default:
+        this.accept(t);
+        return t.hash;
+    }
+  }
+  private accept(t: { hash: Hex; args?: PayArgs }) {
+    if (this.known.has(t.hash)) return;
+    this.known.add(t.hash);
+    if (t.args) this.sent.push(t.args);
+  }
+  /** The node forgets a tx (evicted from the mempool). */
+  drop(hash: Hex) {
+    this.known.delete(hash);
+  }
+  resyncNonce() {
+    this.resyncs += 1;
+  }
+  private receiptFor(hash?: Hex): TxReceipt {
+    return (hash && this.receipts.get(hash)) || { status: this.receiptStatus, gasUsed: this.gas, effectiveGasPrice: this.gasPrice, blockNumber: 1n };
+  }
+  waitForReceipt(hash?: Hex): Promise<TxReceipt> {
     if (this.receiptFails) return Promise.reject(new Error("receipt timeout"));
-    const r: TxReceipt = { status: this.receiptStatus, gasUsed: this.gas, effectiveGasPrice: this.gasPrice, blockNumber: 1n };
+    // A hash the node never saw times out (a real node would after 120 s).
+    if (hash && !this.known.has(hash)) return Promise.reject(new Error("Timed out while waiting for transaction"));
+    const r = this.receiptFor(hash);
     if (!this.holdReceipt) return Promise.resolve(r);
     return new Promise((res) => (this.resolveReceipt = () => res(r)));
+  }
+  async getReceipt(hash?: Hex): Promise<TxReceipt | null> {
+    if (this.receiptFails || this.holdReceipt || (hash !== undefined && !this.known.has(hash))) return null;
+    return this.receiptFor(hash);
+  }
+  async hasTransaction(hash: Hex) {
+    return this.known.has(hash);
+  }
+  async getConfirmedNonce() {
+    return this.confirmedNonce;
   }
   release() {
     this.resolveReceipt?.({} as TxReceipt);
@@ -113,19 +182,29 @@ export function makeCfg(over: Partial<Config> = {}): Config {
     operatorToken: "operator-token-123456",
     apiKeys: new Map([["test-key", MERCHANT_ID]]),
     webhookSecret: "whsec_test_secret_123456",
+    allowPrivateWebhooks: false,
     databasePath: ":memory:",
     lossBudgetWei: 50_000_000_000_000_000n, // 0.05 WBT
     maxGasPrice: null,
-    maxGasLimit: 500_000n,
-    lowBalanceWei: 10n ** 16n,
-    pendingRetrySeconds: 30,
-    maxReplacements: 3,
+    maxGasLimit: 500000n, lowBalanceWei: 10n ** 16n, pendingRetrySeconds: 30, maxReplacements: 3,
     payerCap: 100_000_000n, // 100 USDT
     relayFee: 50_000n,
     rateLimitPerMinute: 1000,
-    explorerBaseUrl: "https://explorer.test",
     tokenDomain: { name: "Tether USD", version: "1" },
+    explorerBaseUrl: "https://explorer.test",
     port: 0,
+    // Production default is 60 (MIN_VALID_SECONDS). Tests default to 0 so the other guards can be
+    // exercised in isolation; the minimum window has its own tests with the production value.
+    minValidSeconds: 0,
+    revertedPayerMinValidSeconds: 120,
+    maxRevertsPerDay: 2,
+    payerLossSharePercent: 25,
+    txMaxAgeSeconds: 1800,
+    reconcileIntervalSeconds: 30,
+    firstTimePayerLossSharePercent: 5,
+    firstTimePayerLossCapPercent: 100,
+    maxNewPayersPerIpPerHour: 10,
+    trustProxyHops: 0,
     ...over,
   };
 }
@@ -135,7 +214,7 @@ export function makeEnv(cfgOver: Partial<Config> = {}) {
   const chain = new FakeChain();
   const db = new Db(":memory:");
   const cfg = makeCfg(cfgOver);
-  const svc = new RelayerService({ cfg, db, chain, now: () => clock.t });
+  const svc = new RelayerService({ cfg, db, chain, now: () => clock.t, broadcastRetryMs: 0 });
   return { clock, chain, db, cfg, svc };
 }
 
@@ -160,8 +239,7 @@ export async function signFor(
     validBefore: BigInt(validBefore),
     chainId: order.checkout.chainId,
     token: order.checkout.token as Hex,
-    domainName: order.checkout.domain.name,
-    domainVersion: order.checkout.domain.version,
+    domainName: order.checkout.domain.name, domainVersion: order.checkout.domain.version,
   });
   const signature = await acct.signTypedData(td);
   return {

@@ -59,7 +59,7 @@ export function setup(
       hash: nonce(10000 + state.prepared.length),
       raw: nonce(10000 + state.prepared.length),
       nonce:
-        replacementNonce ?? e.chain.prepared.length + state.prepared.length,
+        replacementNonce ?? e.chain.signed.length + state.prepared.length,
       gas,
       gasPrice,
     };
@@ -103,9 +103,9 @@ export function setup(
       ? state.hold
         ? null
         : receipt(hash)
-      : get();
+      : get(hash);
   chain.waitForReceipt = async (hash) => {
-    if (!state.prepared.some((p) => p.tx.hash === hash)) return wait();
+    if (!state.prepared.some((p) => p.tx.hash === hash)) return wait(hash);
     if (state.never)
       return new Promise((resolve) => {
         state.release = () => resolve(receipt(hash));

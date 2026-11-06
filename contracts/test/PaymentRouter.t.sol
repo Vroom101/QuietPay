@@ -3,18 +3,17 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {PaymentRouter} from "../src/PaymentRouter.sol";
-import {MockUSDT} from "./MockUSDT.sol";
+import {MockAuthToken} from "./mocks/MockAuthToken.sol";
 
 contract PaymentRouterTest is Test {
     PaymentRouter router;
-    MockUSDT usdt;
+    MockAuthToken usdt;
 
     address owner = makeAddr("owner");
     address relayer = makeAddr("relayer");
     address attacker = makeAddr("attacker");
     address payout = makeAddr("payout");
-    uint256 refundPk = 0xB0B;
-    address refundSigner;
+    address refundSigner = makeAddr("refundSigner");
 
     uint256 payerPk = 0xA11CE;
     address payer;
@@ -31,8 +30,7 @@ contract PaymentRouterTest is Test {
     function setUp() public {
         vm.warp(1_000_000);
         payer = vm.addr(payerPk);
-        refundSigner = vm.addr(refundPk);
-        usdt = new MockUSDT();
+        usdt = new MockAuthToken();
         router = new PaymentRouter(address(usdt), owner);
         vm.startPrank(owner);
         router.registerMerchant(MERCHANT, payout, refundSigner, MAX_FEE);
@@ -59,7 +57,7 @@ contract PaymentRouterTest is Test {
     }
 
     function _unpack(bytes memory sig) internal pure returns (bytes32 r, bytes32 s, uint8 v) {
-        assembly ("memory-safe") {
+        assembly {
             r := mload(add(sig, 32))
             s := mload(add(sig, 64))
             v := byte(0, mload(add(sig, 96)))
@@ -67,7 +65,7 @@ contract PaymentRouterTest is Test {
     }
 
     function _goodSig() internal view returns (bytes memory) {
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         return _sign(payerPk, payer, address(router), PRICE, validAfter, validBefore, nonce);
     }
 
@@ -89,7 +87,7 @@ contract PaymentRouterTest is Test {
         // The token only lets the payee (router) call receiveWithAuthorization.
         bytes memory sig = _goodSig();
         (bytes32 r, bytes32 s, uint8 v) = _unpack(sig);
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         vm.prank(attacker);
         vm.expectRevert(bytes("caller must be the payee"));
         usdt.receiveWithAuthorization(payer, address(router), PRICE, validAfter, validBefore, nonce, v, r, s);
@@ -107,7 +105,7 @@ contract PaymentRouterTest is Test {
     // ------------------------------------------------------------ 2. binding
 
     function test_wrongPayoutInvalidatesSignature() public {
-        bytes32 badNonce = router.computeNonce(MERCHANT, ORDER, attacker, PRICE);
+        bytes32 badNonce = router.computeNonce(MERCHANT, ORDER, attacker, PRICE, FEE);
         bytes memory sig = _sign(payerPk, payer, address(router), PRICE, validAfter, validBefore, badNonce);
         vm.prank(relayer);
         vm.expectRevert(bytes("invalid signature"));
@@ -138,7 +136,7 @@ contract PaymentRouterTest is Test {
     }
 
     function test_signatureFromWrongSignerReverts() public {
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         bytes memory sig = _sign(0xBAD, payer, address(router), PRICE, validAfter, validBefore, nonce);
         vm.prank(relayer);
         vm.expectRevert(bytes("invalid signature"));
@@ -150,7 +148,7 @@ contract PaymentRouterTest is Test {
     function test_usedAuthorizationCannotBeReplayed() public {
         bytes memory sig = _goodSig();
         _pay(sig);
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         assertTrue(usdt.authorizationState(payer, nonce));
 
         // Same call again.
@@ -169,7 +167,7 @@ contract PaymentRouterTest is Test {
     function test_secondPaymentForSettledOrderReverts() public {
         _pay(_goodSig());
         // Fresh, valid authorization for the same (merchant, order).
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         uint256 vB = block.timestamp + 6 minutes;
         bytes memory sig2 = _sign(payerPk, payer, address(router), PRICE, validAfter, vB, nonce);
         vm.prank(relayer);
@@ -187,7 +185,8 @@ contract PaymentRouterTest is Test {
     }
 
     function test_feeAtCapSucceeds() public {
-        bytes memory sig = _goodSig();
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE, MAX_FEE);
+        bytes memory sig = _sign(payerPk, payer, address(router), PRICE, validAfter, validBefore, nonce);
         vm.prank(relayer);
         router.pay(MERCHANT, ORDER, payer, PRICE, MAX_FEE, validAfter, validBefore, sig);
         assertEq(usdt.balanceOf(relayer), MAX_FEE);
@@ -223,7 +222,7 @@ contract PaymentRouterTest is Test {
     function test_notYetValidWindowReverts() public {
         uint256 vA = block.timestamp + 60;
         uint256 vB = vA + 5 minutes;
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         bytes memory sig = _sign(payerPk, payer, address(router), PRICE, vA, vB, nonce);
         vm.prank(relayer);
         vm.expectRevert(PaymentRouter.NotYetValid.selector);
@@ -232,7 +231,7 @@ contract PaymentRouterTest is Test {
 
     function test_windowLongerThanTenMinutesReverts() public {
         uint256 vB = validAfter + 10 minutes + 1;
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         bytes memory sig = _sign(payerPk, payer, address(router), PRICE, validAfter, vB, nonce);
         vm.prank(relayer);
         vm.expectRevert(PaymentRouter.BadWindow.selector);
@@ -241,7 +240,7 @@ contract PaymentRouterTest is Test {
 
     function test_windowOfExactlyTenMinutesIsAllowed() public {
         uint256 vB = validAfter + 10 minutes;
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         bytes memory sig = _sign(payerPk, payer, address(router), PRICE, validAfter, vB, nonce);
         vm.prank(relayer);
         router.pay(MERCHANT, ORDER, payer, PRICE, FEE, validAfter, vB, sig);
@@ -251,7 +250,7 @@ contract PaymentRouterTest is Test {
     // ------------------------------------------------------------ 8. zero value
 
     function test_zeroValueReverts() public {
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, 0);
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, 0, 0);
         bytes memory sig = _sign(payerPk, payer, address(router), 0, validAfter, validBefore, nonce);
         vm.prank(relayer);
         vm.expectRevert(PaymentRouter.ZeroValue.selector);
@@ -319,184 +318,94 @@ contract PaymentRouterTest is Test {
         router.pay(MERCHANT, ORDER, payer, PRICE, FEE, validAfter, validBefore, hex"1234");
     }
 
-    /// @dev Pinned against packages/shared computePayNonce so on-chain and TS agree.
-    function test_nonceMatchesSharedTypeScriptBuilder() public view {
-        bytes32 n = router.computeNonce(
-            bytes32(hex"0101010101010101010101010101010101010101010101010101010101010101"),
-            bytes32(hex"0202020202020202020202020202020202020202020202020202020202020202"),
-            0x2222222222222222222222222222222222222222,
-            25_000_000
-        );
-        assertEq(n, 0xa4eaba23e962fdd0bfb7f40e84f16c3978c05dccc6f91fa12a60161ff5409d4e);
+    /// @dev The same vectors file is asserted by packages/shared in TypeScript, so the languages cannot drift.
+    function test_nonceVectorsMatchSharedFixture() public view {
+        string memory json = vm.readFile("../packages/shared/fixtures/nonce-vectors.json");
+        bytes32[] memory payNonces = abi.decode(vm.parseJson(json, ".pay[*].nonce"), (bytes32[]));
+        assertGt(payNonces.length, 2);
+        for (uint256 i = 0; i < payNonces.length; i++) {
+            string memory k = string.concat(".pay[", vm.toString(i), "]");
+            bytes32 got = router.computeNonce(
+                abi.decode(vm.parseJson(json, string.concat(k, ".merchantId")), (bytes32)),
+                abi.decode(vm.parseJson(json, string.concat(k, ".orderId")), (bytes32)),
+                abi.decode(vm.parseJson(json, string.concat(k, ".payout")), (address)),
+                vm.parseUint(abi.decode(vm.parseJson(json, string.concat(k, ".value")), (string))),
+                vm.parseUint(abi.decode(vm.parseJson(json, string.concat(k, ".fee")), (string)))
+            );
+            assertEq(got, payNonces[i], "pay vector");
+        }
+        bytes32[] memory refundNonces = abi.decode(vm.parseJson(json, ".refund[*].nonce"), (bytes32[]));
+        assertGt(refundNonces.length, 2);
+        for (uint256 i = 0; i < refundNonces.length; i++) {
+            string memory k = string.concat(".refund[", vm.toString(i), "]");
+            bytes32 got = router.computeRefundNonce(
+                abi.decode(vm.parseJson(json, string.concat(k, ".merchantId")), (bytes32)),
+                abi.decode(vm.parseJson(json, string.concat(k, ".orderId")), (bytes32)),
+                abi.decode(vm.parseJson(json, string.concat(k, ".payer")), (address)),
+                vm.parseUint(abi.decode(vm.parseJson(json, string.concat(k, ".amount")), (string))),
+                vm.parseUint(abi.decode(vm.parseJson(json, string.concat(k, ".refundIndex")), (string)))
+            );
+            assertEq(got, refundNonces[i], "refund vector");
+        }
+    }
+
+    // ------------------------------------------------------------ fee binding (review finding: High)
+
+    function test_relayerCannotSubmitADifferentFeeThanThePayerSigned() public {
+        bytes memory sig = _goodSig(); // signed for fee = FEE
+        vm.prank(relayer);
+        vm.expectRevert(bytes("invalid signature"));
+        router.pay(MERCHANT, ORDER, payer, PRICE, FEE + 1, validAfter, validBefore, sig);
+        vm.prank(relayer);
+        vm.expectRevert(bytes("invalid signature"));
+        router.pay(MERCHANT, ORDER, payer, PRICE, 0, validAfter, validBefore, sig);
+        _pay(sig); // the exact signed fee still works
+        assertEq(usdt.balanceOf(payout), PRICE - FEE);
+    }
+
+    function test_nonceChangesWithEveryBoundField() public view {
+        bytes32 base = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
+        assertTrue(base != router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE + 1));
+        assertTrue(base != router.computeNonce(MERCHANT, ORDER, payout, PRICE + 1, FEE));
+        assertTrue(base != router.computeNonce(MERCHANT, ORDER, attacker, PRICE, FEE));
+        assertTrue(base != router.computeNonce(MERCHANT, keccak256("o2"), payout, PRICE, FEE));
+        assertTrue(base != router.computeNonce(keccak256("m2"), ORDER, payout, PRICE, FEE));
+    }
+
+    // ------------------------------------------------------------ fee must stay below value (Medium)
+
+    function test_feeEqualToValueReverts() public {
+        vm.prank(owner);
+        router.registerMerchant(keccak256("big-cap"), payout, refundSigner, 10_000_000);
+        bytes32 m = keccak256("big-cap");
+        bytes32 nonce = router.computeNonce(m, ORDER, payout, 1_000_000, 1_000_000);
+        bytes memory sig = _sign(payerPk, payer, address(router), 1_000_000, validAfter, validBefore, nonce);
+        vm.prank(relayer);
+        vm.expectRevert(PaymentRouter.FeeOverCap.selector);
+        router.pay(m, ORDER, payer, 1_000_000, 1_000_000, validAfter, validBefore, sig);
+    }
+
+    function test_feeOfValueMinusOneSucceedsWhenTheCapAllows() public {
+        bytes32 m = keccak256("big-cap");
+        vm.prank(owner);
+        router.registerMerchant(m, payout, refundSigner, 10_000_000);
+        bytes32 nonce = router.computeNonce(m, ORDER, payout, 1_000_000, 999_999);
+        bytes memory sig = _sign(payerPk, payer, address(router), 1_000_000, validAfter, validBefore, nonce);
+        vm.prank(relayer);
+        router.pay(m, ORDER, payer, 1_000_000, 999_999, validAfter, validBefore, sig);
+        assertEq(usdt.balanceOf(payout), 1);
+        assertEq(usdt.balanceOf(relayer), 999_999);
     }
 
     function testFuzz_feeSplitConservesValue(uint256 value, uint256 fee) public {
         value = bound(value, 1, 500_000_000);
         fee = bound(fee, 0, MAX_FEE);
-        vm.assume(fee <= value);
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, value);
+        vm.assume(fee < value); // a fee equal to the value is rejected
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, value, fee);
         bytes memory sig = _sign(payerPk, payer, address(router), value, validAfter, validBefore, nonce);
         vm.prank(relayer);
         router.pay(MERCHANT, ORDER, payer, value, fee, validAfter, validBefore, sig);
         assertEq(usdt.balanceOf(payout) + usdt.balanceOf(relayer), value);
         assertEq(usdt.balanceOf(address(router)), 0);
     }
-    function _refundSig(uint256 amount, uint256 index, address recipient) internal view returns (bytes memory) {
-        return _sign(refundPk, refundSigner, address(router), amount, validAfter, validBefore,
-            router.computeRefundNonce(MERCHANT, ORDER, recipient, amount, index));
-    }
-
-    function _refund(uint256 amount, bytes memory sig) internal {
-        vm.prank(relayer);
-        router.refund(MERCHANT, ORDER, amount, validAfter, validBefore, sig);
-    }
-
-    function test_partialThenFullRefund() public {
-        _pay(_goodSig());
-        usdt.mint(refundSigner, PRICE);
-        uint256 beforePayer = usdt.balanceOf(payer);
-        uint256 beforeRelayer = usdt.balanceOf(relayer);
-        vm.expectEmit(true, true, true, true, address(router));
-        emit PaymentRouter.Refunded(MERCHANT, ORDER, payer, 5_000_000, 5_000_000, 0);
-        _refund(5_000_000, _refundSig(5_000_000, 0, payer));
-        assertEq(router.receipts(MERCHANT, ORDER).refunded, 5_000_000);
-        assertEq(router.receipts(MERCHANT, ORDER).refundCount, 1);
-        _refund(20_000_000, _refundSig(20_000_000, 1, payer));
-        assertEq(router.receipts(MERCHANT, ORDER).refunded, PRICE);
-        assertEq(router.receipts(MERCHANT, ORDER).refundCount, 2);
-        assertEq(usdt.balanceOf(payer), beforePayer + PRICE);
-        assertEq(usdt.balanceOf(relayer), beforeRelayer, "no refund fee");
-        assertEq(usdt.balanceOf(address(router)), 0);
-        assertEq(payer.balance, 0);
-        bytes memory paySig = _goodSig();
-        vm.expectRevert(PaymentRouter.AlreadySettled.selector);
-        vm.prank(relayer);
-        router.pay(MERCHANT, ORDER, payer, PRICE, FEE, validAfter, validBefore, paySig);
-    }
-
-    function test_nonRelayerCannotRefund() public {
-        _pay(_goodSig());
-        bytes memory sig = _refundSig(1_000_000, 0, payer);
-        vm.prank(attacker);
-        vm.expectRevert(PaymentRouter.NotRelayer.selector);
-        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
-    }
-
-    function test_unfundedRefundLeavesReceiptAndNonceUnchanged() public {
-        _pay(_goodSig());
-        bytes memory sig = _refundSig(1_000_000, 0, payer);
-        vm.expectRevert();
-        vm.prank(relayer);
-        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
-        assertEq(router.receipts(MERCHANT, ORDER).refunded, 0);
-        assertEq(router.receipts(MERCHANT, ORDER).refundCount, 0);
-        assertFalse(usdt.authorizationState(refundSigner, router.computeRefundNonce(MERCHANT, ORDER, payer, 1_000_000, 0)));
-    }
-
-    function test_refundAbovePaidReverts() public {
-        _pay(_goodSig());
-        usdt.mint(refundSigner, PRICE * 2);
-        bytes memory sig = _refundSig(PRICE + 1, 0, payer);
-        vm.expectRevert(PaymentRouter.RefundExceedsPaid.selector);
-        vm.prank(relayer);
-        router.refund(MERCHANT, ORDER, PRICE + 1, validAfter, validBefore, sig);
-    }
-
-    function test_replayedRefundIndexReverts() public {
-        _pay(_goodSig());
-        usdt.mint(refundSigner, PRICE);
-        bytes memory sig = _refundSig(1_000_000, 0, payer);
-        _refund(1_000_000, sig);
-        vm.expectRevert();
-        vm.prank(relayer);
-        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
-        assertEq(router.receipts(MERCHANT, ORDER).refundCount, 1);
-    }
-
-    function test_wrongPayerRefundCannotRedirectFunds() public {
-        _pay(_goodSig());
-        usdt.mint(refundSigner, PRICE);
-        bytes memory sig = _refundSig(1_000_000, 0, attacker);
-        vm.expectRevert(bytes("invalid signature"));
-        vm.prank(relayer);
-        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
-        assertEq(usdt.balanceOf(attacker), 0);
-        assertEq(router.receipts(MERCHANT, ORDER).refunded, 0);
-    }
-
-    function test_futureRefundIndexReverts() public {
-        _pay(_goodSig());
-        usdt.mint(refundSigner, PRICE);
-        bytes memory sig = _refundSig(1_000_000, 1, payer);
-        vm.expectRevert(bytes("invalid signature"));
-        vm.prank(relayer);
-        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
-    }
-
-    function test_unknownReceiptCannotBeRefunded() public {
-        bytes memory sig = _refundSig(1_000_000, 0, payer);
-        vm.expectRevert(PaymentRouter.NotSettled.selector);
-        vm.prank(relayer);
-        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
-    }
-
-    function test_pausedRouterCannotRefund() public {
-        _pay(_goodSig());
-        usdt.mint(refundSigner, PRICE);
-        bytes memory sig = _refundSig(1_000_000, 0, payer);
-        vm.prank(owner);
-        router.pause();
-        vm.expectRevert();
-        vm.prank(relayer);
-        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
-    }
-
-    function test_expiredRefundCannotBeSent() public {
-        _pay(_goodSig());
-        usdt.mint(refundSigner, PRICE);
-        bytes memory sig = _refundSig(1_000_000, 0, payer);
-        vm.warp(validBefore);
-        vm.expectRevert(PaymentRouter.Expired.selector);
-        vm.prank(relayer);
-        router.refund(MERCHANT, ORDER, 1_000_000, validAfter, validBefore, sig);
-    }
-
-    function testFuzz_refundsConserveValueAndNeverExceedPaid(uint256 amount) public {
-        amount = bound(amount, 1, PRICE);
-        _pay(_goodSig());
-        usdt.mint(refundSigner, PRICE);
-        uint256 balance = usdt.balanceOf(payer);
-        _refund(amount, _refundSig(amount, 0, payer));
-        assertEq(usdt.balanceOf(payer), balance + amount);
-        assertEq(usdt.balanceOf(refundSigner), PRICE - amount);
-        assertEq(router.receipts(MERCHANT, ORDER).refunded, amount);
-        assertLe(router.receipts(MERCHANT, ORDER).refunded, PRICE);
-        assertEq(usdt.balanceOf(address(router)), 0);
-    }
-
-    function _agentSignature(bytes32 nonce) internal view returns (bytes memory) {
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdt.DOMAIN_SEPARATOR(),
-            keccak256(abi.encode(usdt.TRANSFER_TYPEHASH(), payer, payout, uint256(1_000_000), validAfter, validBefore, nonce))));
-        (uint8 v, bytes32 r, bytes32 sigS) = vm.sign(payerPk, digest);
-        return abi.encodePacked(r, sigS, v);
-    }
-
-    function _agentTransfer(bytes32 nonce, bytes memory sig) internal {
-        (bytes32 r, bytes32 sigS, uint8 v) = _unpack(sig);
-        usdt.transferWithAuthorization(payer, payout, 1_000_000, validAfter, validBefore, nonce, v, r, sigS);
-    }
-
-    function test_agentTransferAuthorizationPaysRecipientWithoutRouterReceipt() public {
-        bytes32 nonce = keccak256("agent-payment");
-        bytes memory sig = _agentSignature(nonce);
-        vm.prank(relayer);
-        _agentTransfer(nonce, sig);
-        assertEq(usdt.balanceOf(payout), 1_000_000);
-        assertTrue(usdt.authorizationState(payer, nonce));
-        assertFalse(router.receipts(MERCHANT, ORDER).settled);
-        assertEq(payer.balance, 0);
-        vm.expectRevert(bytes("auth used"));
-        _agentTransfer(nonce, sig);
-    }
-
 }

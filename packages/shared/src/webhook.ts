@@ -26,6 +26,11 @@ export const WebhookEvent = z.object({
     totalRefunded: Amount.or(z.literal("0")).optional(),
     refundIndex: z.number().int().nonnegative().optional(),
   }),
+}).superRefine((event, ctx) => {
+  if (event.type !== "payment.refunded") return;
+  for (const field of ["refundId", "refundAmount", "totalRefunded", "refundIndex"] as const) {
+    if (event.data[field] === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["data", field], message: "Refund event field required" });
+  }
 });
 export type WebhookEvent = z.infer<typeof WebhookEvent>;
 
@@ -62,6 +67,8 @@ export function verifyWebhookSignature(
   header: string,
   opts?: { nowSeconds?: number; toleranceSeconds?: number },
 ): boolean {
+  // An empty (or whitespace-only) secret is a public HMAC key: never verify against it.
+  if (secret.trim() === "") return false;
   const parsed = parseSignatureHeader(header);
   if (!parsed) return false;
   const now = opts?.nowSeconds ?? Math.floor(Date.now() / 1000);

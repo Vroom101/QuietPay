@@ -10,7 +10,12 @@ export const Bytes32 = hex(64);
 export const Signature = hex(130); // 65-byte r||s||v
 export const TxHash = hex(64);
 /** Token base units (USDT has 6 decimals), as a decimal string. */
-export const Amount = z.string().regex(/^[1-9][0-9]*$/, "must be a positive integer string");
+const UINT256_MAX = (1n << 256n) - 1n;
+export const Amount = z
+  .string()
+  .regex(/^[1-9][0-9]*$/, "must be a positive integer string")
+  // At most 78 digits (uint256 max has 78) and no larger than 2^256 - 1. The regex guard keeps BigInt from seeing non-digits.
+  .refine((s) => /^[1-9][0-9]{0,77}$/.test(s) && BigInt(s) <= UINT256_MAX, "must fit in uint256");
 
 export const OrderStatus = z.enum(["created", "pending", "settled", "failed", "expired", "partially_refunded", "refunded"]);
 export type OrderStatus = z.infer<typeof OrderStatus>;
@@ -33,8 +38,6 @@ export const Order = z.object({
   merchantId: Bytes32,
   amount: Amount,
   status: OrderStatus,
-  refunded: Amount.or(z.literal("0")).optional(),
-  refundCount: z.number().int().nonnegative().optional(),
   reference: z.string().max(200).optional(),
   payout: Address,
   fee: Amount.or(z.literal("0")),
@@ -44,8 +47,15 @@ export const Order = z.object({
   createdAt: z.number().int(), // unix seconds
   expiresAt: z.number().int(),
   settledAt: z.number().int().optional(),
-  explorerUrl: z.string().url().optional(),
+  /** Total refunded so far, in base units. Absent means zero. */
+  refundedAmount: Amount.or(z.literal("0")).optional(),
+  refunded: Amount.or(z.literal("0")).optional(),
+  refundCount: z.number().int().nonnegative().optional(),
+  // http(s) only: a javascript:/data: URL here would become a clickable link in the widget and dashboard.
+  explorerUrl: z.string().url().refine((u) => /^https?:\/\//i.test(u), "explorerUrl must be http(s)").optional(),
   checkout: CheckoutParams,
+}).refine((o) => o.fee === o.checkout.fee && o.amount === o.checkout.value && o.payout.toLowerCase() === o.checkout.payout.toLowerCase(), {
+  message: "order amount, fee and payout must equal what the payer signs (checkout.value, checkout.fee, checkout.payout)",
 });
 export type Order = z.infer<typeof Order>;
 
@@ -54,7 +64,23 @@ export const CreateOrderRequest = z.object({
   merchantId: Bytes32,
   amount: Amount,
   reference: z.string().max(200).optional(),
-  webhookUrl: z.string().url().optional(),
+  /**
+   * http(s) only, no credentials. The relayer additionally refuses loopback, private, link-local and
+   * metadata targets (unless its operator sets ALLOW_PRIVATE_WEBHOOKS for local development).
+   */
+  webhookUrl: z
+    .string()
+    .max(2048)
+    .url()
+    .refine((s) => {
+      try {
+        const u = new URL(s);
+        return (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password;
+      } catch {
+        return false;
+      }
+    }, "webhookUrl must be an http(s) URL without credentials")
+    .optional(),
   expiresInSeconds: z.number().int().min(60).max(86_400).optional(),
 });
 export type CreateOrderRequest = z.infer<typeof CreateOrderRequest>;
@@ -101,7 +127,7 @@ export type HealthResponse = z.infer<typeof HealthResponse>;
 
 // ---- GET /v1/metrics (operator token) ----
 export const MetricsResponse = z.object({
-  agentPayments: z.object({settling:z.number().int(),settled:z.number().int(),failed:z.number().int()}).optional(),
+  agentPayments: z.object({ settling: z.number().int(), settled: z.number().int(), failed: z.number().int() }).optional(),
   balanceWbt: z.string().nullable().optional(),
   lowBalance: z.boolean().optional(),
   lowBalanceThresholdWbt: z.string().optional(),
@@ -121,6 +147,43 @@ export const AdminPauseRequest = z.object({ paused: z.boolean() });
 export type AdminPauseRequest = z.infer<typeof AdminPauseRequest>;
 export const AdminPauseResponse = z.object({ paused: z.boolean() });
 export type AdminPauseResponse = z.infer<typeof AdminPauseResponse>;
+
+// ---- Refunds (merchant API key) ----
+// GET /v1/orders/:id/refund-quote?amount=...  -> what the refundSigner must sign
+export const RefundQuoteResponse = z.object({
+  orderId: Bytes32,
+  merchantId: Bytes32,
+  payer: Address,
+  amount: Amount,
+  refundIndex: z.number().int().nonnegative(),
+  nonce: Bytes32,
+  totalRefunded: Amount.or(z.literal("0")),
+  remaining: Amount.or(z.literal("0")),
+  refundSigner: Address,
+  chainId: z.number().int(),
+  token: Address,
+  router: Address,
+  domain: z.object({ name: z.string(), version: z.string() }),
+});
+export type RefundQuoteResponse = z.infer<typeof RefundQuoteResponse>;
+
+// POST /v1/refund
+export const RefundRequest = z.object({
+  orderId: Bytes32,
+  amount: Amount,
+  validAfter: z.number().int().nonnegative(),
+  validBefore: z.number().int().positive(),
+  signature: Signature,
+});
+export type RefundRequest = z.infer<typeof RefundRequest>;
+export const RefundResponse = z.object({
+  orderId: Bytes32,
+  amount: Amount,
+  refundIndex: z.number().int().nonnegative(),
+  totalRefunded: Amount,
+  txHash: TxHash,
+});
+export type RefundResponse = z.infer<typeof RefundResponse>;
 
 export const RefundContext = z.object({
   orderId: Bytes32, merchantId: Bytes32, payer: Address, refundSigner: Address,

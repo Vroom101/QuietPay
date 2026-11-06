@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { verifyWebhookSignature } from "@quietpay/shared/webhook";
 import { buildServer } from "../src/server.js";
-import { WebhookWorker } from "../src/webhooks.js";
+import { WebhookWorker, merchantWebhookSecret } from "../src/webhooks.js";
 import { MERCHANT_ID, makeEnv, newOrder, signFor } from "./helpers.js";
 
 const auth = { authorization: "Bearer test-key" };
@@ -108,7 +108,7 @@ describe("webhook worker", () => {
     clock.t += 30; // second backoff
     expect(await worker.tick()).toBe(1);
     expect(calls).toHaveLength(3);
-    for (const c of calls) expect(verifyWebhookSignature("whsec_test_secret_123456", c.body, c.sig, { nowSeconds: clock.t })).toBe(true);
+    for (const c of calls) expect(verifyWebhookSignature(merchantWebhookSecret("whsec_test_secret_123456", MERCHANT_ID), c.body, c.sig, { nowSeconds: clock.t })).toBe(true);
     // Same event id each time so receivers can dedupe.
     expect(new Set(calls.map((c) => JSON.parse(c.body).id)).size).toBe(1);
 

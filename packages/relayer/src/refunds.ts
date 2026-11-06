@@ -113,7 +113,7 @@ export class RefundService {
       if (receipt.status !== "success") return;
       const total = db.refundTotals(row.order_id).amount;
       const order = db.getOrder(row.order_id)!;
-      db.setStatus(order.id, total === BigInt(order.amount) ? "refunded" : "partially_refunded");
+      db.transition(order.id, ["settled", "partially_refunded"], total === BigInt(order.amount) ? "refunded" : "partially_refunded");
       if (order.webhook_url) {
         const event = { id: `evt_${randomUUID().replace(/-/g, "")}`, type: "payment.refunded", createdAt: this.svc.now(),
           data: { orderId: order.id, merchantId: order.merchant_id, amount: order.amount, fee: order.fee,

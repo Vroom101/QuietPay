@@ -6,21 +6,26 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./api": "./src/api/index.ts"
+  },
+  "bin": {
+    "quietpay-indexer": "./src/cli.ts"
   },
   "scripts": {
-    "start": "tsx src/main.ts",
     "cli": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "start": "tsx src/api/main.ts",
+    "api:cli": "tsx src/api/cli.ts"
   },
   "dependencies": {
     "@quietpay/shared": "workspace:*",
     "better-sqlite3": "^11.5.0",
-    "fastify": "^5.1.0",
     "tsx": "^4.19.0",
     "viem": "^2.21.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "fastify": "^5.1.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",

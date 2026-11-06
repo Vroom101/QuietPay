@@ -14,6 +14,17 @@ export interface OrderRow {
 
 export const shortHex = (s: string) => `${s.slice(0, 6)}...${s.slice(-4)}`;
 
+/** Returns the URL only when it parses as http(s); javascript:, data:, vbscript: etc. yield null. */
+export function safeHttpUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export function toRow(o: Order): OrderRow {
   return {
     id: o.id,
@@ -22,7 +33,7 @@ export function toRow(o: Order): OrderRow {
     fee: `${formatUsdt(o.fee)} USDT`,
     payout: o.payout,
     payer: o.payer ?? null,
-    explorerUrl: o.explorerUrl ?? null,
+    explorerUrl: safeHttpUrl(o.explorerUrl),
     created: new Date(o.createdAt * 1000).toISOString().replace("T", " ").slice(0, 16) + " UTC",
     reference: o.reference ?? null,
   };

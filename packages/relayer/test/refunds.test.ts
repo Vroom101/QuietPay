@@ -84,9 +84,9 @@ describe("gasless partial refunds", () => {
     expect(e.chain.refundPrepared).toHaveLength(0);
   });
   it("rejects unsettled orders and mismatched on-chain receipts", async () => {
-    const e = await setup(); e.db.setStatus(e.order.id, "pending");
+    const e = await setup(); e.db.transition(e.order.id, ["settled"], "pending");
     await expect(submit(e, await signed(e))).rejects.toMatchObject({ code: "simulation_failed" });
-    e.db.setStatus(e.order.id, "settled");
+    e.db.transition(e.order.id, ["pending"], "settled");
     e.chain.orderReceipts.set(e.order.id, { payer: ROUTER, value: 25_000_000n, refunded: 0n, refundCount: 0n, settled: true });
     await expect(submit(e, await signed(e))).rejects.toMatchObject({ code: "simulation_failed" });
   });
@@ -107,6 +107,7 @@ describe("gasless partial refunds", () => {
     const svc = new RelayerService({ cfg: e.cfg, db, chain: e.chain, now: () => e.clock.t });
     expect(db.attempts(r.id)[0]?.raw).toBeDefined();
     e.chain.receiptFails = false;
+    e.chain.broadcastFails = false;
     await svc.refunds.recover(r.id);
     await svc.refunds.recover(r.id);
     expect(svc.refunds.get(MERCHANT_ID, r.id).status).toBe("settled");

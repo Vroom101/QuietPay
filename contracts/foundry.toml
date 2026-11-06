@@ -10,3 +10,4 @@ via_ir = true
 optimizer = true
 optimizer_runs = 200
 remappings = ["@openzeppelin/=lib/openzeppelin-contracts/"]
+fs_permissions = [{ access = "read", path = "../packages/shared/fixtures" }, { access = "read", path = "../packages/shared/token.json" }]

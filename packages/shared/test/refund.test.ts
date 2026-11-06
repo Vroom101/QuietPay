@@ -14,7 +14,7 @@ describe("shared refund authorizations", () => {
       { merchantId: ("0x" + "01".repeat(32)) as Hex }, { orderId: ("0x" + "02".repeat(32)) as Hex },
       { payer: signer.address }, { amount: 5_000_001n }, { refundIndex: 1n },
     ]) expect(computeRefundNonce({ ...base, ...changed })).not.toBe(nonce);
-    expect(computePayNonce({ ...base, payout: base.payer, value: base.amount })).not.toBe(nonce);
+    expect(computePayNonce({ ...base, payout: base.payer, value: base.amount, fee: 0n })).not.toBe(nonce);
   });
   it("signs the token domain with the router as the only receiver", async () => {
     const td = buildRefundAuthorization({ ...base, refundSigner: signer.address, router: order.checkout.router as Hex,

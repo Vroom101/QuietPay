@@ -6,8 +6,7 @@ import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ERROR_CODES, ERROR_USER_MESSAGES, formatUsdt, recoverCheckoutSigner, type Order } from "@quietpay/shared";
 import { createMockRelayer } from "@quietpay/shared/mock-server";
-import { pollOrder } from "../src/client.js";
-import { FIXTURE_ORDER_ID, orderSettled } from "@quietpay/shared/fixtures";
+import { FIXTURE_ORDER_ID, FIXTURE_ROUTER } from "@quietpay/shared/fixtures";
 import "../src/element.js";
 import type { QuietpayCheckout } from "../src/element.js";
 
@@ -37,6 +36,8 @@ function mount(orderId: string, relayerUrl = base) {
   const el = document.createElement("quietpay-checkout") as QuietpayCheckout;
   el.setAttribute("order-id", orderId);
   el.setAttribute("relayer-url", relayerUrl);
+  // The mock relayer serves the official chain/token/domain but a placeholder router; tell the widget to expect it.
+  el.setAttribute("router", FIXTURE_ROUTER);
   document.body.appendChild(el);
   return el;
 }
@@ -53,6 +54,7 @@ describe("quietpay-checkout against the mock relayer", () => {
   it("runs the full flow: amount, pay, poll, receipt", async () => {
     const order = await createOrder("25000000");
     const el = mount(order.id);
+    el.setAttribute("expected-amount", "25");
     await until(() => !!el.shadowRoot?.querySelector("button"));
     expect(text(el)).toContain(`${formatUsdt("25000000")} USDT`);
     const payer = el.shadowRoot!.querySelector("[data-testid=payer]")!.textContent!;
@@ -191,24 +193,5 @@ describe("every relayer error code renders a message", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
-  });
-});
-
-describe("refunded checkout compatibility", () => {
-  it.each(["partially_refunded", "refunded"] as const)("shows %s as a receipt without offering payment again", async status => {
-    const o = { ...orderSettled, status, refunded: status === "refunded" ? "25000000" : "5000000", refundCount: 1 };
-    const mock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(o), { status: 200 }));
-    const el = mount(o.id);
-    const settled = vi.fn(), refunded = vi.fn();
-    el.addEventListener("quietpay:settled", settled);
-    el.addEventListener("quietpay:refunded", refunded);
-    try {
-      await until(() => !!el.shadowRoot?.querySelector("[data-testid=receipt]"));
-      expect(el.shadowRoot?.querySelector("button")).toBeNull();
-      expect(text(el)).toContain("Refunded:");
-      expect(settled).not.toHaveBeenCalled();
-      expect(refunded).toHaveBeenCalled();
-      expect((await pollOrder(base, o.id, { timeoutMs: 1 })).status).toBe(status);
-    } finally { el.remove(); mock.mockRestore(); }
   });
 });

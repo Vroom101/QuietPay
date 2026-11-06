@@ -19,7 +19,10 @@ const body = JSON.stringify({
     txHash: "0x" + "cd".repeat(32),
   },
 });
-const secret = process.env.QUIETPAY_WEBHOOK_SECRET || "dev-webhook-secret";
+// Note: the server re-reads the order from the relayer and only marks it paid if the relayer reports it settled
+// with the same amount, so this simulates delivery, not settlement.
+const secret = process.env.QUIETPAY_WEBHOOK_SECRET;
+if (!secret) throw new Error("QUIETPAY_WEBHOOK_SECRET is not set (use the same value as the demo-store server)");
 const res = await fetch(`http://127.0.0.1:${process.env.PORT ?? 3001}/webhooks/quietpay`, {
   method: "POST",
   headers: { "content-type": "application/json", "quietpay-signature": signWebhook(secret, body) },

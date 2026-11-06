@@ -99,7 +99,10 @@ export async function createOrder(opts: CreateOrderOptions): Promise<Order> {
 
 /** Reads an order. Public: no API key needed. */
 export async function getOrder(opts: GetOrderOptions): Promise<Order> {
-  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/orders/${opts.orderId}`);
+  if (!/^0x[0-9a-fA-F]{64}$/.test(opts.orderId)) {
+    throw new QuietpayApiError(400, "unknown", "Invalid orderId: expected 0x followed by 64 hex characters");
+  }
+  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/orders/${encodeURIComponent(opts.orderId)}`);
   return parse(res, Order);
 }
 
@@ -121,6 +124,7 @@ export interface VerifyWebhookOptions {
  * Receivers should ignore events whose `id` they have already processed.
  */
 export function verifyWebhook(opts: VerifyWebhookOptions): WebhookEvent {
+  if (opts.secret.trim() === "") throw new WebhookVerificationError("Webhook secret is empty; refusing to verify");
   if (!opts.signatureHeader) throw new WebhookVerificationError("Missing Quietpay-Signature header");
   const ok = verifyWebhookSignature(opts.secret, opts.body, opts.signatureHeader, {
     toleranceSeconds: opts.toleranceSeconds ?? WEBHOOK_TOLERANCE_SECONDS,

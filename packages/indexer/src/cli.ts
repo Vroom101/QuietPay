@@ -1,97 +1,127 @@
-import { parseArgs } from "node:util";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+#!/usr/bin/env tsx
+import { writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { loadConfig } from "./config.js";
-import { makeReader } from "./chain.js";
-import { IndexDb } from "./db.js";
-import { Indexer } from "./indexer.js";
-import { verifyExport } from "./verifier.js";
-import { BlockNumber, Hash } from "./model.js";
+import { mkdirSync } from "node:fs";
+import { assertQualifyingConfig, getDeployment, getQualifyingDeployment, QUALIFYING_CHAIN_ID } from "@quietpay/shared";
+import { IndexerDb } from "./db.js";
+import { buildExport, indexOnce, rebuild, type IndexerConfig } from "./indexer.js";
+import { getNodeChainId, makeLogSource } from "./rpc.js";
 
-async function main() {
-  const { values, positionals } = parseArgs({
-    allowPositionals: true,
-    options: {
-      from: { type: "string" },
-      to: { type: "string" },
-      merchant: { type: "string" },
-      out: { type: "string" },
-      csv: { type: "string" },
-      meta: { type: "string" },
-    },
-  });
-  const command = positionals[0];
-  if (!["sync", "export", "verify"].includes(command ?? ""))
-    throw new Error(
-      "Usage: cli sync | export --out export [--from N --to N --merchant 0x...] | verify --csv export.csv --meta export.meta.json",
-    );
-  const cfg = loadConfig(),
-    chain = makeReader(cfg.rpcUrl, cfg.scope);
-  const fromBlock =
-    values.from === undefined
-      ? undefined
-      : BlockNumber.parse(Number(values.from));
-  const toBlock =
-    values.to === undefined ? undefined : BlockNumber.parse(Number(values.to));
-  const merchantId =
-    values.merchant === undefined
-      ? undefined
-      : Hash.parse(values.merchant).toLowerCase();
-  if (command === "verify") {
-    if (!values.csv || !values.meta)
-      throw new Error("verify requires --csv and --meta");
-    const bundle = {
-      csv: await readFile(values.csv, "utf8"),
-      meta: JSON.parse(await readFile(values.meta, "utf8")),
-    };
-    const result = await verifyExport(chain, cfg.scope, bundle, {
-      merchantId,
-      fromBlock,
-      toBlock,
-    });
-    console.log(JSON.stringify(result, null, 2));
-    if (!result.ok) process.exitCode = 1;
-    return;
-  }
-  const db = new IndexDb(cfg.databasePath, cfg.scope),
-    indexer = new Indexer(db, chain, cfg.scope);
-  try {
-    // CLI catches up fully; each sync remains bounded to 20 pages.
-    do {
-      await indexer.sync();
-    } while (
-      db.cursor <
-      Math.max(
-        cfg.scope.deploymentBlock - 1,
-        (indexer.head ?? 0) - cfg.scope.confirmations,
-      )
-    );
-    if (command === "sync") {
-      console.log(JSON.stringify({ indexedThrough: db.cursor }));
-      return;
-    }
-    const bundle = await indexer.export({ fromBlock, toBlock, merchantId }),
-      prefix = values.out ?? "export";
-    await mkdir(dirname(prefix), { recursive: true });
-    await writeFile(`${prefix}.csv`, bundle.csv, { flag: "wx" });
-    await writeFile(
-      `${prefix}.meta.json`,
-      JSON.stringify(bundle.meta, null, 2) + "\n",
-      { flag: "wx" },
-    );
-    console.log(
-      JSON.stringify({
-        csv: `${prefix}.csv`,
-        meta: `${prefix}.meta.json`,
-        ...bundle.meta,
-      }),
-    );
-  } finally {
-    await indexer.stop();
-    db.close();
+const USAGE = `quietpay-indexer <command>
+  index                         catch up to the finalized head once
+  watch                         loop, polling every few seconds
+  rebuild                       recompute the ledger from raw events
+  export --from N --to M --out FILE   write FILE (CSV) and FILE.meta.json
+Env: RPC_URL CHAIN_ID USDT_ADDRESS ROUTER_ADDRESS FACILITATOR_PAYTO DATABASE_PATH CONFIRMATIONS [DEPLOY_BLOCK]`;
+
+function need(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Set ${name}`);
+  return v;
+}
+
+/** On chain 1874 the router must be the qualifying one recorded in deployments.json. */
+function assertQualifyingRouter(router: string): void {
+  const q = getQualifyingDeployment();
+  if (router.toLowerCase() !== q.router.toLowerCase()) {
+    throw new Error(`Refusing router ${router}: on chain ${QUALIFYING_CHAIN_ID} only the qualifying router ${q.router} is accepted`);
   }
 }
+
+/** Refuses to index unless the RPC node itself reports chain 1874 and CHAIN_ID (if set) agrees with it. */
+async function assertNodeChain(rpcUrl: string): Promise<void> {
+  const nodeId = await getNodeChainId(rpcUrl);
+  if (nodeId !== QUALIFYING_CHAIN_ID) throw new Error(`RPC node reports chain ${nodeId}; refusing (expected ${QUALIFYING_CHAIN_ID})`);
+  if (process.env.CHAIN_ID !== undefined && Number(process.env.CHAIN_ID) !== nodeId) {
+    throw new Error(`CHAIN_ID=${process.env.CHAIN_ID} disagrees with the RPC node (chain ${nodeId})`);
+  }
+}
+
+function loadConfig(): { cfg: IndexerConfig; rpcUrl: string; dbPath: string } {
+  const chainId = Number(process.env.CHAIN_ID ?? QUALIFYING_CHAIN_ID);
+  if (chainId !== QUALIFYING_CHAIN_ID) throw new Error(`Refusing chain ${chainId}: this indexer runs only on chain ${QUALIFYING_CHAIN_ID}`);
+  // On the qualifying chain, only the qualifying router and the official USDT are accepted.
+  const dep = (() => {
+    try {
+      return chainId === QUALIFYING_CHAIN_ID ? getQualifyingDeployment() : getDeployment(chainId);
+    } catch {
+      return undefined;
+    }
+  })();
+  const deployBlock = Number(process.env.DEPLOY_BLOCK ?? dep?.deployBlock ?? NaN);
+  if (!Number.isFinite(deployBlock)) throw new Error("No deploy block: set DEPLOY_BLOCK or record deployBlock in deployments.json");
+  const usdt = process.env.USDT_ADDRESS ?? dep?.token ?? need("USDT_ADDRESS");
+  assertQualifyingConfig({ chainId, tokenAddress: usdt });
+  const router = process.env.ROUTER_ADDRESS ?? dep?.router ?? need("ROUTER_ADDRESS");
+  assertQualifyingRouter(router);
+  return {
+    rpcUrl: need("RPC_URL"),
+    dbPath: process.env.DATABASE_PATH ?? "./indexer.db",
+    cfg: {
+      router,
+      usdt,
+      facilitatorPayTo: process.env.FACILITATOR_PAYTO || undefined,
+      confirmations: Number(process.env.CONFIRMATIONS ?? 12),
+      deployBlock,
+    },
+  };
+}
+
+function flag(args: string[], name: string): string | undefined {
+  const i = args.indexOf(`--${name}`);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
+const [cmd, ...args] = process.argv.slice(2);
+const log = (m: string) => console.log(`[${new Date().toISOString()}] ${m}`);
+
+async function main() {
+  if (!cmd || cmd === "--help" || cmd === "-h") return console.log(USAGE);
+  const { cfg, rpcUrl, dbPath } = loadConfig();
+  // Commands that talk to the node must agree with it on the chain id; export and rebuild read only the local DB.
+  if (cmd === "index" || cmd === "watch") await assertNodeChain(rpcUrl);
+  const db = new IndexerDb(dbPath);
+  const src = makeLogSource(rpcUrl);
+  try {
+    if (cmd === "index") {
+      const r = await indexOnce({ db, src, cfg, log });
+      log(`head ${r.head}, finalized ${r.finalized}, cursor now ${db.getCursor()?.block}, ledger rows ${db.ledger().length}`);
+    } else if (cmd === "watch") {
+      for (;;) {
+        try {
+          await indexOnce({ db, src, cfg, log });
+        } catch (e) {
+          log(`error: ${(e as Error).message}`);
+          if (/reorg deeper/.test((e as Error).message)) throw e;
+        }
+        await new Promise((r) => setTimeout(r, Number(process.env.POLL_SECONDS ?? 5) * 1000));
+      }
+    } else if (cmd === "rebuild") {
+      log(`rebuilt ${rebuild(db, cfg).length} ledger rows from raw events`);
+    } else if (cmd === "export") {
+      const out = flag(args, "out");
+      if (!out) throw new Error("export needs --out FILE");
+      const from = flag(args, "from");
+      const to = flag(args, "to");
+      const res = buildExport(db, cfg, {
+        from: from ? Number(from) : undefined,
+        to: to ? Number(to) : undefined,
+        generatedAt: process.env.GENERATED_AT,
+      });
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out, res.csv);
+      writeFileSync(`${out}.meta.json`, JSON.stringify(res.meta, null, 2) + "\n");
+      log(`wrote ${res.rows.length} rows to ${out} (blocks ${res.meta.fromBlock}-${res.meta.toBlock}, finalized head ${db.getCursor()?.block})`);
+    } else {
+      console.log(USAGE);
+      process.exitCode = 1;
+    }
+  } finally {
+    if (cmd !== "watch") db.close();
+  }
+}
+
 main().catch((e) => {
-  console.error((e as Error).message);
-  process.exitCode = 1;
+  console.error(e.message ?? e);
+  process.exit(1);
 });

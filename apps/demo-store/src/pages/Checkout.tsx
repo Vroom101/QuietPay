@@ -3,19 +3,21 @@ import { Link, useNavigate } from "react-router-dom";
 import { QuietpayCheckout } from "@quietpay/widget/react";
 import { useCart } from "../cart";
 import { PRODUCTS } from "../products";
+import { parseCheckoutSession, type CheckoutSession } from "../checkout-session";
 
 const RELAYER_URL = import.meta.env.VITE_RELAYER_URL ?? "http://localhost:8787";
 
 export function Checkout() {
   const { items, total, remove, clear, count } = useCart();
   const nav = useNavigate();
-  const [orderId, setOrderId] = useState<string>();
+  const [session, setSession] = useState<CheckoutSession>();
+  const orderId = session?.orderId;
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
   // Changing the cart invalidates any order we already created.
   useEffect(() => {
-    setOrderId(undefined);
+    setSession(undefined);
   }, [total]);
 
   async function start() {
@@ -26,10 +28,11 @@ export function Checkout() {
       const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ cartTotal: total }),
+        // Send only product ids and quantities; the server prices the cart from its own catalog.
+        body: JSON.stringify({ items: Object.entries(items).map(([id, quantity]) => ({ id, quantity })) }),
       });
       if (!res.ok) throw new Error("checkout failed");
-      setOrderId(((await res.json()) as { orderId: string }).orderId);
+      setSession(parseCheckoutSession(await res.json()));
     } catch {
       setError("We could not start your checkout. Please try again.");
     } finally {
@@ -60,13 +63,16 @@ export function Checkout() {
       </div>
       <div>
         <h2 className="mb-3 text-lg font-semibold">Payment</h2>
-        {orderId ? (
+        {/* Amount and payout come from the store's own server; the widget refuses to sign anything else. */}
+        {session ? (
           <QuietpayCheckout
-            orderId={orderId}
+            orderId={session.orderId}
             relayerUrl={RELAYER_URL}
+            expectedAmount={session.amount}
+            expectedPayout={session.payout}
             onSettled={() => {
               clear();
-              nav(`/success/${orderId}`);
+              nav(`/success/${session.orderId}`);
             }}
           />
         ) : (

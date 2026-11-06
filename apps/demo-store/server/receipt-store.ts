@@ -23,6 +23,9 @@ export class ReceiptStore {
       })();
     } catch (error) { this.db.close(); throw error; }
   }
+  hasEvent(id: string): boolean {
+    return this.db.prepare("SELECT 1 FROM receipt_events WHERE id=?").get(id) !== undefined;
+  }
   record(id: string, receipt?: PaidRecord): boolean {
     return this.db.transaction(() => {
       const result = this.db.prepare("INSERT OR IGNORE INTO receipt_events VALUES (?)").run(id);
