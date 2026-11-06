@@ -662,7 +662,7 @@ export class Db {
            status IN ('settled','partially_refunded','refunded') OR (status IN ${UNRESOLVED} AND (tx_hash IS NOT NULL OR relayed_at>=? ${owners})))`,
       )
       .all(payer.toLowerCase(), since, inflightSince, ...liveOwners) as { amount: string }[];
-    const agents = this.raw.prepare("SELECT amount FROM x402_payments WHERE payer=? AND status IN ('settling','settled') AND created_at>=?").all(payer.toLowerCase(), since) as { amount: string }[];
+    const agents = this.raw.prepare("SELECT amount FROM x402_payments WHERE payer=? AND status IN ('settling','settled','unresolved') AND created_at>=?").all(payer.toLowerCase(), since) as { amount: string }[];
     return [...rows, ...agents].reduce((a, r) => a + BigInt(r.amount), 0n);
   }
 

@@ -243,3 +243,20 @@ describe("audit P4 + paywall.ts: the resource runs only after settlement and an 
     expect(seen[0]!.redirect).toBe("error");
   });
 });
+
+describe("mutation kill P8: a refused delivery claim never runs the resource", () => {
+  it("settled but claim refused (already delivered): 402 payment_replayed, resource not run", async () => {
+    const s = await start({ ...ok, "/v1/x402/delivery/claim": { json: { success: false, errorReason: "payment_replayed" } } });
+    const res = await fetch(s.url + "/v1/quote", { headers: header() });
+    expect(res.status).toBe(402);
+    expect((await res.json()).error).toBe("payment_replayed");
+    expect(s.delivered).not.toHaveBeenCalled();
+  });
+
+  it("a refused claim is refused even when it still carries a payment id and lease (success=false is authoritative)", async () => {
+    const s = await start({ ...ok, "/v1/x402/delivery/claim": { json: { ...claim, success: false, errorReason: "payment_replayed" } } });
+    const res = await fetch(s.url + "/v1/quote", { headers: header() });
+    expect(res.status).toBe(402);
+    expect(s.delivered).not.toHaveBeenCalled();
+  });
+});

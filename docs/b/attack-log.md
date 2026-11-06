@@ -12,3 +12,32 @@ Residual (Low, documented): a payload observed by a third party can be redeemed 
 | M2 | B2.4 matrix | Default 404 echoed the requested method and path | Fastify's built-in 404 reflected attacker-controlled text in all three services. | Low | Fixed. Fixed `{error:{code:"not_found"}}` body everywhere. |
 | M3 | B2.4 matrix | Facilitator turned every error into 400 | Oversized bodies returned 400 instead of 413 and bad content types lost their 415. | Low | Fixed. Fastify 4xx statuses are preserved with fixed codes (`payload_too_large`, `unsupported_media_type`, `invalid_payload`). |
 | M4 | B2.4 matrix | No request timeouts, paid API had the 1 MiB default body limit | Slow clients could hold sockets open; the paid API accepted large bodies on routes that read none. | Low | Fixed. `requestTimeout` 30 s, `headersTimeout` 15 s, `connectionTimeout` 60 s on both apps; paid API body limit 16 KiB, fixed error handler. |
+
+## Opus rounds (B3)
+
+Round A (facilitator, paid API, shared wallet; read-only review, code-checked by me) and round B (fresh eyes: spec and public interfaces only).
+
+| Id | Round | Angle | Finding | Severity | Status |
+|---|---|---|---|---|---|
+| A-F2 | A | front-run recovery | A payment adopted from a still-shallow foreign tx had no send attempt, so `recover()` ran the payer-cap and `validBefore` checks first and marked it `failed` although the payee was paid; the 900 s path to `unresolved` was unreachable. | High (payer misled) | Fixed: recovery resolves a used nonce against the chain before `sendLocked`. Test `A-F2` failed before, passes now. |
+| A-F4 | A | loss budget via x402 | x402 reverts did not count as payer reverts and had no per-wallet limit, unlike checkout, so one wallet could burn the shared gas budget. | Medium | Fixed: our reverted x402 attempts are recorded in `reverts`; a payer at `MAX_REVERTS_PER_DAY` is refused before another send. Test `A-F4`. |
+| A-F5 | A | accounting | `unresolved` x402 payments were left out of the payer's daily volume although the payer may have paid. | Low | Fixed in `payerVolume`. Test `A-F5`. |
+| A-F3 | A | late redemption | A payload copied from the chain could be adopted as a fresh payment. | Low (narrow) | Bounded, not changed: `verify` checks the validity window (at most the policy timeout) and the payer balance BEFORE the used-nonce check, so old payments and drained payers are never adopted. Test `A-F3` pins the expiry bound. Residual: within that window, a payment settled elsewhere for the same payee and price can buy one more delivery here (same root as "the signature does not cover the resource"). |
+| A-F1 | A | bearer payload | The signed payload is public once settled on chain; if the victim's `/settle` was still pending (`settlement_pending`), whoever calls the paid API first with the rebuilt payload gets the delivery and the payer's retry gets `payment_replayed`. | High as a design limit | Open, not fixable in the backend: needs a requester binding in the frozen x402 spec. Recorded in `blocked.md`. |
+| RB-8 | B | proxy | Facilitator rate limit keyed on the socket address, so behind a reverse proxy all clients shared one bucket and `X-Forwarded-For` was ignored. | Low/Medium | Fixed: same `TRUST_PROXY_HOPS` rule as the relayer. 2 tests. |
+
+Round B hypotheses rejected after checking the code: nonce reuse to fake a settlement (the binding decodes the call and matches payer, payee, amount and nonce; `chain-extensions-external` tests), replay on a pricier resource (policy amount is enforced per resource: `value_mismatch`), another merchant taking a delivery lease (`delivery()` and `claim` check the calling merchant), checkout fee/value tampering (amount and fee mutants killed), webhook replay (documented, `isDuplicate` hook added). Round B items accepted as known: per-order revert limit can be used to annoy one order (documented in decisions, costs the attacker real reverts); `GET /v1/orders/:id` is unthrottled by design.
+
+Clean rounds are not proof of absence: these are the findings of these methods only.
+
+Round C (Opus re-check of the round A/B fixes; read-only, code-checked by me):
+
+| Id | Finding | Severity | Status |
+|---|---|---|---|
+| C-F2 | x402 reverts were stored as first-time-payer reverts, eating checkout's new-payer pool and skewing its loss-budget share. | Medium | Fixed (`firstTime: false`). Test `C-F2`. |
+| C-F3 | A tx the relayer held past `validBefore` and that then reverted was charged to the payer's daily revert count. | Low/Medium | Fixed: only reverts inside the signed window count (checkout has the same exemption). Test `C-F3`. |
+| C-F4 | In `settle()` a payer at a cap, whose authorization was used by someone else between verify and send, was stored as `failed` although the payee was paid. | Low | Fixed: with no attempt of ours, a used nonce is resolved against the chain before a failure is stored. Test `C-F4`. |
+| C-F5 | `Vary: Origin` missing on non-allow-listed responses. | Low | Fixed (every relayer/facilitator response). Test. |
+| C-F1 | N parallel x402 settles from one wallet all pass the revert-count check before any reverts are mined, so one wallet can burn up to the hourly loss budget before the per-wallet limit bites. | Medium | Accepted, bounded: the global hourly loss budget (`reservedSpend`, reserved at send time) caps the total and pauses sends; the per-wallet limit stops repeats the next day. A per-payer in-flight cap would also throttle legitimate parallel agent calls, so it is a product decision. Listed in `blocked.md`. |
+
+Round count: A, B and C done (maximum three). Rounds A and C each produced valid findings, which were fixed with tests; round B's one real finding was fixed. The component is therefore not "closed by two clean rounds" per the rule; it is recorded as: all valid findings fixed, two items open (A-F1 spec, C-F1 product decision).

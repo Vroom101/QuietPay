@@ -43,9 +43,9 @@ export function buildServer(svc: RelayerService): FastifyInstance {
   app.addHook("onRequest", async (req, reply) => {
     const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
     const allowListed = origin !== undefined && corsOrigins.has(origin);
+    reply.header("vary", "Origin"); // the answer depends on the Origin header: shared caches must not mix them up
     if (allowListed) {
       reply.header("access-control-allow-origin", origin);
-      reply.header("vary", "Origin");
     } else if (publicPath(req.url)) {
       reply.header("access-control-allow-origin", "*");
     }

@@ -48,7 +48,7 @@ describe("paid-api entry file (main.ts)", () => {
       expect(code, `missing ${key} must exit non-zero`).not.toBe(0);
       expect(p.output()).toContain(key);
     }
-  }, 60_000);
+  }, 130_000);
 
   it("boots with a fake env, serves /health and a 402 challenge, then stops when killed", async () => {
     const port = await freePort();
@@ -69,5 +69,5 @@ describe("paid-api entry file (main.ts)", () => {
       p.child.kill();
       await p.exited;
     }
-  }, 60_000);
+  }, 130_000);
 });

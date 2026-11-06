@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { FacilitatorRequest, Bytes32, Address } from "@quietpay/shared";
-import { RateLimiter } from "@quietpay/relayer/core";
+import { RateLimiter, clientKey, resolveClientIp } from "@quietpay/relayer/core";
 import { FacilitatorService, PaymentError } from "./service.js";
 export async function registerFacilitator(
   app: FastifyInstance,
@@ -11,7 +11,10 @@ export async function registerFacilitator(
     const limiter = new RateLimiter(service.relayer.cfg.rateLimitPerMinute);
     api.addHook("preHandler", async (req, reply) => {
       if (req.method === "GET") return;
-      if (!limiter.allow(req.ip))
+      // Same client address rule as the relayer: X-Forwarded-For only counts behind TRUST_PROXY_HOPS trusted proxies,
+      // otherwise every client behind a reverse proxy would share one bucket (and a spoofed header would buy nothing).
+      const ip = resolveClientIp(req.ip, req.headers["x-forwarded-for"], service.relayer.cfg.trustProxyHops ?? 0);
+      if (!limiter.allow(clientKey(ip)))
         return reply
           .code(429)
           .send({
