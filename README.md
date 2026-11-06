@@ -14,8 +14,8 @@ An earlier run used a self-minted stand-in token; it is superseded and is not qu
 | Item | Status | Evidence |
 | --- | --- | --- |
 | PaymentRouter deployed and verified | **Done** (block 12351795) | [router](https://explorer.testnet.whitechain.io/address/0xb9D475cdd817900B45C356169c6FdC379B942d82), [deploy tx](https://explorer.testnet.whitechain.io/tx/0xb2ce9853989c79207659f2c7aac30d165a4b152e84c2f76c265342273ea3c4fa), `docs/lead/live-usdt.md` |
-| Qualifying official-USDT payment (zero-WBT payer) | **Pending: unfunded** (payer holds no official USDT) | `docs/lead/live-usdt.md` |
-| Official-USDT refund, on-chain | Contract implemented and tested (72 Foundry tests); live refund **pending: unfunded** | `contracts/test/PaymentRouterRefund.t.sol`, `docs/lead/refund.md` |
+| Qualifying official-USDT payment (zero-gas payer) | **Done**: 1 USDT, fee 0.05, block 12361192 | [pay tx](https://explorer.testnet.whitechain.io/tx/0x1f2da1062f4c941382d1f0d3c7134c49858662d8eb3a68436b8f88fc7d892384), `docs/lead/live-usdt.md` |
+| Official-USDT refund, on-chain | **Done**: 0.5 USDT refunded to the payer (also 72 Foundry tests) | [refund tx](https://explorer.testnet.whitechain.io/tx/0x1ac62248eb3def54499896fd8bfc197436fcb83d9544fe94432c138c2d85127d), `docs/lead/refund.md` |
 | Refund API in the relayer and the dashboard refund button | **Not built** | `docs/lead/shared-change.md` |
 | Hosted relayer | **Not done** (runs locally only) | `render.yaml` is ready |
 | Browser checkout | **Not run in a real browser** | widget and store pass their unit tests against the mock relayer |

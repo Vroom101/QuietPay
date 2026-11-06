@@ -7,8 +7,7 @@
 2. **Official USDT fork payment tested: done, but simulated funding.** `contracts/test/Fork.t.sol` runs the router
    against the real token on a fork. Balances are set with `deal()` on the fork only, so this is a compatibility check,
    **not** qualification evidence.
-3. **Official USDT public-testnet payment: pending: unfunded.** The qualifying router is deployed and verified
-   (see `live-usdt.md`); the payment waits for official USDT in the payer wallet.
+3. **Official USDT public-testnet payment and refund: done.** [Payment](https://explorer.testnet.whitechain.io/tx/0x1f2da1062f4c941382d1f0d3c7134c49858662d8eb3a68436b8f88fc7d892384) and [refund](https://explorer.testnet.whitechain.io/tx/0x1ac62248eb3def54499896fd8bfc197436fcb83d9544fe94432c138c2d85127d) on the qualifying router with the official USDT (details in `live-usdt.md`).
 
 An earlier run used a self-minted stand-in token. It is not evidence and is superseded.
 

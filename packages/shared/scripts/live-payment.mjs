@@ -47,7 +47,9 @@ if (fee > maxFee) throw new Error(`fee ${formatUsdt(fee)} exceeds the merchant c
 
 // Preconditions: the payer must be a zero-gas wallet that actually holds the token.
 const payerWbt = await pub.getBalance({ address: payer.address });
-if (payerWbt !== 0n && e.ALLOW_PAYER_GAS !== "1") throw new Error(`payer holds native gas token (${payerWbt}); the demo requires zero`);
+// "Zero gas" means the payer cannot afford even one plain transfer. A few wei of unsendable dust can remain after sweeping.
+const minTxCost = 21000n * (await pub.getGasPrice());
+if (payerWbt >= minTxCost && e.ALLOW_PAYER_GAS !== "1") throw new Error(`payer holds usable native gas token (${payerWbt} wei, one transfer costs ${minTxCost}); the demo requires a payer that cannot pay gas`);
 const payerUsdt = await bal(payer.address);
 if (payerUsdt < value) throw new Error(`payer holds ${formatUsdt(payerUsdt)} USDT, needs ${formatUsdt(value)}`);
 
