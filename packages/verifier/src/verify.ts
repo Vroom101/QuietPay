@@ -100,6 +100,9 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
 
   const chainId = await src.getChainId();
   assertQualifying(chainId, router, usdt);
+  // A second node must agree on the chain id too: a primary lying only about it would switch the guard off.
+  const chainId2 = input.src2 ? await input.src2.getChainId() : undefined;
+  if (chainId2 !== undefined) assertQualifying(chainId2, router, usdt);
 
   const issues: Issue[] = [];
   const ran = new Set<CheckName>();
@@ -130,6 +133,18 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
     report.ok = issues.length === 0 && CHECKS.every((c) => report.checks[c] === "pass");
     return report;
   };
+
+  if (chainId2 !== undefined && chainId2 !== chainId) {
+    issues.push({
+      check: "event_set_hash",
+      code: "rpc_disagreement",
+      field: "chainId",
+      expected: String(chainId),
+      actual: String(chainId2),
+      message: `the two RPC nodes report different chain ids (${chainId} vs ${chainId2}); do not trust either until resolved`,
+    });
+    return finish();
+  }
 
   // 1. Structure.
   ran.add("structure");
@@ -204,6 +219,22 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
   }
   // The reader's anchor bounds the work: a contradicting sidecar range is already a FAIL, do not scan it.
   if (issues.some((i) => i.code === "range_mismatch")) return finish();
+
+  // On the qualifying chain no router event can precede the deploy block: do not page the whole chain for a forged start.
+  if (chainId === QUALIFYING_CHAIN_ID) {
+    const deployBlock = getQualifyingDeployment().deployBlock;
+    if (typeof deployBlock === "number" && meta.fromBlock < deployBlock) {
+      issues.push({
+        check: "sidecar",
+        code: "range_before_deploy",
+        field: "fromBlock",
+        expected: `>= ${deployBlock}`,
+        actual: String(meta.fromBlock),
+        message: `sidecar fromBlock ${meta.fromBlock} is below the router deploy block ${deployBlock}; no router event can exist there, so the range was not scanned`,
+      });
+      return finish();
+    }
+  }
 
   // 2. Finality: refuse a range that reaches past head - confirmations.
   ran.add("finality");

@@ -45,6 +45,21 @@ function ledgerCfg(cfg: IndexerConfig) {
   return { router: cfg.router, facilitatorPayTo: cfg.facilitatorPayTo, decimals: cfg.decimals };
 }
 
+const normPayTo = (p?: string): string | null => (p ? lc(p) : null);
+
+/** Throws when the database holds events indexed with a different pay-to than `cfg` asks for. */
+export function assertPayToMatches(db: IndexerDb, cfg: IndexerConfig): void {
+  const want = normPayTo(cfg.facilitatorPayTo);
+  // Legacy databases that never recorded it were indexed before pay-to tracking; with a cursor they count as "none".
+  const have = db.getIndexedPayTo() ?? (db.getCursor() ? null : want);
+  if (have !== want) {
+    throw new Error(
+      `pay-to mismatch: the database was indexed with ${have ?? "no pay-to address"} but FACILITATOR_PAYTO is ${want ?? "unset"}; ` +
+        `its stored events cannot cover that address. Run rebuild / re-index from a fresh database with the intended FACILITATOR_PAYTO.`,
+    );
+  }
+}
+
 /**
  * Catches up once. Only FINALIZED blocks (head - confirmations) are ever stored, and the cursor only advances to a
  * finalized block, so a reorg inside the unfinalized window cannot leave stale rows: those blocks are simply read
@@ -57,6 +72,8 @@ export async function indexOnce(d: Deps): Promise<IndexResult> {
   const finalized = head - cfg.confirmations;
   const cursor = db.getCursor();
   const start = cursor ? cursor.block + 1 : cfg.deployBlock;
+  assertPayToMatches(db, cfg);
+  if (!cursor) db.setIndexedPayTo(normPayTo(cfg.facilitatorPayTo));
 
   if (cursor) {
     const onChain = await src.getBlock(cursor.block);
@@ -156,6 +173,7 @@ export function buildExport(
   cfg: IndexerConfig,
   opts: { from?: number; to?: number; generatedAt?: string },
 ): ExportResult {
+  assertPayToMatches(db, cfg);
   const cursor = db.getCursor();
   const finalizedHead = cursor?.block ?? cfg.deployBlock - 1;
   const from = opts.from ?? cfg.deployBlock;

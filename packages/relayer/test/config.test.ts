@@ -13,7 +13,7 @@ const env = {
 describe("P0 configuration", () => {
   it("loads explicit token domains and rejects empty domains", () => {
     expect(loadConfig(env).tokenDomain).toEqual({ name: "Tether USD", version: "1" });
-    expect(loadConfig({ ...env, TOKEN_DOMAIN_NAME: "DemoUSDT", TOKEN_DOMAIN_VERSION: "2" }).tokenDomain).toEqual({ name: "DemoUSDT", version: "2" });
+    expect(loadConfig({ ...env, TOKEN_DOMAIN_NAME: "Test Token", TOKEN_DOMAIN_VERSION: "2" }).tokenDomain).toEqual({ name: "Test Token", version: "2" });
     expect(() => loadConfig({ ...env, TOKEN_DOMAIN_NAME: " " })).toThrow();
     expect(() => loadConfig({ ...env, TOKEN_DOMAIN_VERSION: "" })).toThrow();
   });

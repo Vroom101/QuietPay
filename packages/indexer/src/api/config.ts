@@ -1,27 +1,29 @@
 import { z } from "zod";
 import { ScopeSchema, type Scope } from "./model.js";
+const blank = (v: unknown) => (typeof v === "string" && v.trim() === "" ? undefined : v);
+
 export function loadConfig(
   env: Record<string, string | undefined> = process.env,
 ) {
   const e = z
     .object({
       RPC_URL: z.string().url(),
-      CHAIN_ID: z.coerce.number().int().positive().default(1874),
+      CHAIN_ID: z.preprocess(blank, z.coerce.number().int().positive().default(1874)),
       ROUTER_ADDRESS: ScopeSchema.shape.router,
       USDT_ADDRESS: ScopeSchema.shape.token,
       INDEXER_FROM_BLOCK: z.preprocess(
-        (value) => (value === "" ? undefined : value),
+        blank,
         z.coerce.number().int().nonnegative().safe(),
       ),
-      INDEXER_CONFIRMATIONS: z.coerce
+      INDEXER_CONFIRMATIONS: z.preprocess(blank, z.coerce
         .number()
         .int()
         .min(1)
         .max(10000)
-        .default(2),
+        .default(2)),
       INDEXER_DATABASE_PATH: z.string().default("./quietpay-indexer.db"),
-      INDEXER_POLL_MS: z.coerce.number().int().min(100).default(5000),
-      INDEXER_PORT: z.coerce.number().int().min(0).max(65535).default(8788),
+      INDEXER_POLL_MS: z.preprocess(blank, z.coerce.number().int().min(100).default(5000)),
+      INDEXER_PORT: z.preprocess(blank, z.coerce.number().int().min(0).max(65535).default(8788)),
       MERCHANT_API_KEYS: z.string().optional(),
       FACILITATOR_PAYTO: ScopeSchema.shape.router.optional(),
       FACILITATOR_MERCHANT_ID: z

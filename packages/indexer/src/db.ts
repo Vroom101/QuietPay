@@ -57,6 +57,18 @@ export class IndexerDb {
     up.run("cursor_hash", hash);
   }
 
+  /** The pay-to address the stored events were indexed with: undefined = never recorded, null = none. */
+  getIndexedPayTo(): string | null | undefined {
+    const r = this.raw.prepare("SELECT value FROM state WHERE key='indexed_payto'").get() as { value: string } | undefined;
+    return r === undefined ? undefined : r.value === "" ? null : r.value;
+  }
+
+  setIndexedPayTo(payTo: string | null) {
+    this.raw
+      .prepare("INSERT INTO state (key, value) VALUES ('indexed_payto', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+      .run(payTo ?? "");
+  }
+
   // ---- raw events (idempotent on (tx_hash, log_index))
   insertEvents(events: RawEvent[]): number {
     const stmt = this.raw.prepare(

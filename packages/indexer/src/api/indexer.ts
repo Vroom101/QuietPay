@@ -1,3 +1,4 @@
+import { redactSecrets } from "../redact.js";
 import { IndexDb } from "./db.js";
 import { readPage } from "./chain.js";
 import { normalizeScope, type Scope, type ChainReader } from "./model.js";
@@ -33,7 +34,7 @@ export class Indexer {
           this.lastError = null;
         },
         (e) => {
-          this.lastError = String(e);
+          this.lastError = redactSecrets(String(e));
           throw e;
         },
       )

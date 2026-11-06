@@ -78,6 +78,60 @@ contract DeployScriptsTest is Test {
         assertEq(vm.parseJsonUint(json, ".decimals"), uint256(q.TOKEN_DECIMALS()));
     }
 
+    function _mock() internal returns (address official) {
+        vm.chainId(1874);
+        official = q.OFFICIAL_USDT();
+        deployCodeTo("MockAuthToken.sol:MockAuthToken", official);
+    }
+
+    function test_qualifyingRefusesAnUnboundedRelayFee() public {
+        address official = _mock();
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.FeeTooHigh.selector, 1_000_001));
+        q.deploy(official, address(q), relayer, payout, refundSigner, MERCHANT, 1_000_001);
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.FeeTooHigh.selector, type(uint256).max));
+        q.deploy(official, address(q), relayer, payout, refundSigner, MERCHANT, type(uint256).max);
+        // The bound itself is allowed.
+        q.deploy(official, address(q), relayer, payout, refundSigner, MERCHANT, 1_000_000);
+    }
+
+    function test_qualifyingRefusesZeroOrCollidingParties() public {
+        address official = _mock();
+        address o = address(q);
+        // zero
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "relayer"));
+        q.deploy(official, o, address(0), payout, refundSigner, MERCHANT, 100_000);
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "payout"));
+        q.deploy(official, o, relayer, address(0), refundSigner, MERCHANT, 100_000);
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "refundSigner"));
+        q.deploy(official, o, relayer, payout, address(0), MERCHANT, 100_000);
+        // equal to the owner
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "relayer"));
+        q.deploy(official, o, o, payout, refundSigner, MERCHANT, 100_000);
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "payout"));
+        q.deploy(official, o, relayer, o, refundSigner, MERCHANT, 100_000);
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "refundSigner"));
+        q.deploy(official, o, relayer, payout, o, MERCHANT, 100_000);
+        // equal to the token
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "relayer"));
+        q.deploy(official, o, official, payout, refundSigner, MERCHANT, 100_000);
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "payout"));
+        q.deploy(official, o, relayer, official, refundSigner, MERCHANT, 100_000);
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "refundSigner"));
+        q.deploy(official, o, relayer, payout, official, MERCHANT, 100_000);
+    }
+
+    function test_qualifyingRefusesPartiesEqualToTheRouter() public {
+        address official = _mock();
+        // The router is created by the script contract; predict its address (nonce of q, CREATE).
+        address predicted = vm.computeCreateAddress(address(q), vm.getNonce(address(q)));
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "relayer"));
+        q.deploy(official, address(q), predicted, payout, refundSigner, MERCHANT, 100_000);
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "payout"));
+        q.deploy(official, address(q), relayer, predicted, refundSigner, MERCHANT, 100_000);
+        vm.expectRevert(abi.encodeWithSelector(DeployQualifying.BadParty.selector, "refundSigner"));
+        q.deploy(official, address(q), relayer, payout, predicted, MERCHANT, 100_000);
+    }
+
     function test_localScriptRefusesChain1874AndAnyPublicChain() public {
         vm.chainId(1874);
         vm.expectRevert(abi.encodeWithSelector(DeployLocal.NotForPublicNetworks.selector, 1874));

@@ -1,34 +1,32 @@
-# Final report (Lead run, 2026-11-06)
+# Final report (Lead finish run, 2026-11-06)
 
-Deadline placeholder was not filled in, so contracts were treated as frozen (no redeploy). "No findings" below means not found by these methods, not proven safe.
+"No findings" means not found by these methods, never proven safe. Nothing here is an audit.
 
-## 1. Components
-| Component | State |
+## 1. Tasks
+| Task | State |
 |---|---|
-| L0 Reconcile | done (`reconcile.md`) |
-| L1 Router hardening | partly done: invariants added (3, ~128k calls each), Opus R1/R3 review (3 Low, pinned as limitations). **Mutation sweep not completed** (stopped for low memory), no Slither/coverage run (`forge coverage` fails with stack-too-deep) |
-| L2 Shared | partly done: property tests, fund-payer guard. Nonce vectors already asserted both languages |
-| L3 Indexer | partly done: net unclamped, sidecar records router/usdt/payTo, removed-log tests; Opus R1 once |
-| L4 Verifier | done for the listed threats: independent decoder/rules, differential test, `--from/--to/--min-confirmations/--rpc2`, checkpoint, unanchored label, quoted-cell check |
-| L5 Scripts | done: `fund-payer.ts`, `make-tampered-samples.ts` (+ tests) |
-| L6 Handoff | done (`shared-change.md`) |
-| L7 Docs/qualify | done: README, `WHITECHAIN_FEEDBACK.md`, `qualify-check.ts` passes all Lead items |
-| L8 Whole-surface round | **not done**: no R5 fresh-eyes round, no combined closing rule |
+| T0 resume, baseline | done |
+| T1 a-d (RefundSignerChanged + hashVersion 2, strict CSV, full --rpc2, same-tx deposit rule) | done, tests first, live sample regenerated and verified |
+| T2 router assurance | done: mutation sweep 58/60 killed, 2 survivors killed by new tests; coverage (97.7% lines, 80% branches, gaps tested); Slither run (1 justified note); attack rounds R2 and R4 |
+| T3 indexer + verifier rounds | done: R2 (6 DoS holes) and R4 (9 holes incl. High RPC-key leak) fixed; earlier R1 findings have regression tests |
+| T4 handoff | done (`shared-change.md`); stray `hardening-r3.test.ts` is B's |
+| T5 final round | done: anvil end-to-end (two refunds across a signer rotation, anchored verify, tampered variants, legacy hash version, re-index match); fresh-eyes R5 found 3 holes, fixed |
 
 ## 2. Tests (last full run, all green)
-Foundry 104 + 3 invariants + 3 expected-limitation; shared 200 (+6 property); indexer 27; relayer 281; widget 139; dashboard 13; SDK 10; demo-store 60; verifier 84 (1 live test needs `RPC_URL`; it passed). Anvil end-to-end tests need Foundry on PATH. Some new tests were written together with or after their code rather than shown red first. Mutation survivors: unknown (sweep incomplete).
+Foundry 130 (+1 fork skipped offline); shared 279; indexer 88; verifier 181 (+1 live test, which passed with RPC_URL); relayer 358 (alone; two tests time out when all packages run in parallel); SDK 43; widget 147; demo-store 75; dashboard 34; agent-client 22. Typecheck clean. Some tests were written alongside or after their code, not always shown red first. Router mutants: 58 killed, 2 survived and are now killed; 60 is a sample, not every mutant.
 
 ## 3. Chain evidence
-Router `0xb9D475cdd817900B45C356169c6FdC379B942d82`, deploy block 12351795. Payment [0x1f2da106...](https://explorer.testnet.whitechain.io/tx/0x1f2da1062f4c941382d1f0d3c7134c49858662d8eb3a68436b8f88fc7d892384), refund [0x1ac62248...](https://explorer.testnet.whitechain.io/tx/0x1ac62248eb3def54499896fd8bfc197436fcb83d9544fe94432c138c2d85127d). Live sample re-verified with a pinned range: OK, 4 events.
+Router `0xb9D475cdd817900B45C356169c6FdC379B942d82`, deploy block 12351795, official USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7`. [Payment](https://explorer.testnet.whitechain.io/tx/0x1f2da1062f4c941382d1f0d3c7134c49858662d8eb3a68436b8f88fc7d892384), [refund](https://explorer.testnet.whitechain.io/tx/0x1ac62248eb3def54499896fd8bfc197436fcb83d9544fe94432c138c2d85127d). Live ledger sample re-verified against chain 1874 with the range pinned: OK. No demo or stand-in token is used anywhere in code (checked repo-wide).
 
 ## 4. Attacks
-Three Opus rounds' worth of Lead-surface review (see `attack-log.md`): indexer/verifier R1: 2 High, 1 Medium (fixed), 1 High accepted as design limitation, 5 Low (1 fixed, 4 open). Router R1/R3: 0 Critical/High, 3 Low accepted. Rounds R2, R4, R5 for the Lead components were not run, so the "two consecutive clean rounds" closing rule is **not met** for any component.
+Rounds run on Lead components: router R1/R3 (earlier), R2, R4; indexer+verifier R1, R2, R4, plus R11 and R5 fresh eyes. Findings were always found, so the "two clean rounds" closing rule is **not met** for any component. By severity this run: High 4 (net clamp, payto-less verify, owner powers [documented], RPC-key leak), Medium ~10, Low ~20; all fixed or documented except below. Rejected hypotheses: fake token/contract forging a row; SQL injection; prototype pollution.
+Open: router owner can redirect future payouts instantly (README + test); relayer gas griefing by a payer (bounded off-chain); payout legs not balance-checked; plain Ownable lock; zero ids accepted; no memory cap on huge CSV/RPC response; dependency advisories (fastify, zod, vite) need major upgrades; CI actions pinned by tag and Foundry unpinned.
 
-## 5. For A and B / for the user
-See `shared-change.md` (signed net in the dashboard, refund API, zero-id rejection, x402 front-run check, real browser checkout). User: fill in the deadline; free memory and re-run the mutation sweep if wanted; hosted relayer and x402 remain unbuilt.
+## 5. For others / the user
+A and B: `shared-change.md` (signed net in the dashboard, refund API, zero-id rejection, fastify upgrade, merge before touching the four backend files Lead edited at the owner's request). User: set `SUBMISSION_DEADLINE_UTC` (contracts stay frozen without it), decide on a new router if owner powers matter, push or discard `backend/remaining-build-plan` commit `0d9cca5` (local only). Backups `backup/pre-trailer-*` hold pre-rewrite history (local); delete when satisfied.
 
 ## 6. Model usage
-Opus: 2 calls this run (indexer/verifier R1, router R1/R3). Haiku: 1 (feedback draft, reviewed). See `model-usage.md`.
+Opus 6 of 8 (design gate, router R2/R4, indexer+verifier R2/R4, fresh eyes); Sonnet subagents 5; Haiku 0 this run. Logs of tools and sweeps stayed in files.
 
 ## 7. Blocked / next
-`blocked.md`: mutation sweep, 4 open Low verifier/indexer items. Next: re-run mutation sweep, rounds R2/R4/R5 on indexer and verifier, then a whole-system R5 pass. One housekeeping note: an earlier broad `git add` committed an untracked relayer test (`packages/relayer/test/hardening-r3.test.ts`) from Person B's folder.
+`blocked.md`: dependency upgrades, CI pinning, Low items. Not built: hosted relayer, real browser checkout, live x402 evidence. Next: set the deadline, upgrade fastify/zod, pin CI, then a human review.

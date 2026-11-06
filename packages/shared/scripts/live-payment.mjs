@@ -11,6 +11,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { randomBytes } from "node:crypto";
 import {
   assertQualifyingConfig,
+  getQualifyingDeployment,
   buildCheckoutAuthorization,
   computePayNonce,
   formatUsdt,
@@ -24,8 +25,14 @@ const e = process.env;
 for (const k of ["RPC_URL", "ROUTER_ADDRESS", "USDT_ADDRESS", "PAYER_PRIVATE_KEY", "RELAYER_PRIVATE_KEY"]) if (!e[k]) throw new Error(`Set ${k}`);
 
 const pub0 = createPublicClient({ transport: http(e.RPC_URL) });
-const chainId = Number(e.CHAIN_ID ?? (await pub0.getChainId()));
-if (chainId === QUALIFYING_CHAIN_ID) assertQualifyingConfig({ chainId, tokenAddress: e.USDT_ADDRESS });
+// Always the qualifying pair: ask the node (never trust an env override), and accept only the recorded router.
+const chainId = await pub0.getChainId();
+if (e.CHAIN_ID !== undefined && Number(e.CHAIN_ID) !== QUALIFYING_CHAIN_ID) throw new Error(`Refusing: CHAIN_ID ${e.CHAIN_ID} is not ${QUALIFYING_CHAIN_ID}`);
+if (chainId !== QUALIFYING_CHAIN_ID) throw new Error(`Refusing: the node reports chain ${chainId}, not ${QUALIFYING_CHAIN_ID}`);
+assertQualifyingConfig({ chainId, tokenAddress: e.USDT_ADDRESS });
+if (e.ROUTER_ADDRESS.toLowerCase() !== getQualifyingDeployment().router.toLowerCase()) {
+  throw new Error(`Refusing: ROUTER_ADDRESS ${e.ROUTER_ADDRESS} is not the qualifying router ${getQualifyingDeployment().router}`);
+}
 const chain = defineChain({ id: chainId, name: `chain-${chainId}`, nativeCurrency: { name: "WBT", symbol: "WBT", decimals: 18 }, rpcUrls: { default: { http: [e.RPC_URL] } } });
 const pub = createPublicClient({ chain, transport: http(e.RPC_URL) });
 const router = getAddress(e.ROUTER_ADDRESS);

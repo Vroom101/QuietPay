@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { redactSecrets } from "../redact.js";
 import { loadConfig } from "./config.js";
 import { makeReader } from "./chain.js";
 import { IndexDb } from "./db.js";
@@ -92,6 +93,6 @@ async function main() {
   }
 }
 main().catch((e) => {
-  console.error((e as Error).message);
+  console.error(redactSecrets((e as Error).message ?? String(e), [process.env.RPC_URL]));
   process.exitCode = 1;
 });
