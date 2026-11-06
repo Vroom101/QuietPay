@@ -111,3 +111,57 @@ describe("mutation kills: facilitator", () => {
     expect(e.db.raw.prepare("SELECT status FROM x402_payments").get()).toEqual({ status: "failed" });
   });
 });
+
+// Opus round A findings (docs/b/attack-log.md)
+import type { Hex } from "viem";
+const FOREIGN = ("0x" + "f0".repeat(32)) as Hex;
+const matched = (confirmations: number) => ({ kind: "matched" as const, hash: FOREIGN, blockNumber: 5n, logIndex: 0, confirmations });
+
+describe("round A findings", () => {
+  it("A-F2: a payment adopted from a shallow foreign tx still settles on recovery after validBefore has passed", async () => {
+    const e = setup();
+    e.state.used.add(nonce(1));
+    e.state.external = matched(1);
+    const req = await e.request();
+    expect((await e.service.settle(req, MERCHANT_ID)).errorReason).toBe("settlement_pending");
+    e.clock.t += 500; // well past validBefore (now + 55)
+    e.state.external = matched(2);
+    const row = e.db.raw.prepare("SELECT id FROM x402_payments").get() as { id: string };
+    await e.service.recover(row.id);
+    expect(e.db.raw.prepare("SELECT status, tx_hash FROM x402_payments").get()).toEqual({ status: "settled", tx_hash: FOREIGN });
+  });
+
+  it("A-F3: an expired authorization whose nonce was used elsewhere is NOT adopted (no late redemption of old payments)", async () => {
+    const e = setup();
+    const req = await e.request();
+    e.clock.t += 500;
+    e.state.used.add(nonce(1));
+    e.state.external = matched(5);
+    const res = await e.service.settle(req, MERCHANT_ID);
+    expect(res.success).toBe(false);
+    expect(res.errorReason).toBe("invalid_exact_evm_payload_authorization_valid_before");
+    expect(e.db.raw.prepare("SELECT COUNT(*) n FROM x402_payments").get()).toEqual({ n: 0 });
+  });
+
+  it("A-F4: reverted x402 sends count as payer reverts, and a payer at the daily limit is refused before another send", async () => {
+    const e = setup({ maxRevertsPerDay: 1 });
+    e.state.frontRun = true; // our tx reverts ...
+    e.chain.authorizationUsed = async () => false; // ... but the nonce stays unused: a plain failure, not a front-run
+    await e.service.settle(await e.request(1), MERCHANT_ID);
+    await vi.waitFor(() => expect(e.db.revertStats(payer.address, 0).count).toBe(1));
+    const sentBefore = e.state.sent.length;
+    const second = await e.service.settle(await e.request(2), MERCHANT_ID);
+    expect(second.success).toBe(false);
+    expect(second.errorReason).toBe("budget_exceeded");
+    expect(e.state.sent).toHaveLength(sentBefore);
+  });
+
+  it("A-F5: a parked (unresolved) payment still counts toward the payer's daily volume", async () => {
+    const e = setup();
+    e.state.used.add(nonce(1));
+    e.state.external = { kind: "unknown" };
+    await e.service.settle(await e.request(), MERCHANT_ID);
+    expect(e.db.raw.prepare("SELECT status FROM x402_payments").get()).toEqual({ status: "unresolved" });
+    expect(e.db.payerVolume(payer.address, 0)).toBe(10000n);
+  });
+});

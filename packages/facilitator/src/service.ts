@@ -394,6 +394,9 @@ export class FacilitatorService {
       throw new PaymentError("relayer_paused");
     if (svc.db.payerVolume(row.payer, svc.now() - 86400) > svc.cfg.payerCap)
       throw new PaymentError("budget_exceeded");
+    // Same per-wallet limit as checkout: a wallet whose transactions keep reverting burns the shared gas budget.
+    if (svc.db.revertStats(row.payer, svc.now() - 86400).count >= svc.cfg.maxRevertsPerDay)
+      throw new PaymentError("budget_exceeded");
     if (
       BigInt(req.paymentPayload.payload.authorization.validBefore) <=
       BigInt(svc.now())
@@ -511,6 +514,14 @@ export class FacilitatorService {
     // Only a REVERTED attempt can mean someone else used the authorization first. If our own tx succeeded
     // but did not pay as signed, our tx consumed the nonce: that is a plain failure, never an external settlement.
     if (receipt.status !== "success" && (await this.resolveExternal(row)) !== "none") return;
+    if (receipt.status !== "success")
+      svc.db.recordRevert({
+        txHash: hash,
+        orderId: row.id,
+        payer: row.payer,
+        ts: svc.now(),
+        wei: receipt.gasUsed * receipt.effectiveGasPrice,
+      });
     svc.db.raw
       .prepare(
         "UPDATE x402_payments SET status='failed',tx_hash=?,error_reason='invalid_transaction_state' WHERE id=? AND status='settling'",
@@ -559,6 +570,10 @@ export class FacilitatorService {
         )
           return;
         if (!latest) {
+          // Nothing of ours was ever sent (for example a payment adopted from a foreign tx that was still shallow):
+          // a used nonce must be resolved against the chain BEFORE the cap and expiry checks in sendLocked, which would
+          // otherwise fail a payment the payee already received.
+          if ((await this.resolveExternal(row)) !== "none") return;
           try {
             await this.sendLocked(row);
           } catch (e) {
