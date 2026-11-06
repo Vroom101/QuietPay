@@ -34,6 +34,7 @@ export type IssueCode =
   // sidecar / finality
   | "bad_sidecar"
   | "to_block_not_final"
+  | "unsupported_hash_version"
   | "range_mismatch"
   | "config_mismatch"
   | "payto_expectation_missing"

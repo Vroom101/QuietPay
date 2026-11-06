@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+﻿import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { ZodError } from "zod";
 import {
@@ -65,29 +65,63 @@ export function buildServer(svc: RelayerService): FastifyInstance {
 
   const KNOWN_TTL_MS = 3_600_000;
   const MAX_KNOWN_IPS = 10_000;
-  const knownGood = new Map<string, Map<string, number>>(); // ip key -> credential digest -> expiry
+  const MAX_IPS_PER_CREDENTIAL = 64;
+  // ip key -> credential digest -> expiry (inner insertion order = age); credIps: digest -> ip keys it holds (oldest first).
+  const knownGood = new Map<string, Map<string, number>>();
+  const credIps = new Map<string, Set<string>>();
   const digest = (kind: string, cred: string) => createHash("sha256").update(kind).update("\0").update(cred).digest("hex");
   const isKnown = (req: FastifyRequest, d: string) => {
     const e = knownGood.get(clientKey(ipOf(req)))?.get(d);
     return e !== undefined && e > Date.now();
   };
+  const forget = (ip: string, d: string) => {
+    const m = knownGood.get(ip);
+    if (m) {
+      m.delete(d);
+      if (m.size === 0) knownGood.delete(ip);
+    }
+    const s = credIps.get(d);
+    if (s) {
+      s.delete(ip);
+      if (s.size === 0) credIps.delete(d);
+    }
+  };
   const remember = (req: FastifyRequest, d: string) => {
     const k = clientKey(ipOf(req));
     const now = Date.now();
+    let s = credIps.get(d);
+    if (!s) {
+      s = new Set();
+      credIps.set(d, s);
+    }
+    // Refresh recency: re-insert so the Set order is oldest-first.
+    s.delete(k);
+    s.add(k);
+    // A credential holds at most MAX_IPS_PER_CREDENTIAL IPs: it evicts only its OWN oldest entries.
+    while (s.size > MAX_IPS_PER_CREDENTIAL) forget(s.values().next().value as string, d);
     let m = knownGood.get(k);
     if (!m) {
-      if (knownGood.size >= MAX_KNOWN_IPS) {
-        for (const [ip, mm] of knownGood) {
-          for (const [dd, exp] of mm) if (exp <= now) mm.delete(dd);
-          if (mm.size === 0) knownGood.delete(ip);
-        }
-        if (knownGood.size >= MAX_KNOWN_IPS) return;
-      }
       m = new Map();
       knownGood.set(k, m);
     }
-    if (m.size >= 32 && !m.has(d)) return;
+    m.delete(d);
     m.set(d, now + KNOWN_TTL_MS);
+    // Global bound: evict least recently used IPs (Map order), dropping expired entries first.
+    if (knownGood.size > MAX_KNOWN_IPS) {
+      for (const [ip, mm] of knownGood) {
+        for (const [dd, exp] of mm) if (exp <= now) forget(ip, dd);
+      }
+      while (knownGood.size > MAX_KNOWN_IPS) {
+        const ip = knownGood.keys().next().value as string;
+        for (const dd of [...(knownGood.get(ip)?.keys() ?? [])]) forget(ip, dd);
+      }
+    }
+    // Refresh the IP's recency in the global order.
+    if (knownGood.get(k) === m) {
+      knownGood.delete(k);
+      knownGood.set(k, m);
+    }
+    while (m.size > 32) forget(k, m.keys().next().value as string);
   };
 
   /** Constant-time scan over every configured key (no early exit on the first hit). */

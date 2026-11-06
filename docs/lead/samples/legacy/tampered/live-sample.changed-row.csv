@@ -1,0 +1,2 @@
+date_utc,source,order_id,merchant_id,payer,gross_usdt,relay_fee_usdt,refunded_usdt,net_usdt,status,tx_hash,block,log_index
+2026-11-06T09:32:40.000Z,router,0x186502c9e94cff5f4986050a34c8c0b62a62d7a47f26111ce8fdc503d76ce0a3,0x1d3fd9d6b97c92388e18a6e72355c17e73deaeef19351e5d6acce905f81454ac,0x30ab1c2f5d1d8794fdfe60efa412f80d03037478,2.000000,0.050000,0.500000,0.450000,partially_refunded,0x1f2da1062f4c941382d1f0d3c7134c49858662d8eb3a68436b8f88fc7d892384,12361192,4

@@ -62,6 +62,10 @@ export function payment(p: { block: number; tx: string; orderId: string; value: 
   return logs;
 }
 
+export function refundSignerChanged(block: number, txHash: string, logIndex = 0, newSigner = "0x6666666666666666666666666666666666666666"): ChainLog {
+  return mk(ROUTER, block, txHash, logIndex, encode(paymentRouterAbi as Abi, "RefundSignerChanged", { merchantId: MERCHANT, oldSigner: REFUND_SIGNER, newSigner }));
+}
+
 export function refund(p: { block: number; tx: string; orderId: string; amount: bigint; total: bigint; index: number }): ChainLog[] {
   return [
     transfer(p.block, p.tx, 0, REFUND_SIGNER, ROUTER, p.amount),
