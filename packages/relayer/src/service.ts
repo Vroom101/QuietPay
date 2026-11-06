@@ -679,6 +679,7 @@ export class RelayerService {
     if (!row) return false;
     const wei = r.gasUsed * r.effectiveGasPrice;
     this.db.recordSpend(hash, this.now(), wei);
+    this.db.discardLosingSpend(orderId, hash); // a different tx at this nonce can no longer mine
     if (r.status === "success") {
       // Reorg protection: below SETTLE_CONFIRMATIONS the receipt is not trusted yet. The order stays as it is
       // and reconciliation looks again; a receipt that disappears meanwhile never settled anything.

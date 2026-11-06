@@ -22,7 +22,7 @@ describe("formatWbt", () => {
 });
 
 describe("csvCell defuses spreadsheet formulas", () => {
-  it.each([["=HYPERLINK(1)", "'=HYPERLINK(1)"], ["+1", "'+1"], ["@SUM", "'@SUM"], ["-cmd", "'-cmd"], ["\tx", "'\tx"]])("%s", (i, o) => expect(csvCell(i)).toBe(o));
+  it.each([["=HYPERLINK(1)", "'=HYPERLINK(1)"], ["+1", "'+1"], ["@SUM", "'@SUM"], ["-cmd", "'-cmd"], ["\tx", "'\tx"], ["-2+3+cmd|' /C calc'!A0", "'-2+3+cmd|' /C calc'!A0"], ["-.5+cmd|x", "'-.5+cmd|x"], ["-1-1", "'-1-1"], ["-", "'-"], ["-1.", "'-1."]])("%s", (i, o) => expect(csvCell(i)).toBe(o));
   it("keeps negative numbers numeric and quotes separators", () => {
     expect(csvCell("-0.500000")).toBe("-0.500000");
     expect(csvCell('a,"b"')).toBe('"a,""b"""');

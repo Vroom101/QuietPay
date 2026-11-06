@@ -246,6 +246,7 @@ export {
   type QuietPayConfig,
   type QuietPayClient,
   type BillingMode,
+  type BillingOption,
   type Interval,
   type Plan,
   type Subscription,

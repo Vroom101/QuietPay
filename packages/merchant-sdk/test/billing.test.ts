@@ -49,6 +49,12 @@ describe("Feature: choose the billing model when the SDK is initialised", () => 
     expect((await qp.createOrder({ amount: "8500000" })).amount).toBe("8500000");
   });
 
+  it("'product' is accepted as the name for one-time payments", async () => {
+    const { qp } = client({ billing: "product" });
+    expect(qp.billing).toBe("one_time");
+    expect(qp.supports).toEqual({ oneTime: true, subscription: false });
+  });
+
   it("subscription-only refuses one-time checkouts (no stray orders)", async () => {
     const { qp, r } = client({ billing: "subscription" });
     expect(() => qp.createOrder({ amount: "1" })).toThrow(/One-time payments is turned off/);
@@ -159,6 +165,155 @@ describe("Feature: pay-per-period subscriptions over gasless USDT", () => {
   ])("rejects an invalid plan %#", async (p, err) => {
     const { qp } = client({ billing: "subscription" });
     await expect(qp.subscriptions.createPlan(p as never)).rejects.toThrow(err);
+  });
+});
+
+describe("Feature: subscription hardening (security review)", () => {
+  const ev = settled;
+  async function start(interval: "month" | "week" = "month", over: Partial<QuietPayConfig> = {}) {
+    const c = client({ billing: "subscription", ...over });
+    await c.qp.subscriptions.createPlan({ id: "pro", name: "Pro", amount: "5000000", interval });
+    await c.qp.subscriptions.subscribe({ planId: "pro", customer: "c", id: "sub_1" });
+    return c;
+  }
+
+  it("#1 a failed order that settles late still credits the period, and a second order cannot double charge", async () => {
+    const { qp, r } = await start();
+    const first = (await qp.subscriptions.createRenewalOrder("sub_1")).order;
+    r.orders.set(first.id, { ...r.orders.get(first.id)!, status: "failed" });
+    const failed = await qp.subscriptions.applyWebhook(ev(first.id, "5000000", "sub:sub_1:1", "payment.failed"));
+    expect(failed).toMatchObject({ status: "past_due", pendingOrderId: undefined });
+    const second = (await qp.subscriptions.createRenewalOrder("sub_1")).order;
+    expect(second.id).not.toBe(first.id);
+    expect(r.created[1]!.reference).toBe("sub:sub_1:1");
+    // the failed one lands late: it credits period 1
+    const paid = await qp.subscriptions.applyWebhook(ev(first.id, "5000000", "sub:sub_1:1"));
+    expect(paid).toMatchObject({ status: "active", paidPeriods: 1, lastPaidOrderId: first.id });
+    // the replacement order settles too: not credited again, flagged for refund
+    const dup = await qp.subscriptions.applyWebhook(ev(second.id, "5000000", "sub:sub_1:1"));
+    expect(dup).toMatchObject({ paidPeriods: 1 });
+    expect(dup!.duplicatePayments).toEqual([{ orderId: second.id, amount: "5000000", at: T0 + 60 }]);
+    // replaying the credited webhook changes nothing
+    expect(await qp.subscriptions.applyWebhook(ev(first.id, "5000000", "sub:sub_1:1"))).toBeUndefined();
+    expect((await qp.subscriptions.get("sub_1"))!.paidPeriods).toBe(1);
+  });
+
+  it("#1 an expired order that settles late credits the period (via sweep) once", async () => {
+    const { qp, r, at } = await start();
+    const first = (await qp.subscriptions.createRenewalOrder("sub_1")).order;
+    r.orders.set(first.id, { ...r.orders.get(first.id)!, status: "expired" });
+    await qp.subscriptions.sweep();
+    expect((await qp.subscriptions.get("sub_1"))!.status).toBe("past_due");
+    const second = (await qp.subscriptions.createRenewalOrder("sub_1")).order;
+    r.orders.set(first.id, { ...r.orders.get(first.id)!, status: "settled", settledAt: T0 + 90 });
+    at(T0 + 100);
+    const [s] = await qp.subscriptions.sweep();
+    expect(s).toMatchObject({ status: "active", paidPeriods: 1, lastPaidOrderId: first.id });
+    expect(second.id).not.toBe(first.id);
+  });
+
+  it("#1 a bounded number of orders per period", async () => {
+    const { qp, r } = await start();
+    for (let i = 0; i < 20; i++) {
+      const { order } = await qp.subscriptions.createRenewalOrder("sub_1");
+      r.orders.set(order.id, { ...r.orders.get(order.id)!, status: "expired" });
+    }
+    await expect(qp.subscriptions.createRenewalOrder("sub_1")).rejects.toThrow(/too many/);
+    expect((await qp.subscriptions.get("sub_1"))!.periodOrders).toHaveLength(20);
+  });
+
+  it("#2 concurrent createRenewalOrder makes one order; concurrent settle webhooks credit once", async () => {
+    const { qp, r } = await start();
+    const [a, b, c] = await Promise.all([1, 2, 3].map(() => qp.subscriptions.createRenewalOrder("sub_1")));
+    expect(r.created).toHaveLength(1);
+    expect(a.order.id).toBe(b.order.id);
+    expect(c.order.id).toBe(a.order.id);
+    await Promise.all([1, 2].map(() => qp.subscriptions.applyWebhook(ev(a.order.id, "5000000", "sub:sub_1:1"))));
+    expect((await qp.subscriptions.get("sub_1"))!.paidPeriods).toBe(1);
+  });
+
+  it("#2 compareAndSetSubscription is used when the store has it, and a lost race is retried", async () => {
+    const { memorySubscriptionStore } = await import("../src/index.js");
+    const inner = memorySubscriptionStore();
+    let calls = 0;
+    let injected = false;
+    const store = {
+      ...inner,
+      compareAndSetSubscription: async (prev: Parameters<typeof inner.putSubscription>[0], next: Parameters<typeof inner.putSubscription>[0]) => {
+        calls++;
+        if (!injected) { injected = true; return false; } // someone else wrote first
+        await inner.putSubscription(next);
+        return true;
+      },
+    };
+    const { qp } = await start("month", { subscriptionStore: store, billing: "subscription" });
+    const { subscription } = await qp.subscriptions.createRenewalOrder("sub_1");
+    expect(calls).toBe(2);
+    expect(subscription.pendingOrderId).toBeDefined();
+    const cancelled = await qp.subscriptions.cancel("sub_1");
+    expect(cancelled.status).toBe("cancelled");
+  });
+
+  it("#3 a subscription with an expired pending order is due again and sweep makes it past_due", async () => {
+    const { qp, r, at } = await start();
+    const { order } = await qp.subscriptions.createRenewalOrder("sub_1");
+    expect(await qp.subscriptions.due()).toHaveLength(0); // live order, nothing to do
+    r.orders.set(order.id, { ...r.orders.get(order.id)!, status: "expired" });
+    at(order.expiresAt + 1);
+    expect((await qp.subscriptions.due()).map((s) => s.id)).toEqual(["sub_1"]);
+    const [swept] = await qp.subscriptions.sweep();
+    expect(swept).toMatchObject({ status: "past_due", pendingOrderId: undefined, periodOrders: [order.id] });
+    expect((await qp.subscriptions.due()).map((s) => s.id)).toEqual(["sub_1"]);
+  });
+
+  it("#3 sweep credits a settled pending order whose webhook was missed", async () => {
+    const { qp, r } = await start();
+    const { order } = await qp.subscriptions.createRenewalOrder("sub_1");
+    r.orders.set(order.id, { ...r.orders.get(order.id)!, status: "settled", settledAt: T0 + 5 });
+    await qp.subscriptions.sweep(T0 + 10);
+    expect(await qp.subscriptions.get("sub_1")).toMatchObject({ status: "active", paidPeriods: 1, lastPaidOrderId: order.id });
+  });
+
+  it("#5 missed-webhook recovery refuses refunded orders, wrong amounts and wrong merchants", async () => {
+    for (const patch of [{ status: "refunded" }, { status: "partially_refunded" }, { status: "settled", amount: "1" }, { status: "settled", merchantId: ("0x" + "ab".repeat(32)) as `0x${string}` }]) {
+      const { qp, r } = await start();
+      const { order } = await qp.subscriptions.createRenewalOrder("sub_1");
+      r.orders.set(order.id, { ...r.orders.get(order.id)!, settledAt: T0 + 5, ...patch } as never);
+      await qp.subscriptions.createRenewalOrder("sub_1").catch(() => undefined);
+      expect((await qp.subscriptions.get("sub_1"))!.paidPeriods).toBe(0);
+    }
+  });
+
+  it("#5 an exact settled order (merchant compared case-insensitively) is still recovered", async () => {
+    const { qp, r } = await start();
+    const { order } = await qp.subscriptions.createRenewalOrder("sub_1");
+    r.orders.set(order.id, { ...r.orders.get(order.id)!, status: "settled", settledAt: T0 + 5, merchantId: MERCHANT.toUpperCase().replace("0X", "0x") as `0x${string}` });
+    await expect(qp.subscriptions.createRenewalOrder("sub_1")).rejects.toThrow(/paid until/);
+    expect((await qp.subscriptions.get("sub_1"))!.paidPeriods).toBe(1);
+  });
+
+  it("#6 the monthly billing day does not drift: Jan 31 -> Feb 28 -> Mar 31 -> Apr 30", async () => {
+    const { qp, at } = await start();
+    const due: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { order, subscription } = await qp.subscriptions.createRenewalOrder("sub_1");
+      const paid = await qp.subscriptions.applyWebhook(ev(order.id, "5000000", `sub:sub_1:${subscription.paidPeriods + 1}`));
+      due.push(paid!.nextChargeAt);
+      at(paid!.nextChargeAt + 3600); // pays a bit late each time
+    }
+    expect(due).toEqual([Date.UTC(2026, 1, 28, 12), Date.UTC(2026, 2, 31, 12), Date.UTC(2026, 3, 30, 12)].map((x) => x / 1000));
+  });
+
+  it("compat: a subscription from an old store (no anchorAt/periodOrders) still works", async () => {
+    const { memorySubscriptionStore } = await import("../src/index.js");
+    const store = memorySubscriptionStore();
+    const { qp } = await start("month", { subscriptionStore: store });
+    const { order } = await qp.subscriptions.createRenewalOrder("sub_1");
+    const old = (await store.getSubscription("sub_1"))!;
+    delete old.anchorAt; delete old.periodOrders; delete old.pendingExpiresAt;
+    await store.putSubscription(old);
+    const paid = await qp.subscriptions.applyWebhook(ev(order.id, "5000000", "sub:sub_1:1"));
+    expect(paid).toMatchObject({ paidPeriods: 1, nextChargeAt: Date.UTC(2026, 1, 28, 12) / 1000 });
   });
 });
 

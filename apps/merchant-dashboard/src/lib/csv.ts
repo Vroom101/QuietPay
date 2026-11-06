@@ -13,12 +13,12 @@ export function formatWbt(wei: bigint | string, decimals = 8): string {
 
 /**
  * One CSV cell. Quotes when needed, and defuses spreadsheet formulas: a text cell starting with = + @ tab or CR, or
- * with "-" not followed by a digit, gets a leading apostrophe (OWASP CSV injection guidance). Plain negative numbers
- * such as -0.50 stay numbers.
+ * or "-", gets a leading apostrophe (OWASP CSV injection guidance), unless the whole value is a plain number
+ * (/^-?\d+(\.\d+)?$/), so -0.50 stays a number but -2+3+cmd|x does not.
  */
 export function csvCell(value: string | number | bigint | null | undefined): string {
   let s = value === null || value === undefined ? "" : String(value);
-  if (/^[=+@\t\r]/.test(s) || /^-(?![\d.])/.test(s)) s = `'${s}`;
+  if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

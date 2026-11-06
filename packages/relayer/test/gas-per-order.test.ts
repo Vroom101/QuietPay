@@ -35,6 +35,24 @@ describe("gas spent per order (merchant list only)", () => {
     e.db.close();
   });
 
+  it("does not count a gap-fill cancel's estimate when the pay tx wins the nonce", async () => {
+    const e = makeEnv();
+    const order = await newOrder(e.svc);
+    e.chain.holdReceipt = true;
+    const res = await e.svc.relayPay(await signFor(order, e.clock.t), { ip: "203.0.113.1" });
+    const row = e.db.getOrder(order.id)!;
+    const cancel = await e.chain.signCancel(row.tx_nonce as number, 5n);
+    expect(e.db.recordCancel(order.id, res.txHash!, { ...cancel, gasPrice: 5n }, "tx_not_sent", e.clock.t)).toBe(true);
+    e.db.recordSpend(cancel.hash, e.clock.t, 21_000n * 5n); // estimate recorded before the cancel mines
+    e.chain.holdReceipt = false; // the pay tx mined; the cancel never will
+    await e.svc.reconcile();
+    expect(e.db.getOrder(order.id)!.status).toBe("settled");
+    const payWei = BigInt((e.db.raw.prepare("SELECT wei FROM spend WHERE tx_hash=?").get(res.txHash) as { wei: string }).wei);
+    expect(e.svc.listOrders(MERCHANT_ID).find((o) => o.id === order.id)!.gasWei).toBe(payWei.toString());
+    expect(e.db.raw.prepare("SELECT 1 FROM spend WHERE tx_hash=?").get(cancel.hash)).toBeUndefined();
+    e.db.close();
+  });
+
   it("handles an empty merchant", () => {
     const e = makeEnv();
     expect(e.db.gasWeiByOrder([]).size).toBe(0);

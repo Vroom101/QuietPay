@@ -771,6 +771,22 @@ export class Db {
     return out;
   }
 
+  /**
+   * `winnerHash` mined, so it consumed its nonce: any other tx of the same order signed at that nonce (a gap-fill
+   * cancel, an earlier replaced attempt) can never mine. Drops the gas estimates recorded for them at signing, so
+   * neither the per-order gas figure nor the loss budget counts gas that was never burnt. Undecided txs at other
+   * nonces are untouched.
+   */
+  discardLosingSpend(orderId: string, winnerHash: string) {
+    this.raw
+      .prepare(
+        `DELETE FROM spend WHERE tx_hash IN (
+           SELECT l.tx_hash FROM tx_attempts l JOIN tx_attempts w ON w.order_id = l.order_id AND w.nonce = l.nonce
+           WHERE w.tx_hash=? AND l.order_id=? AND l.tx_hash<>w.tx_hash)`,
+      )
+      .run(winnerHash, orderId.toLowerCase());
+  }
+
   spentSince(since: number): bigint {
     const rows = this.raw.prepare("SELECT wei FROM spend WHERE ts>=?").all(since) as { wei: string }[];
     return rows.reduce((a, r) => a + BigInt(r.wei), 0n);

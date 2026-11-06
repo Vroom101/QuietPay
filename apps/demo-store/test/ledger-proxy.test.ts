@@ -83,4 +83,36 @@ describe("merchant ledger export proxy", () => {
       expect(r.statusCode).toBe(502);
     }
   });
+  it("rejects an inverted or oversized block range with 400 before calling upstream", async () => {
+    const { app, calls } = make();
+    for (const q of ["fromBlock=20&toBlock=10", "fromBlock=0&toBlock=5000001"]) {
+      const r = await get(app, `/api/merchant/ledger/export?${q}`, TOKEN);
+      expect(r.statusCode).toBe(400);
+      expect(r.json().error.code).toBe("invalid_request");
+    }
+    expect(calls).toHaveLength(0);
+    expect((await get(app, "/api/merchant/ledger/export?fromBlock=0&toBlock=5000000", TOKEN)).statusCode).toBe(200);
+  });
+
+  it("answers 502 when the upstream body exceeds the size cap", async () => {
+    const big = JSON.stringify({ csv: "x".repeat(2000), meta });
+    const { app } = make({ maxResponseBytes: 1000 }, () => new Response(big, { headers: { "content-type": "application/json" } }));
+    const r = await get(app, "/api/merchant/ledger/export", TOKEN);
+    expect(r.statusCode).toBe(502);
+    expect(r.json().error.message).toMatch(/too large/i);
+  });
+
+  it("rate limits per credential (6 per minute), not across credentials, and recovers after the window", async () => {
+    let t = 1_000_000;
+    const { app, calls } = make({ now: () => t, rateLimitPerMinute: 6 });
+    for (let i = 0; i < 6; i++) expect((await get(app, "/api/merchant/ledger/export", TOKEN)).statusCode).toBe(200);
+    const limited = await get(app, "/api/merchant/ledger/export", TOKEN);
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json().error.code).toBe("rate_limited");
+    expect(calls).toHaveLength(6);
+    expect((await get(app, "/api/merchant/ledger/export", "session-ok")).statusCode).toBe(200);
+    expect((await get(app, "/api/merchant/ledger/export", "wrong")).statusCode).toBe(401);
+    t += 60_001;
+    expect((await get(app, "/api/merchant/ledger/export", TOKEN)).statusCode).toBe(200);
+  });
 });
