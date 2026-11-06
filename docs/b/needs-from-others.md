@@ -5,3 +5,4 @@
 3. Indexer/verifier owners: none from this run so far.
 4. Person A (`apps/demo-store`): it pins `fastify@4.29.1`, which `pnpm audit --prod` flags with several advisories (patched in 5.x). The backend packages already run 5.12.8. Upgrading demo-store to Fastify 5 clears all of the Fastify findings in the production audit.
 5. Owner of `packages/shared`: zod 3 -> 4 decision, see `blocked.md`.
+6. Owners of `packages/indexer` and `packages/shared`: under `pnpm -r --parallel test` on a loaded machine, `indexer` "merchant ledger HTTP API > authenticates reads..." and `shared` "is fast on very long hostile input" exceed the 5 s default (or a timing bound) and fail; they pass alone. Consider a larger `testTimeout` and no wall-clock assertion.
