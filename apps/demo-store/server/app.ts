@@ -115,7 +115,9 @@ function loadState(file: string | undefined): PersistedState {
 }
 
 export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
-  const app: FastifyInstance = Fastify({ logger: false });
+  // Body size and timeout limits (the Fastify defaults leave requests without a timeout): small bodies only, slow clients dropped.
+  const app: FastifyInstance = Fastify({ logger: false, bodyLimit: 64 * 1024, requestTimeout: 30_000, connectionTimeout: 60_000 });
+  app.server.headersTimeout = 15_000;
   const receipts = config.receiptDatabasePath ? new ReceiptStore(config.receiptDatabasePath,
     JSON.stringify([config.baseUrl.replace(/\/+$/, ""), config.merchantId.toLowerCase()])) : undefined;
   app.addHook("onClose", async () => receipts?.close());
