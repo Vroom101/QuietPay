@@ -1,5 +1,6 @@
 import { formatUsdt, OrderStatus, token } from "@quietpay/shared";
 import type { DashboardOrder } from "./lib/view";
+import { formatWbt } from "./lib/csv";
 
 const paidStatuses = new Set(["settled", "partially_refunded", "refunded"]);
 const colors = ["#8194ad", "#cc8718", "#138453", "#d44945", "#667384", "#426fe0", "#754ab2"];
@@ -46,6 +47,21 @@ export function buildMetrics(orders: DashboardOrder[], demo: boolean): Metric[] 
     : net < 0n
       ? "Negative because refunds were larger than what you received: the relay fee is not returned on a refund"
       : "After relay fees and refunds";
+  const fees = paid.reduce((sum, order) => sum + BigInt(order.fee), 0n);
+  const gasKnown = orders.some((order) => order.gasWei !== undefined);
+  const gas = orders.reduce((sum, order) => sum + BigInt(order.gasWei ?? "0"), 0n);
+  const costCards: Metric[] = demo
+    ? []
+    : [
+        { label: "Relay fees paid", value: monetary ? displayUsdt(fees) : "—", unit: "USDT", icon: "⛽", detail: `What you pay QuietPay for gasless checkout · ${paid.length} paid order${paid.length === 1 ? "" : "s"}` },
+        {
+          label: "Network gas covered",
+          value: gasKnown ? formatWbt(gas, 6) : "—",
+          unit: "WBT",
+          icon: "⛓",
+          detail: gasKnown ? "Gas the relayer paid on-chain for your payments, refunds and retries (your customers paid none)" : "Not reported by this relayer",
+        },
+      ];
   return [
     { label: demo ? "Demo payments after refunds" : "Net revenue", value: monetary ? displayUsdt(net) : "—", unit: "USDT", icon: "↗", detail: netDetail },
     { label: "Successful payments", value: String(paid.length), unit: "", icon: "✓", detail: "Includes orders later refunded" },
@@ -57,6 +73,7 @@ export function buildMetrics(orders: DashboardOrder[], demo: boolean): Metric[] 
       icon: "%",
       detail: demo ? "Demo feed records completed payments" : `Paid out of finished checkouts (paid, failed or abandoned) · ${open} still open`,
     },
+    ...costCards,
   ];
 }
 

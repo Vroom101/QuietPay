@@ -16,7 +16,7 @@ const app = buildServer(indexer, cfg.apiKeys);
 indexer.start(cfg.pollMs, (e) =>
   console.error("Indexer sync failed:", redactSecrets(String(e), [cfg.rpcUrl])),
 );
-await app.listen({ host: "0.0.0.0", port: cfg.port });
+await app.listen({ host: cfg.host, port: cfg.port });
 console.log(
   JSON.stringify({
     message: "ledger listening",

@@ -51,6 +51,8 @@ export const Order = z.object({
   refundedAmount: Amount.or(z.literal("0")).optional(),
   refunded: Amount.or(z.literal("0")).optional(),
   refundCount: z.number().int().nonnegative().optional(),
+  /** Gas the relayer spent on this order (pay, cancel, refund, reverted attempts), wei. Merchant list only. */
+  gasWei: Amount.or(z.literal("0")).optional(),
   // http(s) only: a javascript:/data: URL here would become a clickable link in the widget and dashboard.
   explorerUrl: z.string().url().refine((u) => /^https?:\/\//i.test(u), "explorerUrl must be http(s)").optional(),
   checkout: CheckoutParams,

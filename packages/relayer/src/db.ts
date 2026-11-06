@@ -742,6 +742,35 @@ export class Db {
       .run(txHash, ts, wei.toString());
   }
 
+  /**
+   * Gas (wei) the relayer spent per order: every distinct tx hash belonging to the order (pay/cancel attempts,
+   * refund txs, reverted attempts) counted once, priced from `spend` (falling back to the revert's own wei).
+   * Keys are lowercase order ids; orders with nothing spent map to 0n. Chunked, so no per-order queries.
+   */
+  gasWeiByOrder(orderIds: string[]): Map<string, bigint> {
+    const out = new Map<string, bigint>();
+    const ids = [...new Set(orderIds.map((i) => i.toLowerCase()))];
+    for (const id of ids) out.set(id, 0n);
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const q = chunk.map(() => "?").join(",");
+      const rows = this.raw
+        .prepare(
+          `WITH p(order_id, tx_hash) AS (
+             SELECT order_id, tx_hash FROM tx_attempts WHERE order_id IN (${q})
+             UNION SELECT lower(order_id), tx_hash FROM refunds WHERE tx_hash IS NOT NULL AND lower(order_id) IN (${q})
+             UNION SELECT lower(r.order_id), a.hash FROM relay_attempts a JOIN refunds r ON r.id = a.order_id WHERE lower(r.order_id) IN (${q})
+             UNION SELECT order_id, tx_hash FROM reverts WHERE order_id IN (${q}))
+           SELECT p.order_id, COALESCE((SELECT wei FROM spend s WHERE s.tx_hash = p.tx_hash),
+                                       (SELECT wei FROM reverts r WHERE r.tx_hash = p.tx_hash)) wei
+           FROM p`,
+        )
+        .all(...chunk, ...chunk, ...chunk, ...chunk) as { order_id: string; wei: string | null }[];
+      for (const r of rows) if (r.wei != null) out.set(r.order_id, (out.get(r.order_id) ?? 0n) + BigInt(r.wei));
+    }
+    return out;
+  }
+
   spentSince(since: number): bigint {
     const rows = this.raw.prepare("SELECT wei FROM spend WHERE ts>=?").all(since) as { wei: string }[];
     return rows.reduce((a, r) => a + BigInt(r.wei), 0n);

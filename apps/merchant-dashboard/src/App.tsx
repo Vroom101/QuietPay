@@ -3,6 +3,8 @@ import quietPayLogo from "../../demo-store/public/brand/quietpay-wordmark.png?ur
 import { DashboardMetrics, canReportMoney, displayUsdt, orderNet, paidOrder } from "./DashboardMetrics";
 import { RefundPanel } from "./RefundPanel";
 import { LedgerExport } from "./LedgerExport";
+import { TransactionsExport } from "./TransactionsExport";
+import { formatWbt } from "./lib/csv";
 import { BillingWorkspace } from "./BillingWorkspace";
 import {
   useCallback,
@@ -198,6 +200,7 @@ export function App() {
     ...toRow(order),
     ...(DEMO_MODE ? { fee: "—" } : {}),
     net: paidOrder(order) && canReportMoney([order]) ? displayUsdt(orderNet(order)) + " USDT" : "—",
+    gas: order.gasWei !== undefined ? formatWbt(order.gasWei, 6) + " WBT" : "—",
   }));
   const showTable = view === "Overview" || view === "Transactions" || view === "Refunds";
   const hasAccess = DEMO_MODE || Boolean(apiKey);
@@ -286,12 +289,13 @@ export function App() {
         {error && <p role="alert" className="md-notice">{error}</p>}
         {loading && <p role="status" className="md-notice">Loading orders…</p>}
         {(view === "Overview" || view === "Analytics") && <DashboardMetrics orders={periodOrders} demo={DEMO_MODE} />}
-        {view === "Analytics" && <LedgerExport useFixtures={false} />}
+        {view === "Analytics" && <LedgerExport useFixtures={DEMO_MODE} merchantUrl={MERCHANT_URL} token={apiKey} />}
         {DEMO_MODE && (view === "Billing" || view === "Refunds") && <BillingWorkspace key={view} onRefundRecorded={load} />}
         {showTable && <section className="md-glass md-orders" aria-labelledby="orders-title">
           <div className="md-orders-heading">
             <h2 id="orders-title">{view === "Overview" ? "Recent payments" : view === "Refunds" ? "Refundable and refunded payments" : "All transactions"}</h2>
             {view === "Overview" && <button onClick={() => changeView("Transactions")}>View all transactions →</button>}
+            {view !== "Overview" && hasAccess && <TransactionsExport orders={matching} label={view.toLowerCase()} />}
           </div>
           {view !== "Overview" && (
       <label className="mb-3 flex items-center gap-2 text-sm">Order status
@@ -317,7 +321,7 @@ export function App() {
             <tr>
               <th className="px-3 py-2">Order ID</th><th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Amount</th>
-              <th className="px-3 py-2">Relay fee</th><th className="px-3 py-2">{DEMO_MODE ? "After refunds" : "Net"}</th>
+              <th className="px-3 py-2">Relay fee</th>{!DEMO_MODE && <th className="px-3 py-2" title="Network gas the relayer paid for this order">Gas (relayer)</th>}<th className="px-3 py-2">{DEMO_MODE ? "After refunds" : "Net"}</th>
               <th className="px-3 py-2">Payout address</th>
               <th className="px-3 py-2">Payer</th>
               <th className="px-3 py-2">Created</th>
@@ -348,7 +352,7 @@ export function App() {
                     </div>
                   )}
                 </td>
-                <td className="px-3 py-2">{r.fee}</td><td className="px-3 py-2">{r.net}</td>
+                <td className="px-3 py-2">{r.fee}</td>{!DEMO_MODE && <td className="px-3 py-2 tabular-nums">{r.gas}</td>}<td className="px-3 py-2">{r.net}</td>
                 <td className="px-3 py-2 font-mono text-xs" title={r.payout ?? undefined}>
                   {r.payout ? shortHex(r.payout) : "—"}
                 </td>
@@ -393,7 +397,7 @@ export function App() {
             {rows.length === 0 && !loading && (
               <tr>
                 <td
-                  colSpan={10}
+                  colSpan={DEMO_MODE ? 10 : 11}
                   className="px-3 py-6 text-center text-stone-400"
                 >
                   {!hasAccess ? "Enter a dashboard access token to load orders." : DEMO_MODE && !orders.length ? "Complete a checkout in Quiet Store, then refresh to see the payment here." : "No orders match this view."}

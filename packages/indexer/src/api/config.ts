@@ -24,6 +24,7 @@ export function loadConfig(
       INDEXER_DATABASE_PATH: z.string().default("./quietpay-indexer.db"),
       INDEXER_POLL_MS: z.preprocess(blank, z.coerce.number().int().min(100).default(5000)),
       INDEXER_PORT: z.preprocess(blank, z.coerce.number().int().min(0).max(65535).default(8788)),
+      INDEXER_HOST: z.preprocess(blank, z.string().regex(/^[0-9a-zA-Z.:\[\]-]+$/).default("0.0.0.0")),
       MERCHANT_API_KEYS: z.string().optional(),
       FACILITATOR_PAYTO: ScopeSchema.shape.router.optional(),
       FACILITATOR_MERCHANT_ID: z
@@ -69,6 +70,7 @@ export function loadConfig(
     databasePath: e.INDEXER_DATABASE_PATH,
     pollMs: e.INDEXER_POLL_MS,
     port: e.INDEXER_PORT,
+    host: e.INDEXER_HOST,
     apiKeys,
   };
 }

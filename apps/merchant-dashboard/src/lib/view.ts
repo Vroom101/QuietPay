@@ -2,7 +2,7 @@ import { formatUsdt, parseUsdt, token, type Order, type OrderStatus } from "@qui
 import type { DemoOrder } from "../../../demo-store/src/billing";
 
 export type DashboardOrder = Pick<Order, "id" | "status" | "amount" | "fee" | "createdAt" | "settledAt" | "refunded" | "refundCount" | "payer" | "reference" | "explorerUrl"> &
-  Partial<Pick<Order, "checkout" | "payout">>;
+  Partial<Pick<Order, "checkout" | "payout" | "gasWei">>;
 
 export function demoOrderToDashboard(order: DemoOrder): DashboardOrder {
   const amount = parseUsdt(order.amount);

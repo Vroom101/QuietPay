@@ -45,6 +45,7 @@ const app = buildApp(sdk, {
   // Paid orders and processed webhook ids survive restarts here.
   stateFile: process.env.QUIETPAY_STATE_FILE || ".data/demo-store-state.json",
   receiptDatabasePath: process.env.QUIETPAY_RECEIPT_DATABASE_PATH || "quietpay-receipts.db",
+  ledgerUrl: process.env.QUIETPAY_LEDGER_URL || undefined,
   merchantAuth: merchantWallets.length
     ? {
         wallets: merchantWallets,

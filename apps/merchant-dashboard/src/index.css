@@ -66,7 +66,7 @@ body { margin: 0; color: #10273f; background: #a9d9f3; font-family: Inter, "Sego
 .md-access button, .md-orders-heading button { padding: 7px 10px; border-radius: 8px; background: #f8fcff; color: #104f9c; font-size: 13px; }
 .md-notice { background: #fff2d9; border-radius: 10px; color: #684414; }
 .md-metrics, .md-charts { display: grid; gap: 12px; margin-bottom: 12px; }
-.md-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.md-metrics { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
 .md-charts { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }
 .md-metric, .md-chart, .md-orders { padding: clamp(12px, 1.6vw, 21px); }
 .md-metric h2 { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 650; }

@@ -177,7 +177,10 @@ export class RelayerService {
   }
 
   listOrders(merchantId: string): Order[] {
-    return this.db.listOrders(merchantId).map((r) => this.toOrder(this.expireIfNeeded(r)));
+    const rows = this.db.listOrders(merchantId);
+    const gas = this.db.gasWeiByOrder(rows.map((r) => r.id));
+    // gasWei is merchant-only: it is added here, never in toOrder (which also serves the public GET /v1/orders/:id).
+    return rows.map((r) => ({ ...this.toOrder(this.expireIfNeeded(r)), gasWei: (gas.get(r.id.toLowerCase()) ?? 0n).toString() }));
   }
 
   /**

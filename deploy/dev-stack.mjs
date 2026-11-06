@@ -1,5 +1,5 @@
 // Starts the whole demo on this machine against the REAL Whitechain testnet (chain 1874, official USDT, qualifying router):
-//   relayer (http://127.0.0.1:8787)  +  demo store server (http://127.0.0.1:3001)  +  web UI (http://localhost:5173)
+//   relayer (http://127.0.0.1:8790)  +  ledger (8788)  +  demo store server (http://127.0.0.1:3001)  +  web UI (http://localhost:5173)
 //
 //   node --env-file=<path to your gitignored env file> deploy/dev-stack.mjs
 //
@@ -33,6 +33,7 @@ const merchantId = Object.values(qualifying.merchants)[0].merchantId;
 if (process.env.ROUTER_ADDRESS && process.env.ROUTER_ADDRESS.toLowerCase() !== router.toLowerCase()) throw new Error("ROUTER_ADDRESS in the env file is not the qualifying router");
 
 const RELAYER_PORT = Number(process.env.DEV_RELAYER_PORT ?? 8790); // 8787 is often taken by the mock relayer
+const LEDGER_PORT = Number(process.env.DEV_LEDGER_PORT ?? 8788);
 const master = need("WEBHOOK_SECRET");
 const merchantApiKey = need("MERCHANT_API_KEY");
 const storeWebhookSecret = createHmac("sha256", master).update(merchantId.toLowerCase()).digest("hex"); // per-merchant secret
@@ -61,6 +62,14 @@ start("relayer", "packages/relayer", ["--import", "tsx", "src/index.ts"], {
   RATE_LIMIT_PER_MINUTE: "60", MAX_NEW_PAYERS_PER_IP_PER_HOUR: "50",
 });
 
+// On-chain ledger (packages/indexer): reads every PaymentRouter event from the chain. Its database lives outside the
+// per-run temp folder so a restart resumes from where it stopped instead of re-reading the chain from the deploy block.
+start("ledger", "packages/indexer", ["--import", "tsx", "src/api/main.ts"], {
+  RPC_URL: need("RPC_URL"), CHAIN_ID: "1874", ROUTER_ADDRESS: router, USDT_ADDRESS: usdt, INDEXER_FROM_BLOCK: String(qualifying.deployBlock),
+  INDEXER_DATABASE_PATH: resolve(tmpdir(), "quietpay-ledger-1874.db"), INDEXER_PORT: String(LEDGER_PORT), INDEXER_HOST: "127.0.0.1",
+  MERCHANT_API_KEYS: `${merchantApiKey}:${merchantId}`,
+});
+
 start("store", "apps/demo-store", ["--import", "tsx", "server/index.ts"], {
   PORT: "3001", HOST: "127.0.0.1", QUIETPAY_BASE_URL: `http://127.0.0.1:${RELAYER_PORT}`, QUIETPAY_API_KEY: merchantApiKey,
   QUIETPAY_WEBHOOK_SECRET: storeWebhookSecret, QUIETPAY_MERCHANT_ID: merchantId, QUIETPAY_PAYOUT_ADDRESS: need("MERCHANT_PAYOUT_ADDRESS"),
@@ -71,6 +80,7 @@ start("store", "apps/demo-store", ["--import", "tsx", "server/index.ts"], {
   // Merchant wallet sign-in: the wallets allowed to open the dashboard. Default is the payout address; set
   // MERCHANT_WALLETS=0xYourMetaMaskAddress[,0x...] in the env file to allow your own.
   ...(process.env.MERCHANT_WALLETS ? { QUIETPAY_MERCHANT_WALLETS: process.env.MERCHANT_WALLETS } : {}),
+  QUIETPAY_LEDGER_URL: `http://127.0.0.1:${LEDGER_PORT}`,
   QUIETPAY_AUTH_DOMAIN: "localhost:5174", QUIETPAY_AUTH_URI: "http://localhost:5174",
 });
 
@@ -84,7 +94,7 @@ writeFileSync(resolve(tmp, "pids.json"), JSON.stringify(children.map((c) => c.pi
 console.log(`\nQuietPay demo starting (logs: ${resolve(tmp, "logs")})`);
 console.log("  Store UI   http://localhost:5173   (customers)");
 console.log("  Dashboard  http://localhost:5174   (merchant: sign in with MetaMask)");
-console.log(`  Store API  http://127.0.0.1:3001   Relayer http://127.0.0.1:${RELAYER_PORT}`);
+console.log(`  Store API  http://127.0.0.1:3001   Relayer http://127.0.0.1:${RELAYER_PORT}   Ledger http://127.0.0.1:${LEDGER_PORT} (first start reads the chain, about a minute)`);
 console.log(`  Dashboard access token for merchant refunds: kept in memory only; print it with --show-token`);
 const allowed = (process.env.MERCHANT_WALLETS || need("MERCHANT_PAYOUT_ADDRESS")).split(",").map((x) => x.trim()).filter(Boolean);
 console.log(`  Merchant wallets allowed to sign in to the dashboard: ${allowed.join(", ")}`);

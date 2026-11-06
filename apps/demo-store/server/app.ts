@@ -9,6 +9,7 @@ import { CartError, priceCart } from "./catalog.js";
 import { registerCustomerRefunds, setPrivateHeaders, type CustomerRefundConfig } from "./customer-refund-routes.js";
 import { createMerchantAuth, type MerchantAuthConfig } from "./merchant-auth.js";
 import { REDACTED_HEADERS } from "./customer-refunds.js";
+import { registerLedgerProxy } from "./ledger-proxy.js";
 
 /** The frozen merchant-SDK surface this server relies on. */
 export type MerchantSdk = Pick<typeof SdkApi, "createOrder" | "getOrder" | "verifyWebhook"> & Partial<RefundSdk>;
@@ -20,6 +21,10 @@ export interface StoreConfig extends Partial<Pick<CustomerRefundConfig, "custome
   /** Wallet sign-in for the merchant dashboard. Off when absent or when no wallets are listed. */
   merchantAuth?: MerchantAuthConfig;
   receiptDatabasePath?: string;
+  /** QuietPay ledger service (packages/indexer) base URL, for the merchant ledger CSV download. */
+  ledgerUrl?: string;
+  /** Test hook for the ledger proxy. */
+  ledgerFetch?: typeof fetch;
   baseUrl: string;
   apiKey: string;
   merchantId: `0x${string}`;
@@ -329,5 +334,9 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   const merchantAuth = config.merchantAuth ? createMerchantAuth(config.merchantAuth, config.now) : undefined;
   if (merchantAuth?.enabled) merchantAuth.register(app);
   registerMerchantRefunds(app, sdk, merchantAuth?.enabled ? { ...config, acceptSession: merchantAuth.isSession } : config);
+  registerLedgerProxy(app, {
+    ledgerUrl: config.ledgerUrl, apiKey: config.apiKey, dashboardToken: config.refunds?.dashboardToken,
+    ...(merchantAuth?.enabled ? { acceptSession: merchantAuth.isSession } : {}), ...(config.ledgerFetch ? { fetch: config.ledgerFetch } : {}),
+  });
   return app;
 }
