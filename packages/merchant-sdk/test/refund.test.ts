@@ -26,7 +26,7 @@ function transport(c = context) {
 }
 describe("merchant SDK refunds", () => {
   it("requires a pinned custom token domain and signs with it", async () => {
-    const domain = { name: "DemoUSDT", version: "2" };
+    const domain = { name: "Test Token", version: "2" };
     const c = { ...context, token: "0x9999999999999999999999999999999999999999", domain };
     const { requests, fetcher } = transport(c);
     await expect(refund({ ...opts, tokenAddress: c.token as Hex, fetch: fetcher })).rejects.toThrow("does not match");

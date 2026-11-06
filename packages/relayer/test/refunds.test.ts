@@ -30,7 +30,7 @@ const submit = (e: Awaited<ReturnType<typeof setup>>, req: RelayRefundRequest) =
 // Fake-chain receipts are explicit; contract/E2E tests verify actual token movement.
 describe("gasless partial refunds", () => {
   it("uses the configured token and domain for both payments and refunds", async () => {
-    const e = await setup({ usdt: "0x9999999999999999999999999999999999999999", tokenDomain: { name: "DemoUSDT", version: "2" } });
+    const e = await setup({ usdt: "0x9999999999999999999999999999999999999999", tokenDomain: { name: "Test Token", version: "2" } });
     expect(e.order.checkout).toMatchObject({ token: e.cfg.usdt, domain: e.cfg.tokenDomain });
     expect(await e.svc.refunds.context(MERCHANT_ID, e.order.id as Hex)).toMatchObject({ token: e.cfg.usdt, domain: e.cfg.tokenDomain });
     const r = await submit(e, await signed(e));
