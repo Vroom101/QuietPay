@@ -317,6 +317,17 @@ contract PaymentRouterTest is Test {
         router.pay(MERCHANT, ORDER, payer, PRICE, FEE, validAfter, validBefore, hex"1234");
     }
 
+    /// @dev Pinned against packages/shared computePayNonce so on-chain and TS agree.
+    function test_nonceMatchesSharedTypeScriptBuilder() public view {
+        bytes32 n = router.computeNonce(
+            bytes32(hex"0101010101010101010101010101010101010101010101010101010101010101"),
+            bytes32(hex"0202020202020202020202020202020202020202020202020202020202020202"),
+            0x2222222222222222222222222222222222222222,
+            25_000_000
+        );
+        assertEq(n, 0xa4eaba23e962fdd0bfb7f40e84f16c3978c05dccc6f91fa12a60161ff5409d4e);
+    }
+
     function testFuzz_feeSplitConservesValue(uint256 value, uint256 fee) public {
         value = bound(value, 1, 500_000_000);
         fee = bound(fee, 0, MAX_FEE);
