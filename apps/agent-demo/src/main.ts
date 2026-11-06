@@ -37,10 +37,16 @@ async function main() {
   const pub = createPublicClient({ transport: http(env.RPC_URL) });
   if ((await pub.getChainId()) !== token.chainId)
     throw new Error("RPC is on the wrong chain");
-  const before = await pub.getBalance({ address: account.address });
-  if (before !== 0n)
+  // Gasless proof: the payer cannot afford even a plain 21000-gas transfer (zero, or dust below that), and after the
+  // run its native balance AND its transaction count are unchanged, so it sent nothing and paid no gas.
+  const [before, nonceBefore, gasPrice] = await Promise.all([
+    pub.getBalance({ address: account.address }),
+    pub.getTransactionCount({ address: account.address }),
+    pub.getGasPrice(),
+  ]);
+  if (before >= 21000n * (gasPrice > 0n ? gasPrice : 1n))
     throw new Error(
-      "Use a dedicated demo payer with USDT and zero native currency",
+      "Use a dedicated demo payer with USDT and no usable native currency (it must not be able to pay gas itself)",
     );
   const agentOptions: AgentOptions = {
     signer: account,
@@ -93,13 +99,18 @@ async function main() {
       if (receipt.status !== "success")
         throw new Error("Settlement transaction did not succeed");
     }
-    const after = await pub.getBalance({ address: account.address });
-    if (after !== 0n) throw new Error("Demo payer native balance changed");
+    const [after, nonceAfter] = await Promise.all([
+      pub.getBalance({ address: account.address }),
+      pub.getTransactionCount({ address: account.address }),
+    ]);
+    if (after !== before) throw new Error("Demo payer native balance changed");
+    if (nonceAfter !== nonceBefore) throw new Error("Demo payer sent a transaction");
     console.log(
       JSON.stringify({
         completed: true,
         authorizedAmount: agent.reservedAmount.toString(),
         nativeBalance: after.toString(),
+        payerTransactionsSent: nonceAfter - nonceBefore,
       }),
     );
   } finally {
