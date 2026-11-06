@@ -87,9 +87,7 @@ Reuse the pure functions from `@quietpay/indexer`: `decodeRouterLog`, `decodeTra
 
 ## Samples
 
-- **Live sample: pending.** A live export needs a real payment and refund on the qualifying router, which waits for official
-  USDT in the payer wallet (`docs/lead/blocked.md`). The CLI has been run live against the qualifying router: it indexed
-  its operator events (`RelayerSet`, `MerchantRegistered`) and exported a valid, empty ledger (header only).
+- **Live sample (chain data):** `docs/lead/samples/live-sample.csv` and `.meta.json`, exported from the qualifying router, blocks 12351795-12361516. One router row: 1.000000 gross, 0.050000 fee, 0.500000 refunded, 0.450000 net, `partially_refunded`, from the live payment and refund in `live-usdt.md`.
 - **Synthetic sample (format only):** `docs/lead/samples/synthetic-sample.csv` and `.meta.json` are generated from
   hand-made logs by `packages/indexer/scripts/make-synthetic-sample.ts`. They are **not** chain data. They show a partly
   refunded router row, a plain x402 row, and the double-count rule (a router payout to the facilitator address is counted

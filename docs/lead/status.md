@@ -24,3 +24,4 @@
 - 08:30 fix(relayer): fee in pay nonce, stand-in case removed (CI typecheck)
 - 08:35 test(dashboard): exact six-decimal expectations (CI)
 - 09:36 live payment + refund done on qualifying router; demo-store 400 fix
+- 09:38 live indexer export (1 router row) saved; tag qualifying-v1
