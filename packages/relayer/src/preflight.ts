@@ -39,7 +39,15 @@ export async function preflight(cfg: Config) {
     balanceWbt: formatUnits(balance, 18), lowBalance: balance < cfg.lowBalanceWei, paused };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/** True when this module is the program being run (not merely imported). */
+export function isEntryPoint(argv1: string | undefined, moduleUrl: string): boolean {
+  return !!argv1 && resolve(argv1) === fileURLToPath(moduleUrl);
+}
+
+/** CLI wrapper: prints the preflight report as JSON, or the failure message and a non-zero exit code. */
+export async function main(): Promise<void> {
   try { console.log(JSON.stringify(await preflight(loadConfig()))); }
   catch (e) { console.error("Preflight failed:", (e as Error).message); process.exitCode = 1; }
 }
+
+if (isEntryPoint(process.argv[1], import.meta.url)) await main();
