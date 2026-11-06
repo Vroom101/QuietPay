@@ -87,9 +87,3 @@ describe("verifyWebhook", () => {
     expect(() => verifyWebhook({ secret, body: b, signatureHeader: signWebhook(secret, b, now), nowSeconds: now })).toThrow(/not a Quietpay event/);
   });
 });
-
-describe("refund stub", () => {
-  it("throws until P1", async () => {
-    await expect(refund({ baseUrl: "x", apiKey: "k", orderId: orderCreated.id as `0x${string}` })).rejects.toThrow(/P1/);
-  });
-});

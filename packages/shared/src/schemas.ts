@@ -12,7 +12,7 @@ export const TxHash = hex(64);
 /** Token base units (USDT has 6 decimals), as a decimal string. */
 export const Amount = z.string().regex(/^[1-9][0-9]*$/, "must be a positive integer string");
 
-export const OrderStatus = z.enum(["created", "pending", "settled", "failed", "expired"]);
+export const OrderStatus = z.enum(["created", "pending", "settled", "failed", "expired", "partially_refunded", "refunded"]);
 export type OrderStatus = z.infer<typeof OrderStatus>;
 
 /** What the payer signs. `from`, `validAfter` and `validBefore` are filled in by the widget. */
@@ -33,6 +33,8 @@ export const Order = z.object({
   merchantId: Bytes32,
   amount: Amount,
   status: OrderStatus,
+  refunded: Amount.or(z.literal("0")).optional(),
+  refundCount: z.number().int().nonnegative().optional(),
   reference: z.string().max(200).optional(),
   payout: Address,
   fee: Amount.or(z.literal("0")),
@@ -118,3 +120,24 @@ export const AdminPauseRequest = z.object({ paused: z.boolean() });
 export type AdminPauseRequest = z.infer<typeof AdminPauseRequest>;
 export const AdminPauseResponse = z.object({ paused: z.boolean() });
 export type AdminPauseResponse = z.infer<typeof AdminPauseResponse>;
+
+export const RefundContext = z.object({
+  orderId: Bytes32, merchantId: Bytes32, payer: Address, refundSigner: Address,
+  amountPaid: Amount, refunded: Amount.or(z.literal("0")), refundIndex: z.number().int().nonnegative(),
+  refundBalance: Amount.or(z.literal("0")), chainId: z.number().int(), token: Address, router: Address,
+  domain: z.object({ name: z.string(), version: z.string() }),
+});
+export type RefundContext = z.infer<typeof RefundContext>;
+export const RelayRefundRequest = z.object({
+  orderId: Bytes32, amount: Amount, refundIndex: z.number().int().nonnegative(),
+  validAfter: z.number().int().nonnegative(), validBefore: z.number().int().positive(), signature: Signature,
+});
+export type RelayRefundRequest = z.infer<typeof RelayRefundRequest>;
+export const Refund = z.object({
+  id: Bytes32, orderId: Bytes32, amount: Amount, refundIndex: z.number().int().nonnegative(),
+  status: z.enum(["pending", "settled", "failed"]), txHash: TxHash.optional(),
+  failureCode: z.string().optional(), createdAt: z.number().int(),
+});
+export type Refund = z.infer<typeof Refund>;
+
+export const ListRefundsResponse = z.object({ refunds: z.array(Refund) });

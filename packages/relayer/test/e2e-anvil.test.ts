@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -20,6 +20,7 @@ import { makeChain } from "../src/chain.js";
 import { RelayerService } from "../src/service.js";
 import { buildServer } from "../src/server.js";
 import { WebhookWorker } from "../src/webhooks.js";
+import { refund as sdkRefund } from "../../merchant-sdk/src/index.js";
 import { makeCfg } from "./helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,9 @@ const out = process.env.CONTRACTS_OUT ?? resolve(here, "../../../contracts/out")
 const routerArtifact = resolve(out, "PaymentRouter.sol/PaymentRouter.json");
 const usdtArtifact = resolve(out, "MockUSDT.sol/MockUSDT.json");
 const haveArtifacts = existsSync(routerArtifact) && existsSync(usdtArtifact);
+const anvilBin = process.env.ANVIL_BIN ?? "anvil";
+const haveAnvil = spawnSync(anvilBin, ["--version"], { stdio: "ignore" }).status === 0;
+if (process.env.CI && (!haveArtifacts || !haveAnvil)) throw new Error("CI integration requires built contract artifacts and anvil on PATH (or ANVIL_BIN).");
 
 // Standard anvil dev keys (public, test-only).
 const DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
@@ -35,13 +39,13 @@ const PAYOUT = "0x90F79bf6EB2c4f870365E785982E1f101E93b906" as Hex;
 const PORT = 18545;
 const RPC = `http://127.0.0.1:${PORT}`;
 
-describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real router, signed webhook", () => {
+describe.skipIf(!haveArtifacts || !haveAnvil)("end to end on anvil: zero-WBT payer, real router, signed webhook", () => {
   let anvil: ChildProcess;
   let hookServer: Server;
   const hooks: { body: string; sig: string }[] = [];
 
   beforeAll(async () => {
-    anvil = spawn("anvil", ["--port", String(PORT), "--silent"], { stdio: "ignore" });
+    anvil = spawn(anvilBin, ["--port", String(PORT), "--silent"], { stdio: "ignore" });
     for (let i = 0; i < 50; i++) {
       try {
         const r = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' });
@@ -65,7 +69,7 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
     hookServer?.close();
   });
 
-  it("settles a payment from a payer with no native balance", async () => {
+  it("settles a zero-WBT payment, partial/full refunds and signed webhooks", async () => {
     const deployer = privateKeyToAccount(DEPLOYER_KEY);
     const relayer = privateKeyToAccount(RELAYER_KEY);
     const chainDef = { id: 31337, name: "anvil", nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [RPC] } } } as const;
@@ -86,8 +90,10 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
     const router = (await pub.waitForTransactionReceipt({ hash: routerHash })).contractAddress!;
 
     const merchantId = merchantIdFromSlug("demo-store");
+    const refundKey = generatePrivateKey();
+    const refundSigner = privateKeyToAccount(refundKey);
     await pub.waitForTransactionReceipt({
-      hash: await wallet.writeContract({ address: router, abi: paymentRouterAbi, functionName: "registerMerchant", args: [merchantId, PAYOUT, PAYOUT, 100_000n] }),
+      hash: await wallet.writeContract({ address: router, abi: paymentRouterAbi, functionName: "registerMerchant", args: [merchantId, PAYOUT, refundSigner.address, 100_000n] }),
     });
     await pub.waitForTransactionReceipt({
       hash: await wallet.writeContract({ address: router, abi: paymentRouterAbi, functionName: "setRelayer", args: [relayer.address, true] }),
@@ -221,5 +227,48 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
     expect(event.type).toBe("payment.settled");
     expect(event.data.txHash).toBe(txHash);
     expect(await worker.tick()).toBe(0); // delivered once, not redelivered
-  }, 60_000);
+
+    // Fund a separate, zero-native-balance refund signer. Payout remains unchanged.
+    await pub.waitForTransactionReceipt({ hash: await wallet.writeContract({ address: usdt,
+      abi: usdtJson.abi, functionName: "mint", args: [refundSigner.address, 25_000_000n] }) });
+    const localFetch: typeof fetch = async (url, init) => {
+      const res = await app.inject({ method: (init?.method ?? "GET") as "GET" | "POST",
+        url: new URL(String(url)).pathname, headers: init?.headers as Record<string, string>,
+        payload: init?.body ? String(init.body) : undefined });
+      return new Response(res.body, { status: res.statusCode, headers: { "content-type": "application/json" } });
+    };
+    const refundOptions = { baseUrl: "http://relayer.test", apiKey: "test-key", merchantId,
+      orderId: order.id as Hex, router, refundSignerPrivateKey: refundKey, chainId: 31337,
+      tokenAddress: usdt, fetch: localFetch };
+    for (const [index, amount] of [[0, "5000000"], [1, "20000000"]] as const) {
+      const refund = await sdkRefund({ ...refundOptions, refundIndex: index, amount });
+      await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 3 + index, method: "evm_mine", params: [] }) });
+      for (let i = 0; i < 50; i++) {
+        if (svc.refunds.get(merchantId, refund.id).status === "settled") break;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      expect(svc.refunds.get(merchantId, refund.id).status).toBe("settled");
+      expect(svc.getOrder(order.id).status).toBe(index === 0 ? "partially_refunded" : "refunded");
+      expect(await worker.tick()).toBe(1);
+      const delivery = hooks.at(-1)!;
+      expect(verifyWebhookSignature(cfg.webhookSecret, delivery.body, delivery.sig)).toBe(true);
+      expect(WebhookEvent.parse(JSON.parse(delivery.body))).toMatchObject({ type: "payment.refunded",
+        data: { refundAmount: amount, refundIndex: index, payer: payer.address.toLowerCase() } });
+    }
+    const receipt = await pub.readContract({ address: router, abi: paymentRouterAbi, functionName: "receipts", args: [merchantId, order.id as Hex] });
+    expect(receipt.refunded).toBe(25_000_000n);
+    expect(receipt.refundCount).toBe(2n);
+    expect(await bal(payer.address)).toBe(parseUnits("100", 6));
+    expect(await bal(PAYOUT)).toBe(25_000_000n - 50_000n);
+    expect(await bal(relayer.address)).toBe(50_000n);
+    expect(await bal(router)).toBe(0n);
+    expect(await bal(refundSigner.address)).toBe(0n);
+    expect(await pub.getBalance({ address: payer.address })).toBe(0n);
+    expect(await pub.getBalance({ address: refundSigner.address })).toBe(0n);
+    expect(svc.getOrder(order.id).txHash).toBe(txHash);
+    await app.close();
+    db.close();
+
+  }, 90_000);
 });

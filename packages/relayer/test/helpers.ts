@@ -1,7 +1,7 @@
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
 import { buildCheckoutAuthorization, type Order } from "@quietpay/shared";
-import type { ChainPort, MerchantRegistry, PayArgs, TxReceipt, PreparedTx } from "../src/chain.js";
+import type { ChainPort, MerchantRegistry, PayArgs, TxReceipt, PreparedTx, RefundArgs, OrderReceipt } from "../src/chain.js";
 import type { Config } from "../src/config.js";
 import { Db } from "../src/db.js";
 import { RelayerService } from "../src/service.js";
@@ -11,11 +11,13 @@ export const PAYOUT = "0x2222222222222222222222222222222222222222" as Hex;
 export const ROUTER = "0x1111111111111111111111111111111111111111" as Hex;
 export const USDT = "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7" as Hex;
 export const PAYER_KEY = ("0x" + "a1".repeat(32)) as Hex;
+export const REFUND_KEY = ("0x" + "d4".repeat(32)) as Hex;
+export const refundSigner = privateKeyToAccount(REFUND_KEY);
 export const payer = privateKeyToAccount(PAYER_KEY);
 
 export class FakeChain implements ChainPort {
   relayerAddress = "0x4444444444444444444444444444444444444444" as Hex;
-  merchant: MerchantRegistry = { payout: PAYOUT, refundSigner: PAYOUT, maxRelayFee: 100_000n };
+  merchant: MerchantRegistry = { payout: PAYOUT, refundSigner: refundSigner.address, maxRelayFee: 100_000n };
   paused = false;
   settledOnChain = false;
   simulateFails = false;
@@ -44,6 +46,23 @@ export class FakeChain implements ChainPort {
   async getGasPrice() {
     return this.gasPrice;
   }
+  refundBalance = 1_000_000_000n;
+  orderReceipts = new Map<string, OrderReceipt>();
+  async getOrderReceipt(_merchant: Hex, orderId: Hex): Promise<OrderReceipt> {
+    return this.orderReceipts.get(orderId) ?? { payer: payer.address, value: 25_000_000n, refunded: 0n, refundCount: 0n, settled: true };
+  }
+  async getTokenBalance() { return this.refundBalance; }
+  async simulateRefund() {
+    if (this.simulateFails) throw new Error("refund simulation failed");
+    return this.gas;
+  }
+  refundPrepared: { args: RefundArgs; tx: PreparedTx }[] = [];
+  async prepareRefund(args: RefundArgs, gas: bigint, gasPrice: bigint, nonce?: number): Promise<PreparedTx> {
+    const hash = ("0x" + (this.prepared.length + this.refundPrepared.length + 1).toString(16).padStart(64, "0")) as Hex;
+    const tx = { hash, raw: hash, nonce: nonce ?? this.prepared.length + this.refundPrepared.length, gas, gasPrice };
+    this.refundPrepared.push({ tx, args });
+    return tx;
+  }
   prepared: { tx: PreparedTx; args: PayArgs }[] = [];
   balance = 10n ** 18n;
   receiptFails = false;
@@ -54,13 +73,15 @@ export class FakeChain implements ChainPort {
   }
   async getBalance() { return this.balance; }
   async preparePay(args: PayArgs, gas: bigint, gasPrice: bigint, nonce?: number): Promise<PreparedTx> {
-    const hash = ("0x" + (this.prepared.length + 1).toString(16).padStart(64, "0")) as Hex;
-    const tx = { hash, raw: hash, nonce: nonce ?? this.prepared.length, gas, gasPrice };
+    const hash = ("0x" + (this.prepared.length + this.refundPrepared.length + 1).toString(16).padStart(64, "0")) as Hex;
+    const tx = { hash, raw: hash, nonce: nonce ?? this.prepared.length + this.refundPrepared.length, gas, gasPrice };
     this.prepared.push({ tx, args });
     return tx;
   }
   async broadcast(raw: Hex) {
     if (this.broadcastFails) throw new Error("network unavailable");
+    const refund = this.refundPrepared.find(p => p.tx.raw === raw);
+    if (refund) return refund.tx.hash;
     const p = this.prepared.find(p => p.tx.raw === raw)!;
     if (!this.sent.includes(p.args)) this.sent.push(p.args);
     return p.tx.hash;

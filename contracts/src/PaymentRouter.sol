@@ -30,6 +30,7 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     bytes32 public constant PAY_TAG = keccak256("quietpay.pay.v1");
+    bytes32 public constant REFUND_TAG = keccak256("quietpay.refund.v1");
     uint256 public constant MAX_WINDOW = 10 minutes;
 
     struct Merchant {
@@ -46,6 +47,8 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         uint256 fee;
         uint64 paidAt;
         bool settled;
+        uint256 refunded;
+        uint256 refundCount;
     }
 
     IERC20 public immutable token;
@@ -67,6 +70,12 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         address relayer
     );
 
+    event Refunded(bytes32 indexed merchantId, bytes32 indexed orderId, address indexed payer,
+        uint256 amount, uint256 totalRefunded, uint256 refundIndex);
+
+    error NotSettled();
+    error RefundExceedsPaid();
+    error BadTokenBalance();
     error NotRelayer();
     error UnknownMerchant();
     error MerchantExists();
@@ -165,6 +174,37 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         if (fee > 0) token.safeTransfer(msg.sender, fee);
 
         emit Paid(merchantId, orderId, payer, payout, value, fee, msg.sender);
+    }
+
+    function computeRefundNonce(bytes32 merchantId, bytes32 orderId, address payer, uint256 amount, uint256 refundIndex)
+        public pure returns (bytes32)
+    {
+        return keccak256(abi.encode(REFUND_TAG, merchantId, orderId, payer, amount, refundIndex));
+    }
+
+    /// @notice Refunds are funded by the merchant's refundSigner. No relay fee is charged.
+    function refund(bytes32 merchantId, bytes32 orderId, uint256 amount,
+        uint256 validAfter, uint256 validBefore, bytes calldata signature)
+        external nonReentrant whenNotPaused
+    {
+        if (!isRelayer[msg.sender]) revert NotRelayer();
+        Receipt storage r = _receipts[merchantId][orderId];
+        if (!r.settled) revert NotSettled();
+        if (amount == 0) revert ZeroValue();
+        if (amount > r.value - r.refunded) revert RefundExceedsPaid();
+        if (validBefore <= validAfter || validBefore - validAfter > MAX_WINDOW) revert BadWindow();
+        if (block.timestamp <= validAfter) revert NotYetValid();
+        if (block.timestamp >= validBefore) revert Expired();
+        if (signature.length != 65) revert BadSignatureLength();
+        uint256 index = r.refundCount;
+        bytes32 nonce = computeRefundNonce(merchantId, orderId, r.payer, amount, index);
+        r.refunded += amount;
+        r.refundCount = index + 1;
+        uint256 beforeBalance = token.balanceOf(address(this));
+        _pull(nonce, merchants[merchantId].refundSigner, amount, validAfter, validBefore, signature);
+        if (token.balanceOf(address(this)) != beforeBalance + amount) revert BadTokenBalance();
+        token.safeTransfer(r.payer, amount);
+        emit Refunded(merchantId, orderId, r.payer, amount, r.refunded, index);
     }
 
     /// @dev Validates inputs and returns the merchant's current registry payout.

@@ -19,4 +19,4 @@ The widget shows the payer address. The user must send USDT to it from elsewhere
 - Widget is verified against the mock relayer only, not the real relayer or chain.
 - Widget build emits JS only (no `.d.ts`); monorepo consumers use the TS sources.
 - Dashboard shows the explorer link only when the order carries `explorerUrl`.
-- No refunds, x402 or ledger (out of scope for P0).
+- Backend/SDK refunds are implemented; dashboard refund controls are pending. x402 and ledger remain unimplemented.

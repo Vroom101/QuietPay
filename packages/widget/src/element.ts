@@ -93,9 +93,9 @@ export class QuietpayCheckout extends LitElement {
 
   private showOrder(o: Order) {
     this.order = o;
-    if (o.status === "settled") {
+    if (["settled", "partially_refunded", "refunded"].includes(o.status)) {
       this.view = "settled";
-      this.emit("quietpay:settled", { order: o });
+      this.emit(o.status === "settled" ? "quietpay:settled" : "quietpay:refunded", { order: o });
     } else if (o.status === "expired") {
       this.fail(new WidgetError("order_expired", ""));
     } else if (o.status === "failed") {
@@ -188,7 +188,8 @@ export class QuietpayCheckout extends LitElement {
         break;
       case "settled":
         body = html`
-          <div class="ok">Payment complete. Thank you!</div>
+          <div class="ok">${o?.status === "refunded" ? "Refund complete." : o?.status === "partially_refunded" ? "Partially refunded." : "Payment complete. Thank you!"}</div>
+          ${o?.refunded && o.refunded !== "0" ? html`<div>Refunded: ${formatUsdt(o.refunded)} USDT</div>` : nothing}
           ${o ? html`<div class="amount">${formatUsdt(o.amount)} USDT</div>` : nothing}
           ${o?.payer ? html`<div class="row"><span>Paid by</span><code>${o.payer}</code></div>` : nothing}
           ${o?.txHash ? html`<div class="row"><span>Receipt</span><code data-testid="receipt">${o.txHash}</code></div>` : nothing}

@@ -22,7 +22,7 @@ Merchant server --createOrder--> Relayer ----- signed webhook ---> Merchant serv
   invalidates the signature. One receipt per (merchant, order).
 - `packages/shared`: zod schemas, error codes, typed-data builders, fixtures, mock relayer, generated ABI, token facts.
 - `packages/relayer`: Fastify service with a guard pipeline, nonce manager, SQLite and signed webhooks with retry.
-- `packages/merchant-sdk`: `createOrder`, `getOrder`, `verifyWebhook`, and a `refund` stub (P1).
+- `packages/merchant-sdk`: `createOrder`, `getOrder`, `verifyWebhook`, server-signed `refund`, and refund context/status reads.
 - `packages/widget`: Lit `<quietpay-checkout>` plus a React wrapper.
 - `apps/demo-store`, `apps/merchant-dashboard`: the demo shop and the orders view.
 
@@ -36,7 +36,7 @@ compromised relayer can refuse service but cannot redirect funds or exceed the f
 
 ```
 pnpm install
-cd contracts && forge install && forge test       # 25 tests
+cd contracts && forge install && forge test       # 36 tests
 forge build                                       # needed once for the anvil end-to-end test
 cd .. && pnpm -r typecheck && pnpm -r test
 pnpm --filter @quietpay/shared mock               # mock relayer on :8787 for frontend work
@@ -59,4 +59,6 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 - Run one relayer process per gas wallet/database. Pending payments recover after restart and use bounded same-nonce replacements.
 - P0 operations, safety settings and read-only deployment checks: [`docs/b/p0-backend.md`](docs/b/p0-backend.md).
 - Not done yet: live deployment and first real payment, hosted relayer, explorer verification, a browser run of the widget.
-- P1 (refunds, ledger and verifier, x402) is not started.
+- Gasless partial/full refunds work locally. The merchant refundSigner supplies the full refund amount; the operator absorbs refund gas.
+- Refunds require this branch's router build; an older non-upgradeable deployment must be replaced and its addresses synchronized.
+- Ledger/verifier and x402 remain unimplemented.

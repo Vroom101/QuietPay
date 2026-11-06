@@ -127,3 +127,19 @@ export function parseUsdt(amount: string): bigint {
   const [w, f = ""] = amount.split(".");
   return BigInt(w || "0") * 10n ** BigInt(token.decimals) + BigInt(f.padEnd(token.decimals, "0").slice(0, token.decimals));
 }
+
+/** Refund nonces bind the original payer, order, amount and sequential refund index. */
+export const REFUND_TAG = keccak256(stringToHex("quietpay.refund.v1"));
+export function computeRefundNonce(args: { merchantId: Hex; orderId: Hex; payer: Address; amount: bigint; refundIndex: bigint }): Hex {
+  return keccak256(encodeAbiParameters(parseAbiParameters("bytes32, bytes32, bytes32, address, uint256, uint256"),
+    [REFUND_TAG, args.merchantId, args.orderId, args.payer, args.amount, args.refundIndex]));
+}
+
+export function buildRefundAuthorization(args: {
+  merchantId: Hex; orderId: Hex; payer: Address; refundSigner: Address; router: Address;
+  amount: bigint; refundIndex: bigint; validAfter: bigint; validBefore: bigint;
+  chainId?: number; token?: Address; domainName?: string; domainVersion?: string;
+}) {
+  return buildCheckoutAuthorization({ ...args, from: args.refundSigner, value: args.amount,
+    nonce: computeRefundNonce(args) });
+}

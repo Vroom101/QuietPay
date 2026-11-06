@@ -61,7 +61,7 @@ pass does not satisfy these live gates.
 ## Validation
 
 Validated using Node 20: workspace typechecks, workspace tests and workspace builds
-pass. The final relayer suite has 68 passing tests (32 added for P0). The Anvil test
-is skipped locally because Foundry/contract artifacts are unavailable; CI builds
-those artifacts and the test explicitly mines the second confirmation block.
+pass. The final relayer suite has 68 passing tests (32 added for P0). The original P0 run skipped Anvil because Foundry/contract artifacts were unavailable.
+The subsequent refund implementation installs the tools and passes that integration
+with real local payment, partial/full refunds and signed webhooks; see `refunds.md`.
 No live deployment or testnet payment was performed.

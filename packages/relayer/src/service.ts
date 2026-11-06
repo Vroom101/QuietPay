@@ -17,6 +17,7 @@ import type { WebhookEvent } from "@quietpay/shared/webhook";
 import { rowToOrder, type Db, type OrderRow } from "./db.js";
 import type { ChainPort, PayArgs, TxReceipt } from "./chain.js";
 import type { Config } from "./config.js";
+import { RefundService } from "./refunds.js";
 import { RateLimiter } from "./ratelimit.js";
 
 const HOUR = 3600;
@@ -53,7 +54,8 @@ export class RelayerService {
   private balanceLow = false;
   private monitor: NodeJS.Timeout | null = null;
   private readonly orderLimiter: RateLimiter;
-  private readonly sendLock = new Mutex();
+  readonly refunds: RefundService;
+  readonly sendLock = new Mutex();
   private relayed = 0;
   private readonly rejected = new Map<string, number>();
   private readonly inFlight = new Map<string, Promise<RelayPayResponse>>();
@@ -69,6 +71,7 @@ export class RelayerService {
     this.payerLimiter = new RateLimiter(d.cfg.rateLimitPerMinute, 60_000, () => this.now() * 1000);
     this.merchantLimiter = new RateLimiter(d.cfg.rateLimitPerMinute, 60_000, () => this.now() * 1000);
     this.ipLimiter = new RateLimiter(d.cfg.rateLimitPerMinute, 60_000, () => this.now() * 1000);
+    this.refunds = new RefundService(this, d.log);
     this.orderLimiter = new RateLimiter(Math.max(5, Math.floor(d.cfg.rateLimitPerMinute / 2)), 60_000, () => this.now() * 1000);
   }
 
@@ -84,13 +87,14 @@ export class RelayerService {
   // ------------------------------------------------------------------ views
 
   toOrder(row: OrderRow): Order {
-    return rowToOrder(row, {
+    const totals = this.db.refundTotals(row.id);
+    return { ...rowToOrder(row, {
       router: this.cfg.router,
       token: this.cfg.usdt,
       chainId: this.cfg.chainId,
       domain: tokenFacts.eip712Domain,
       explorerBaseUrl: this.cfg.explorerBaseUrl,
-    });
+    }), refunded: totals.amount.toString(), refundCount: totals.count };
   }
 
   getOrder(id: string): Order {
@@ -137,6 +141,8 @@ export class RelayerService {
         settled: counts.settled ?? 0,
         failed: counts.failed ?? 0,
         expired: counts.expired ?? 0,
+        partially_refunded: counts.partially_refunded ?? 0,
+        refunded: counts.refunded ?? 0,
       },
       relayed: this.relayed,
       rejected: Object.fromEntries(this.rejected),
@@ -218,7 +224,7 @@ export class RelayerService {
     if (row.signature && row.signature.toLowerCase() === req.signature.toLowerCase() && row.tx_hash) {
       return { orderId: row.id as Hex, status: row.status, txHash: row.tx_hash as Hex };
     }
-    if (row.status === "settled" || row.status === "pending") this.reject("already_settled");
+    if (["settled", "pending", "partially_refunded", "refunded"].includes(row.status)) this.reject("already_settled");
     if (row.status === "expired") this.reject("order_expired");
 
     // 3. amount matches
@@ -415,6 +421,7 @@ export class RelayerService {
   }
 
   recoverPending(releaseOrphanClaims = false) {
+    this.refunds.recoverPending(releaseOrphanClaims);
     void this.refreshBalance().catch(e => this.log("balance read failed", { error: String(e) }));
     for (const row of this.db.pendingOrders()) {
       if (!row.tx_hash) { if (releaseOrphanClaims) this.db.revertClaim(row.id); continue; }

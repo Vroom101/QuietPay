@@ -22,6 +22,12 @@ export interface OrderRow {
   settled_at: number | null;
 }
 
+export interface RefundRow {
+  id: string; order_id: string; merchant_id: string; amount: string; refund_index: number;
+  status: "pending" | "settled" | "failed"; signature: string; valid_after: number;
+  valid_before: number; tx_hash: string | null; failure_code: string | null; created_at: number;
+}
+
 export interface DeliveryRow {
   id: string;
   order_id: string;
@@ -33,6 +39,7 @@ export interface DeliveryRow {
 }
 
 export interface AttemptRow {
+  /** order_id is the work ID: a payment order ID or a refund ID. */
   hash: string; order_id: string; raw: string; nonce: number;
   gas: string; gas_price: string; sent_at: number; replacement: number;
 }
@@ -85,6 +92,14 @@ export class Db {
         nonce INTEGER NOT NULL, gas TEXT NOT NULL, gas_price TEXT NOT NULL,
         sent_at INTEGER NOT NULL, replacement INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS refunds (
+        id TEXT PRIMARY KEY, order_id TEXT NOT NULL, merchant_id TEXT NOT NULL,
+        amount TEXT NOT NULL, refund_index INTEGER NOT NULL, status TEXT NOT NULL,
+        signature TEXT NOT NULL, valid_after INTEGER NOT NULL, valid_before INTEGER NOT NULL,
+        tx_hash TEXT, failure_code TEXT, created_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_refund_active ON refunds(order_id,refund_index)
+        WHERE status IN ('pending','settled');
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
     const columns = this.raw.pragma("table_info(orders)") as { name: string }[];
@@ -149,7 +164,7 @@ export class Db {
   /** Sum of amounts this payer has pending or settled since `since` (unix seconds). */
   payerVolume(payer: string, since: number): bigint {
     const rows = this.raw
-      .prepare("SELECT amount FROM orders WHERE payer=? AND status IN ('pending','settled') AND COALESCE(payer_volume_at,created_at)>=?")
+      .prepare("SELECT amount FROM orders WHERE payer=? AND status IN ('pending','settled','partially_refunded','refunded') AND COALESCE(payer_volume_at,created_at)>=?")
       .all(payer.toLowerCase(), since) as { amount: string }[];
     return rows.reduce((a, r) => a + BigInt(r.amount), 0n);
   }
@@ -179,10 +194,10 @@ export class Db {
     return (this.raw.prepare("SELECT COALESCE(MAX(nonce)+1,0) n FROM relay_attempts").get() as { n: number }).n;
   }
 
-  saveAttempt(a: AttemptRow) {
+  saveAttempt(a: AttemptRow, target: "orders" | "refunds" = "orders") {
     this.raw.transaction(() => {
       this.raw.prepare(`INSERT INTO relay_attempts VALUES (@hash,@order_id,@raw,@nonce,@gas,@gas_price,@sent_at,@replacement)`).run(a);
-      this.setTxHash(a.order_id, a.hash);
+      this.raw.prepare(`UPDATE ${target} SET tx_hash=? WHERE id=?`).run(a.hash, a.order_id);
       const previous = this.attempts(a.order_id).filter(x => x.nonce === a.nonce && x.hash !== a.hash);
       for (const old of previous) this.raw.prepare("DELETE FROM spend WHERE tx_hash=?").run(old.hash);
       this.recordSpend(a.hash, a.sent_at, BigInt(a.gas) * BigInt(a.gas_price));
@@ -191,8 +206,23 @@ export class Db {
 
   reservedSpend(since: number): bigint {
     const rows = this.raw.prepare(`SELECT s.wei FROM spend s WHERE s.ts>=? OR EXISTS
-      (SELECT 1 FROM orders o WHERE o.status='pending' AND o.tx_hash=s.tx_hash)`).all(since) as { wei: string }[];
+      (SELECT 1 FROM orders o WHERE o.status='pending' AND o.tx_hash=s.tx_hash) OR EXISTS (SELECT 1 FROM refunds r WHERE r.status='pending' AND r.tx_hash=s.tx_hash)`).all(since) as { wei: string }[];
     return rows.reduce((sum, r) => sum + BigInt(r.wei), 0n);
+  }
+
+  getRefund(id: string): RefundRow | undefined {
+    return this.raw.prepare("SELECT * FROM refunds WHERE id=?").get(id.toLowerCase()) as RefundRow | undefined;
+  }
+  pendingRefunds(): RefundRow[] {
+    return this.raw.prepare("SELECT * FROM refunds WHERE status='pending'").all() as RefundRow[];
+  }
+  insertRefund(r: RefundRow) {
+    this.raw.prepare(`INSERT INTO refunds VALUES (@id,@order_id,@merchant_id,@amount,@refund_index,@status,
+      @signature,@valid_after,@valid_before,@tx_hash,@failure_code,@created_at)`).run(r);
+  }
+  refundTotals(orderId: string) {
+    const rows = this.raw.prepare("SELECT amount FROM refunds WHERE order_id=? AND status='settled'").all(orderId) as { amount: string }[];
+    return { amount: rows.reduce((v,r) => v + BigInt(r.amount), 0n), count: rows.length };
   }
 
   // ---- settings

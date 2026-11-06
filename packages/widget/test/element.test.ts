@@ -6,7 +6,8 @@ import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ERROR_CODES, ERROR_USER_MESSAGES, formatUsdt, recoverCheckoutSigner, type Order } from "@quietpay/shared";
 import { createMockRelayer } from "@quietpay/shared/mock-server";
-import { FIXTURE_ORDER_ID } from "@quietpay/shared/fixtures";
+import { pollOrder } from "../src/client.js";
+import { FIXTURE_ORDER_ID, orderSettled } from "@quietpay/shared/fixtures";
 import "../src/element.js";
 import type { QuietpayCheckout } from "../src/element.js";
 
@@ -190,5 +191,24 @@ describe("every relayer error code renders a message", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+describe("refunded checkout compatibility", () => {
+  it.each(["partially_refunded", "refunded"] as const)("shows %s as a receipt without offering payment again", async status => {
+    const o = { ...orderSettled, status, refunded: status === "refunded" ? "25000000" : "5000000", refundCount: 1 };
+    const mock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(o), { status: 200 }));
+    const el = mount(o.id);
+    const settled = vi.fn(), refunded = vi.fn();
+    el.addEventListener("quietpay:settled", settled);
+    el.addEventListener("quietpay:refunded", refunded);
+    try {
+      await until(() => !!el.shadowRoot?.querySelector("[data-testid=receipt]"));
+      expect(el.shadowRoot?.querySelector("button")).toBeNull();
+      expect(text(el)).toContain("Refunded:");
+      expect(settled).not.toHaveBeenCalled();
+      expect(refunded).toHaveBeenCalled();
+      expect((await pollOrder(base, o.id, { timeoutMs: 1 })).status).toBe(status);
+    } finally { el.remove(); mock.mockRestore(); }
   });
 });

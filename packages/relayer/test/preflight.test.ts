@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const client = vi.hoisted(() => ({ getChainId: vi.fn(), getCode: vi.fn(), getBalance: vi.fn(), readContract: vi.fn() }));
 vi.mock("viem", async importOriginal => ({ ...await importOriginal<typeof import("viem")>(), createPublicClient: () => client }));
 import { preflight } from "../src/preflight.js";
+import { REFUND_TAG } from "@quietpay/shared";
 import { makeCfg, PAYOUT } from "./helpers.js";
 
 beforeEach(() => {
@@ -9,6 +10,7 @@ beforeEach(() => {
   client.getCode.mockResolvedValue("0x1234");
   client.getBalance.mockResolvedValue(10n ** 18n);
   client.readContract.mockImplementation(async ({ functionName }) => {
+    if (functionName === "REFUND_TAG") return REFUND_TAG;
     if (functionName === "token") return makeCfg().usdt;
     if (functionName === "isRelayer") return true;
     if (functionName === "paused") return false;

@@ -28,7 +28,7 @@ describe("token facts", () => {
 });
 
 describe("errors", () => {
-  it("has the nine frozen codes, each with a status and plain message", () => {
+  it("has the payment and refund codes, each with a status and plain message", () => {
     expect(ERROR_CODES).toEqual([
       "order_not_found",
       "order_expired",
@@ -39,6 +39,7 @@ describe("errors", () => {
       "rate_limited",
       "simulation_failed",
       "fee_over_cap",
+      "insufficient_refund_balance",
     ]);
     for (const c of ERROR_CODES) {
       expect(ERROR_HTTP_STATUS[c]).toBeGreaterThanOrEqual(400);
