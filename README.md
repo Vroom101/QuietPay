@@ -87,6 +87,7 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 - `net_usdt` can be negative (the relay fee is not returned on a full refund).
 - Tokens sent directly to the router are not supported and cannot be recovered.
 - The relayer is a trusted gas sponsor: it can censor or pause, but cannot redirect funds or exceed the fee cap.
+- **The router owner is trusted.** The owner is the registry operator (a deployer key in this testnet MVP, not a cold or multi-sig key). The owner can change a merchant's payout address instantly with no merchant consent and no timelock, so *future* payments go to the new address; it can rotate a merchant's refund signer, allow or remove relayers, and pause the router. It cannot move funds after a payer has signed, and a pause only lets signed authorizations expire. Production would need a timelock or merchant-signed payout changes and a cold owner key, which means a new router.
 - The rate limiter is in memory; the gas loss budget is persisted.
 - Not done yet: hosted relayer, real browser checkout against the deployed router, relayer refund API and dashboard refund button, x402 agent settlement.
 

@@ -116,4 +116,21 @@ contract ExpectedLimitationsTest is Test {
         uint256 relayerGas = g1 - gasleft();
         assertGt(relayerGas, payerGas * 2); // the relayer pays more than twice what the payer spent
     }
+
+    /// R4 finding: the owner (the registry operator) can change a merchant's payout instantly with no merchant
+    /// consent and no timelock. The nonce binds the payout the relayer reads from the registry, so later payers
+    /// sign for the new address. Funds already signed for cannot be redirected. Accepted for the MVP and stated in
+    /// the README; fixing it needs a redeploy (timelock or merchant-signed payout change).
+    function test_LIMITATION_ownerCanRedirectFuturePaymentsWithoutMerchantConsent() public {
+        _setup(new MockAuthToken());
+        address evil = makeAddr("evilPayout");
+        vm.prank(owner);
+        router.setPayout(MERCHANT, evil);
+        bytes32 o = keccak256("o-redirect");
+        bytes memory sig = _sign(payerPk, payer, 5_000_000, router.computeNonce(MERCHANT, o, evil, 5_000_000, 0));
+        vm.prank(relayer);
+        router.pay(MERCHANT, o, payer, 5_000_000, 0, vA, vB, sig);
+        assertEq(usdt.balanceOf(evil), 5_000_000);
+        assertEq(usdt.balanceOf(payout), 0);
+    }
 }
