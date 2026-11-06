@@ -94,4 +94,26 @@ contract ExpectedLimitationsTest is Test {
         _pay(bytes32(0), 5_000_000, 0);
         assertEq(router.receipts(MERCHANT, bytes32(0)).value, 5_000_000);
     }
+
+    /// R2 finding: `pay` writes the receipt before `_pull`, so if the payer moves their USDT away (or cancels the
+    /// authorization) after the relayer simulated, the relayer's reverted tx still burns more gas than the payer's
+    /// one cheap action. Bounded off-chain (per-payer revert limits, first-time-payer caps, hourly loss budget).
+    function test_LIMITATION_payerCanMakeRelayerBurnMoreGasThanTheyPay() public {
+        _setup(new MockAuthToken());
+        bytes32 o = keccak256("o-grief");
+        bytes memory sig = _sign(payerPk, payer, 5_000_000, router.computeNonce(MERCHANT, o, payout, 5_000_000, 0));
+        uint256 bal = usdt.balanceOf(payer);
+        address away = makeAddr("elsewhere");
+        uint256 g0 = gasleft();
+        vm.prank(payer);
+        usdt.transfer(away, bal); // the payer's cheap grief action
+        uint256 payerGas = g0 - gasleft();
+        uint256 g1 = gasleft();
+        vm.prank(relayer);
+        try router.pay(MERCHANT, o, payer, 5_000_000, 0, vA, vB, sig) {
+            fail();
+        } catch {}
+        uint256 relayerGas = g1 - gasleft();
+        assertGt(relayerGas, payerGas * 2); // the relayer pays more than twice what the payer spent
+    }
 }
