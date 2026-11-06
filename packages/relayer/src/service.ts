@@ -1,3 +1,4 @@
+import { RefundService } from "./refunds.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { formatUnits, isAddress, type Hex } from "viem";
 import {
@@ -15,7 +16,7 @@ import {
 } from "@quietpay/shared";
 import type { WebhookEvent } from "@quietpay/shared/webhook";
 import { CLAIM_GRACE_SECONDS, OWNER_TIMEOUT_SECONDS, rowToOrder, type Db, type DbStatus, type OrderRow } from "./db.js";
-import { CANCEL_GAS, type ChainPort, type PayArgs, type SignedTx, type TxReceipt } from "./chain.js";
+import { CANCEL_GAS, type ChainPort, type ExtendedChainPort, type PayArgs, type SignedTx, type TxReceipt } from "./chain.js";
 import type { Config } from "./config.js";
 import { RateLimiter, clientKey } from "./ratelimit.js";
 import { webhookUrlProblem } from "./webhooks.js";
@@ -100,14 +101,17 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class RelayerService {
   readonly cfg: Config;
   readonly db: Db;
-  readonly chain: ChainPort;
+  readonly chain: ExtendedChainPort;
   readonly now: () => number;
   /** Random per-process token stored on every claim this process makes. */
   readonly owner: string = randomBytes(16).toString("hex");
   private readonly log: (msg: string, extra?: Record<string, unknown>) => void;
   private readonly ipLimiter: RateLimiter;
   private readonly orderLimiter: RateLimiter;
-  private readonly sendLock = new Mutex();
+  readonly sendLock = new Mutex();
+  readonly refunds: RefundService;
+  private monitor: NodeJS.Timeout | null = null;
+  private balanceWei: bigint | null = null;
   private readonly broadcastRetryMs: number;
   private relayed = 0;
   private readonly rejected = new Map<string, number>();
@@ -121,12 +125,13 @@ export class RelayerService {
   constructor(d: ServiceDeps) {
     this.cfg = d.cfg;
     this.db = d.db;
-    this.chain = d.chain;
+    this.chain = d.chain as ExtendedChainPort;
     this.now = d.now ?? (() => Math.floor(Date.now() / 1000));
     this.log = d.log ?? (() => undefined);
     this.broadcastRetryMs = d.broadcastRetryMs ?? 1000;
     this.ipLimiter = new RateLimiter(d.cfg.rateLimitPerMinute, 60_000, () => this.now() * 1000);
     this.orderLimiter = new RateLimiter(Math.max(5, Math.floor(d.cfg.rateLimitPerMinute / 2)), 60_000, () => this.now() * 1000);
+    this.refunds = new RefundService(this, d.log);
     this.heartbeat();
   }
 
@@ -155,13 +160,14 @@ export class RelayerService {
   // ------------------------------------------------------------------ views
 
   toOrder(row: OrderRow): Order {
-    return rowToOrder(row, {
+    const totals = this.db.refundTotals(row.id);
+    return { ...rowToOrder(row, {
       router: this.cfg.router,
       token: this.cfg.usdt,
       chainId: this.cfg.chainId,
       domain: this.cfg.tokenDomain,
       explorerBaseUrl: this.cfg.explorerBaseUrl,
-    });
+    }), refunded: totals.amount.toString(), refundedAmount: totals.amount.toString(), refundCount: totals.count };
   }
 
   getOrder(id: string): Order {
@@ -237,13 +243,21 @@ export class RelayerService {
   metrics(): MetricsResponse {
     const counts = this.db.countByStatus();
     const spent = this.db.spentSince(this.now() - HOUR);
+    const rows = this.db.raw.prepare("SELECT status,COUNT(*) count FROM x402_payments GROUP BY status").all() as { status: string; count: number }[];
+    const agents = Object.fromEntries(rows.map(r => [r.status, r.count]));
     return {
+      agentPayments: { settling: agents.settling ?? 0, settled: agents.settled ?? 0, failed: agents.failed ?? 0 },
+      balanceWbt: this.balanceWei === null ? null : formatUnits(this.balanceWei, 18),
+      lowBalance: this.balanceWei !== null && this.balanceWei < this.cfg.lowBalanceWei,
+      lowBalanceThresholdWbt: formatUnits(this.cfg.lowBalanceWei, 18),
       orders: {
         created: counts.created ?? 0,
         pending: counts.pending ?? 0,
         settled: counts.settled ?? 0,
         failed: counts.failed ?? 0,
         expired: counts.expired ?? 0,
+        partially_refunded: counts.partially_refunded ?? 0,
+        refunded: counts.refunded ?? 0,
       },
       relayed: this.relayed,
       rejected: Object.fromEntries(this.rejected),
@@ -299,6 +313,17 @@ export class RelayerService {
 
   // ------------------------------------------------------------------ relay
 
+  recordRejection(code: string) { this.rejected.set(code, (this.rejected.get(code) ?? 0) + 1); }
+  recordRelay() { this.relayed += 1; }
+  async refreshBalance() { this.balanceWei = await this.chain.getBalance(); }
+  startMonitor() {
+    if (this.monitor) return;
+    this.recoverPending();
+    this.refunds.recoverPending(true);
+    this.monitor = this.startReconciler();
+  }
+  stopMonitor() { if (this.monitor) clearInterval(this.monitor); this.monitor = null; }
+  async recoverOrder(_id: string) { await this.reconcile(); }
   private reject(code: ErrorCode, message?: string): never {
     this.rejected.set(code, (this.rejected.get(code) ?? 0) + 1);
     throw new QuietpayError(code, message);
@@ -359,7 +384,7 @@ export class RelayerService {
     if (row.signature && row.signature.toLowerCase() === req.signature.toLowerCase() && row.tx_hash) {
       return { orderId: row.id as Hex, status: publicStatus(row.status), txHash: row.tx_hash as Hex };
     }
-    if (row.status === "settled" || isUnresolved(row.status)) this.reject("already_settled");
+    if (["settled", "partially_refunded", "refunded"].includes(row.status) || isUnresolved(row.status)) this.reject("already_settled");
     if (row.status === "expired") this.reject("order_expired");
 
     // 3. amount matches
@@ -528,7 +553,7 @@ export class RelayerService {
         const ftShare = (this.cfg.lossBudgetWei * BigInt(this.cfg.firstTimePayerLossSharePercent)) / 100n;
         const ftLost = this.db.firstTimeRevertWei(nowS - HOUR);
         const ftExcess = ftLost > ftShare ? ftLost - ftShare : 0n;
-        if (this.db.spentSince(nowS - HOUR) - ftExcess + estimate > this.cfg.lossBudgetWei) {
+        if (this.db.reservedSpend(nowS - HOUR) - ftExcess + estimate > this.cfg.lossBudgetWei) {
           this.reject("relayer_paused", "Payments are paused briefly. Please try again later.");
         }
         const share = (this.cfg.lossBudgetWei * BigInt(this.cfg.payerLossSharePercent)) / 100n;
@@ -760,7 +785,8 @@ export class RelayerService {
    * re-attached; applyReceipt only transitions an order still unresolved on that same hash, so this cannot
    * emit a second event. broadcast_unknown orders are left to reconcile().
    */
-  recoverPending() {
+  recoverPending(_releaseOrphans = false) {
+    this.refunds.recoverPending(_releaseOrphans);
     this.releaseStaleClaims();
     for (const row of this.db.pendingOrders()) void this.track(row.id, row.tx_hash as Hex);
   }
@@ -787,6 +813,7 @@ export class RelayerService {
    * Also heartbeats and sweeps stale claims. Overlapping calls are no-ops.
    */
   async reconcile(): Promise<{ settled: number; failed: number; rebroadcast: number }> {
+    this.refunds.recoverPending();
     const out = { settled: 0, failed: 0, rebroadcast: 0 };
     if (this.reconciling) return out;
     this.reconciling = true;

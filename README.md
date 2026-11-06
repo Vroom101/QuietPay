@@ -93,3 +93,13 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 ## Security
 
 Pen-tested in several rounds by AI-driven attackers (no human audit); see `docs/lead/pentest-round-1.md` and `docs/lead/attack-log.md`.
+
+### Backend integration extensions
+
+The merchant server adds authenticated partial/full refund requests and durable
+SQLite receipt confirmation while preserving the hardened checkout flow.
+The combined facilitator, scripted agent and paid API remain available.
+The merchant ledger HTTP API is namespaced under `@quietpay/indexer/api`; the
+main indexer CLI and independent verifier retain their existing interfaces.
+See [the integration handoff](docs/b/frontend-integration.md) and
+[merchant refund setup](docs/b/dashboard-refunds.md).

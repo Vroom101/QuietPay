@@ -1,3 +1,5 @@
+import { ReceiptStore } from "./receipt-store.js";
+import { registerMerchantRefunds, type RefundSdk, type MerchantRefundConfig } from "./merchant-refunds.js";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -6,9 +8,11 @@ import { formatUsdt } from "@quietpay/shared";
 import { CartError, priceCart } from "./catalog.js";
 
 /** The frozen merchant-SDK surface this server relies on. */
-export type MerchantSdk = Pick<typeof SdkApi, "createOrder" | "getOrder" | "verifyWebhook">;
+export type MerchantSdk = Pick<typeof SdkApi, "createOrder" | "getOrder" | "verifyWebhook"> & Partial<RefundSdk>;
 
 export interface StoreConfig {
+  refunds?: MerchantRefundConfig;
+  receiptDatabasePath?: string;
   baseUrl: string;
   apiKey: string;
   merchantId: `0x${string}`;
@@ -112,6 +116,10 @@ function loadState(file: string | undefined): PersistedState {
 
 export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   const app: FastifyInstance = Fastify({ logger: false });
+  const receipts = config.receiptDatabasePath ? new ReceiptStore(config.receiptDatabasePath,
+    JSON.stringify([config.baseUrl.replace(/\/+$/, ""), config.merchantId.toLowerCase()])) : undefined;
+  app.addHook("onClose", async () => receipts?.close());
+  app.get("/api/checkout/methods", async () => ({ methods: [{ id: "usdt", name: "Tether USD", symbol: "USDT", simulated: false }] }));
   const state = loadState(config.stateFile);
   const paid = new Map<string, PaidRecord>(Object.entries(state.paid));
   const seenEvents = new Map<string, number>(Object.entries(state.seenEvents));
@@ -198,7 +206,7 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
         return reply.code(400).send({ error: "event is for a different merchant" });
       }
 
-      if (seenEvents.has(event.id)) return { received: true, duplicate: true };
+      if (receipts?.hasEvent(event.id) || seenEvents.has(event.id)) return { received: true, duplicate: true };
       // Claim the id before any await so a concurrent duplicate delivery is treated as a duplicate.
       seenEvents.set(event.id, Date.now());
 
@@ -217,7 +225,7 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
         const confirmed =
           order.id.toLowerCase() === orderId.toLowerCase() &&
           order.merchantId.toLowerCase() === merchantId &&
-          order.status === "settled" &&
+          ["settled", "partially_refunded", "refunded"].includes(order.status) &&
           order.amount === event.data.amount;
         if (confirmed) {
           paid.set(orderId.toLowerCase(), {
@@ -232,6 +240,7 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
           app.log.warn({ eventId: event.id, orderId }, "payment.settled webhook did not match the relayer's order; ignored");
         }
       }
+      receipts?.record(event.id, paid.get(event.data.orderId.toLowerCase()));
       persist();
       return { received: true };
     });
@@ -239,9 +248,10 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
 
   app.get("/api/orders/:id/paid", async (req) => {
     const id = (req.params as { id: string }).id.toLowerCase();
-    const rec = paid.get(id);
+    const rec = receipts?.get(id) ?? paid.get(id);
     return rec ? { paid: true, ...rec } : { paid: false };
   });
 
+  registerMerchantRefunds(app, sdk, config);
   return app;
 }

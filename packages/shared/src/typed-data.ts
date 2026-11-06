@@ -150,9 +150,11 @@ export interface RefundAuthorizationInput extends Omit<CheckoutAuthorizationInpu
 }
 
 /** Same ReceiveWithAuthorization shape as checkout: from = refundSigner, to = router, value = refund amount. */
-export function buildRefundAuthorization(i: RefundAuthorizationInput) {
+export function buildRefundAuthorization(i: RefundAuthorizationInput | (Omit<RefundAuthorizationInput, "nonce"> & {
+  merchantId: Hex; orderId: Hex; payer: Address; refundIndex: bigint | number;
+})) {
   const { refundSigner, amount, ...rest } = i;
-  return buildCheckoutAuthorization({ ...rest, from: refundSigner, value: amount });
+  return buildCheckoutAuthorization({ ...rest, nonce: "nonce" in i ? i.nonce : computeRefundNonce(i), from: refundSigner, value: amount });
 }
 
 export function recoverRefundSigner(input: RefundAuthorizationInput, signature: Hex): Promise<Address> {

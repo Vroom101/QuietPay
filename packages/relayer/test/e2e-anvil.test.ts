@@ -25,7 +25,7 @@ import { makeCfg } from "./helpers.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const out = process.env.CONTRACTS_OUT ?? resolve(here, "../../../contracts/out");
 const routerArtifact = resolve(out, "PaymentRouter.sol/PaymentRouter.json");
-const usdtArtifact = resolve(out, "MockUSDT.sol/MockUSDT.json");
+const usdtArtifact = resolve(out, "MockAuthToken.sol/MockAuthToken.json");
 const haveArtifacts = existsSync(routerArtifact) && existsSync(usdtArtifact);
 
 // Standard anvil dev keys (public, test-only).

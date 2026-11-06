@@ -33,4 +33,32 @@
 - 15:00 L5/L7: scripts (fund-payer, tampered samples, qualify-check), feedback, README
 - 15:40 L2 property tests, removed-log tests, live sample re-verified
 - 18:40 final report written; mutation sweep killed (low memory), recorded in blocked.md
+
+## Backend branch reconciliation with main
+
+Main's contract, ABI, v2 pay nonces, hardened recovery, widget verification,
+independent verifier, live deployment records and security suites take precedence.
+The branch adds merchant refund endpoints and dashboard controls, persisted
+merchant receipts, x402 facilitator/agent and paid API, plus a namespaced ledger
+HTTP API. See ../b/frontend-integration.md for the merged API contract.
+Older branch recovery tests were replaced with extension integration tests against
+main's owner/hash-scoped state machine; main's security suites were retained.
+Fresh Solidity/Anvil validation remains for CI on this Windows environment.
+
+Main round 8 is also retained: qualifying-only relayer startup, RPC node chain
+check, failed-auth throttling, 24-character merchant keys, bounded webhook
+verification tolerance, recursive secret exclusions in Docker builds.
+
+Merge validation: 1,117 local tests passed across the workspace (final shared
+security-suite rerun included); 12 Anvil/live-RPC tests skipped. All workspace
+TypeScript checks and widget/dashboard/store builds passed. Foundry/Anvil
+execution remains for CI; no new live transactions were submitted.
+
+Round 9 from main retained: known-good authenticated callers remain usable
+under failed-auth throttling, and webhook delivery has bounded concurrency
+with per-merchant/per-host fairness. Refund routes use the same auth guards.
+
+After round 9: 1,149 tests passed across the current workspace suites (the
+affected shared/SDK/relayer/facilitator suites were rerun); 12 optional tests
+remain skipped locally.
 - 20:40 finish run T0: baseline last green (relayer 324, shared 240, verifier 139, Foundry 118); gh unavailable so CI not read

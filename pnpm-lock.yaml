@@ -15,6 +15,34 @@ importers:
         specifier: 2.57.16
         version: 2.57.16(typescript@5.9.3)(zod@3.25.76)
 
+  apps/agent-demo:
+    dependencies:
+      '@quietpay/agent-client':
+        specifier: workspace:*
+        version: link:../../packages/agent-client
+      '@quietpay/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.15
+      viem:
+        specifier: ^2.21.0
+        version: 2.57.16(typescript@5.9.3)(zod@3.25.76)
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
   apps/demo-store:
     dependencies:
       '@quietpay/merchant-sdk':
@@ -26,6 +54,9 @@ importers:
       '@quietpay/widget':
         specifier: workspace:*
         version: link:../../packages/widget
+      better-sqlite3:
+        specifier: ^11.5.0
+        version: 11.10.0
       fastify:
         specifier: ^4.28.0
         version: 4.29.1
@@ -38,7 +69,13 @@ importers:
       react-router-dom:
         specifier: ^6.26.0
         version: 6.30.6(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      viem:
+        specifier: ^2.21.0
+        version: 2.57.16(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.11
+        version: 7.6.13
       '@types/node':
         specifier: ^20.14.0
         version: 20.19.43
@@ -103,6 +140,9 @@ importers:
       autoprefixer:
         specifier: ^10.4.20
         version: 10.6.2(postcss@8.5.32)
+      jsdom:
+        specifier: ^25.0.0
+        version: 25.0.1
       postcss:
         specifier: ^8.4.45
         version: 8.5.32
@@ -119,6 +159,96 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
 
+  apps/paid-api:
+    dependencies:
+      '@quietpay/merchant-sdk':
+        specifier: workspace:*
+        version: link:../../packages/merchant-sdk
+      '@quietpay/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      fastify:
+        specifier: ^5.1.0
+        version: 5.12.8
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.15
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@quietpay/relayer':
+        specifier: workspace:*
+        version: link:../../packages/relayer
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
+  packages/agent-client:
+    dependencies:
+      '@quietpay/shared':
+        specifier: workspace:*
+        version: link:../shared
+      viem:
+        specifier: ^2.21.0
+        version: 2.57.16(typescript@5.9.3)(zod@3.25.76)
+    devDependencies:
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
+  packages/facilitator:
+    dependencies:
+      '@quietpay/relayer':
+        specifier: workspace:*
+        version: link:../relayer
+      '@quietpay/shared':
+        specifier: workspace:*
+        version: link:../shared
+      fastify:
+        specifier: ^5.1.0
+        version: 5.12.8
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.15
+      viem:
+        specifier: ^2.21.0
+        version: 2.57.16(typescript@5.9.3)(zod@3.25.76)
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@quietpay/agent-client':
+        specifier: workspace:*
+        version: link:../agent-client
+      '@quietpay/agent-demo':
+        specifier: workspace:*
+        version: link:../../apps/agent-demo
+      '@quietpay/indexer':
+        specifier: workspace:*
+        version: link:../indexer
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
   packages/indexer:
     dependencies:
       '@quietpay/shared':
@@ -127,6 +257,9 @@ importers:
       better-sqlite3:
         specifier: ^11.5.0
         version: 11.10.0
+      fastify:
+        specifier: ^5.1.0
+        version: 5.12.8
       tsx:
         specifier: ^4.19.0
         version: 4.23.15
@@ -155,6 +288,12 @@ importers:
       '@quietpay/shared':
         specifier: workspace:*
         version: link:../shared
+      viem:
+        specifier: ^2.21.0
+        version: 2.57.16(typescript@5.9.3)(zod@3.25.76)
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^20.14.0

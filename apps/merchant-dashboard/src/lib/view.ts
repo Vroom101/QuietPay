@@ -44,5 +44,7 @@ export const STATUS_STYLES: Record<OrderStatus, string> = {
   pending: "bg-amber-100 text-amber-800",
   settled: "bg-emerald-100 text-emerald-800",
   failed: "bg-red-100 text-red-800",
+  partially_refunded: "bg-amber-100 text-amber-800",
+  refunded: "bg-stone-200 text-stone-700",
   expired: "bg-stone-200 text-stone-500",
 };

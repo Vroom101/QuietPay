@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+﻿import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { ZodError } from "zod";
 import {
@@ -6,6 +6,7 @@ import {
   CreateOrderRequest,
   QuietpayError,
   RelayPayRequest,
+  RelayRefundRequest,
   errorBody,
   type ErrorCode,
 } from "@quietpay/shared";
@@ -68,7 +69,7 @@ export function buildServer(svc: RelayerService): FastifyInstance {
   // ip key -> credential digest -> expiry (inner insertion order = age); credIps: digest -> ip keys it holds (oldest first).
   const knownGood = new Map<string, Map<string, number>>();
   const credIps = new Map<string, Set<string>>();
-  const digest = (kind: string, cred: string) => createHash("sha256").update(kind).update(" ").update(cred).digest("hex");
+  const digest = (kind: string, cred: string) => createHash("sha256").update(kind).update("\0").update(cred).digest("hex");
   const isKnown = (req: FastifyRequest, d: string) => {
     const e = knownGood.get(clientKey(ipOf(req)))?.get(d);
     return e !== undefined && e > Date.now();
@@ -191,6 +192,27 @@ export function buildServer(svc: RelayerService): FastifyInstance {
   app.post("/v1/relay/pay", async (req) => {
     const body = RelayPayRequest.parse(req.body);
     return svc.relayPay(body, { ip: ipOf(req) });
+  });
+
+  app.get<{ Params: { id: string } }>("/v1/orders/:id/refund-context", async (req, reply) => {
+    const merchant = merchantFromKey(req, reply);
+    if (!merchant) return reply;
+    return svc.refunds.context(merchant as `0x${string}`, req.params.id as `0x${string}`);
+  });
+  app.get<{ Params: { id: string } }>("/v1/orders/:id/refunds", async (req, reply) => {
+    const merchant = merchantFromKey(req, reply);
+    if (!merchant) return reply;
+    return { refunds: svc.refunds.list(merchant, req.params.id) };
+  });
+  app.post("/v1/relay/refund", async (req, reply) => {
+    const merchant = merchantFromKey(req, reply);
+    if (!merchant) return reply;
+    return svc.refunds.submit(merchant as `0x${string}`, RelayRefundRequest.parse(req.body), ipOf(req));
+  });
+  app.get<{ Params: { id: string } }>("/v1/refunds/:id", async (req, reply) => {
+    const merchant = merchantFromKey(req, reply);
+    if (!merchant) return reply;
+    return svc.refunds.get(merchant, req.params.id);
   });
 
   app.get("/v1/metrics", async (req, reply) => {

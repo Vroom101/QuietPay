@@ -1,5 +1,13 @@
+import { privateKeyToAccount } from "viem/accounts";
 import {
+  ListOrdersResponse,
   CreateOrderRequest,
+  RefundContext,
+  Refund,
+  RelayRefundRequest,
+  ListRefundsResponse,
+  buildRefundAuthorization,
+  token,
   ErrorResponse,
   Order,
   type ErrorCode,
@@ -13,7 +21,7 @@ import {
   WEBHOOK_MAX_TOLERANCE_SECONDS,
 } from "@quietpay/shared/webhook";
 
-export type { Order, WebhookEvent };
+export type { Order, WebhookEvent, Refund, RefundContext };
 export { WEBHOOK_SIGNATURE_HEADER };
 
 type Hex = `0x${string}`;
@@ -143,18 +151,81 @@ export function verifyWebhook(opts: VerifyWebhookOptions): WebhookEvent {
   return parsed.data;
 }
 
-/**
- * Refunds are a P1 feature. This stub fixes the call shape so merchants can code against it;
- * it always throws until refunds ship.
- */
 export interface RefundOptions {
   baseUrl: string;
   apiKey: string;
+  merchantId: Hex;
   orderId: Hex;
-  /** Base units. Omit for a full refund. */
+  router: Hex;
+  /** Server-only merchant key. Never place this in a browser or send it to the relayer. */
+  refundSignerPrivateKey: Hex;
+  /** Base units. Omit to refund the full remaining amount. */
   amount?: string;
+  /** Expected sequential index; guards against accidentally refunding twice on an SDK retry. */
+  refundIndex: number;
+  chainId?: number;
+  tokenAddress?: Hex;
+  tokenDomain?: { name: string; version: string };
+  fetch?: typeof fetch;
+  nowSeconds?: number;
 }
 
-export async function refund(_opts: RefundOptions): Promise<never> {
-  throw new Error("refund() is not implemented yet. Refunds ship in P1.");
+export async function getRefundContext(opts: { baseUrl: string; apiKey: string; orderId: Hex; fetch?: typeof fetch }): Promise<RefundContext> {
+  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/orders/${opts.orderId}/refund-context`, {
+    headers: { authorization: `Bearer ${opts.apiKey}` },
+  });
+  return parse(res, RefundContext);
+}
+
+export async function getRefund(opts: { baseUrl: string; apiKey: string; refundId: Hex; fetch?: typeof fetch }): Promise<Refund> {
+  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/refunds/${opts.refundId}`, {
+    headers: { authorization: `Bearer ${opts.apiKey}` },
+  });
+  return parse(res, Refund);
+}
+
+/** Recover a refund ID after an uncertain POST response using the expected index. */
+export async function listRefunds(opts: { baseUrl: string; apiKey: string; orderId: Hex; fetch?: typeof fetch }): Promise<Refund[]> {
+  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/orders/${opts.orderId}/refunds`, {
+    headers: { authorization: `Bearer ${opts.apiKey}` },
+  });
+  return (await parse(res, ListRefundsResponse)).refunds;
+}
+
+/** Signs only the pinned router/token/network and the specified order's refund index. */
+export async function refund(opts: RefundOptions): Promise<Refund> {
+  const c = await getRefundContext(opts);
+  if (c.orderId.toLowerCase() !== opts.orderId.toLowerCase() || c.merchantId.toLowerCase() !== opts.merchantId.toLowerCase()
+    || c.router.toLowerCase() !== opts.router.toLowerCase() || c.chainId !== (opts.chainId ?? token.chainId)
+    || c.token.toLowerCase() !== (opts.tokenAddress ?? token.address).toLowerCase()
+    || c.domain.name !== (opts.tokenDomain ?? token.eip712Domain).name || c.domain.version !== (opts.tokenDomain ?? token.eip712Domain).version) {
+    throw new Error("Refund context does not match the configured merchant, order, router, token or network.");
+  }
+  if (c.refundIndex !== opts.refundIndex) throw new Error("Refund index changed. Check the original refund status before creating another refund.");
+  const account = privateKeyToAccount(opts.refundSignerPrivateKey);
+  if (account.address.toLowerCase() !== c.refundSigner.toLowerCase()) throw new Error("Refund key does not match the merchant refundSigner.");
+  const amount = opts.amount ?? (BigInt(c.amountPaid) - BigInt(c.refunded)).toString();
+  const now = opts.nowSeconds ?? Math.floor(Date.now() / 1000);
+  if (!/^[1-9][0-9]*$/.test(amount) || BigInt(amount) + BigInt(c.refunded) > BigInt(c.amountPaid)) throw new Error("Invalid refund amount.");
+  if (BigInt(amount) > BigInt(c.refundBalance)) throw new QuietpayApiError(422, "insufficient_refund_balance", "Fund the merchant refundSigner before refunding.");
+  const validAfter = now - 5, validBefore = now + 300;
+  const signature = await account.signTypedData(buildRefundAuthorization({
+    merchantId: opts.merchantId, orderId: opts.orderId, payer: c.payer as Hex,
+    refundSigner: account.address, router: opts.router, amount: BigInt(amount), refundIndex: BigInt(opts.refundIndex),
+    validAfter: BigInt(validAfter), validBefore: BigInt(validBefore), chainId: c.chainId, token: c.token as Hex,
+    domainName: c.domain.name, domainVersion: c.domain.version,
+  }));
+  const body = RelayRefundRequest.parse({ orderId: opts.orderId, amount, refundIndex: opts.refundIndex, validAfter, validBefore, signature });
+  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/relay/refund`, {
+    method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${opts.apiKey}` }, body: JSON.stringify(body),
+  });
+  return parse(res, Refund);
+}
+
+export { paywall, type PaywallOptions } from "./paywall.js";
+
+/** Lists only the authenticated merchant's orders. Call on the merchant server. */
+export async function listOrders(opts: { baseUrl: string; apiKey: string; fetch?: typeof fetch }): Promise<Order[]> {
+  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/orders`, { headers: { authorization: `Bearer ${opts.apiKey}` } });
+  return (await parse(res, ListOrdersResponse)).orders;
 }

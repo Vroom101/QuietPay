@@ -286,7 +286,7 @@ export async function pollOrder(relayerUrl: string, orderId: string, opts: PollO
   for (;;) {
     const o = await fetchOrder(relayerUrl, orderId);
     opts.onUpdate?.(o);
-    if (o.status === "settled" || o.status === "failed" || o.status === "expired") return o;
+    if (["settled", "partially_refunded", "refunded", "failed", "expired"].includes(o.status)) return o;
     if (Date.now() >= deadline) throw new WidgetError("timeout", "timeout");
     await new Promise((r) => setTimeout(r, interval));
   }

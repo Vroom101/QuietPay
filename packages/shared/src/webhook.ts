@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { Address, Amount, Bytes32, TxHash } from "./schemas.js";
 
-export const WEBHOOK_EVENT_TYPES = ["payment.settled", "payment.failed"] as const;
+export const WEBHOOK_EVENT_TYPES = ["payment.settled", "payment.failed", "payment.refunded"] as const;
 export const WebhookEventType = z.enum(WEBHOOK_EVENT_TYPES);
 export type WebhookEventType = z.infer<typeof WebhookEventType>;
 
@@ -21,7 +21,16 @@ export const WebhookEvent = z.object({
     txHash: TxHash.optional(),
     reference: z.string().optional(),
     failureCode: z.string().optional(),
+    refundId: Bytes32.optional(),
+    refundAmount: Amount.optional(),
+    totalRefunded: Amount.or(z.literal("0")).optional(),
+    refundIndex: z.number().int().nonnegative().optional(),
   }),
+}).superRefine((event, ctx) => {
+  if (event.type !== "payment.refunded") return;
+  for (const field of ["refundId", "refundAmount", "totalRefunded", "refundIndex"] as const) {
+    if (event.data[field] === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["data", field], message: "Refund event field required" });
+  }
 });
 export type WebhookEvent = z.infer<typeof WebhookEvent>;
 

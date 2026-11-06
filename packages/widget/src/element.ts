@@ -168,7 +168,7 @@ export class QuietpayCheckout extends LitElement {
 
   private showOrder(o: Order) {
     this.order = o;
-    if (o.status === "settled") {
+    if (["settled", "partially_refunded", "refunded"].includes(o.status)) {
       this.view = "settled";
       this.emit("quietpay:settled", { order: o });
     } else if (o.status === "expired") {

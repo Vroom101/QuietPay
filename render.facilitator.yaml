@@ -1,0 +1,58 @@
+# Render blueprint for the combined relayer/facilitator and paid demo API. Secrets are set in the Render dashboard, never here.
+services:
+  - type: web
+    name: quietpay-relayer
+    runtime: docker
+    dockerfilePath: ./packages/facilitator/Dockerfile
+    dockerContext: .
+    healthCheckPath: /v1/health
+    disk: { name: data, mountPath: /data, sizeGB: 1 }
+    envVars:
+      - { key: CHAIN_ID, value: "1874" }
+      - { key: RPC_URL, value: https://rpc.ankr.com/whitechain_testnet }
+      - {
+          key: USDT_ADDRESS,
+          value: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7",
+        }
+      - { key: DATABASE_PATH, value: /data/quietpay.db }
+      - { key: ROUTER_ADDRESS, sync: false }
+      - { key: RELAYER_PRIVATE_KEY, sync: false }
+      - { key: OPERATOR_TOKEN, sync: false }
+      - { key: MERCHANT_API_KEYS, sync: false }
+      - { key: WEBHOOK_SECRET, sync: false }
+      - { key: LOSS_BUDGET_WBT_PER_HOUR, value: "0.05" }
+      - { key: PAYER_CAP_USDT, value: "100" }
+      # Render terminates TLS in one proxy hop; without this every client shares one rate-limit key.
+      - { key: TRUST_PROXY_HOPS, value: "1" }
+      - { key: MAX_GAS_PRICE, sync: false }
+      - { key: EXPLORER_BASE_URL, sync: false }
+      - { key: MAX_GAS_LIMIT, value: "500000" }
+      - { key: LOW_BALANCE_WBT, value: "0.01" }
+      - { key: PENDING_RETRY_SECONDS, value: "30" }
+      - { key: MAX_REPLACEMENTS, value: "3" }
+      - { key: PAID_API_PUBLIC_URL, sync: false }
+      - { key: FACILITATOR_PAYTO, sync: false }
+      - { key: FACILITATOR_MERCHANT_ID, sync: false }
+      - { key: X402_QUOTE_AMOUNT, value: "10000" }
+      - { key: X402_SIGNAL_AMOUNT, value: "20000" }
+      - { key: X402_SETTLEMENT_WAIT_MS, value: "5000" }
+  - type: web
+    name: quietpay-paid-api
+    runtime: docker
+    dockerfilePath: ./apps/paid-api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - { key: CHAIN_ID, value: "1874" }
+      - {
+          key: USDT_ADDRESS,
+          value: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7",
+        }
+      - { key: PAID_API_PORT, value: "8790" }
+      - { key: PAID_API_PUBLIC_URL, sync: false }
+      - { key: FACILITATOR_URL, sync: false }
+      - { key: FACILITATOR_PAYTO, sync: false }
+      - { key: FACILITATOR_MERCHANT_ID, sync: false }
+      - { key: QUIETPAY_API_KEY, sync: false }
+      - { key: X402_QUOTE_AMOUNT, value: "10000" }
+      - { key: X402_SIGNAL_AMOUNT, value: "20000" }

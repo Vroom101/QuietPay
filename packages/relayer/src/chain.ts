@@ -1,3 +1,5 @@
+import { chainExtensions, receiptTransfers, type ChainExtensions, type PreparedTx } from "./chain-extensions.js";
+export type { PreparedTx, TransferArgs, RefundArgs, OrderReceipt } from "./chain-extensions.js";
 import {
   TransactionNotFoundError,
   TransactionReceiptNotFoundError,
@@ -39,6 +41,7 @@ export interface TxReceipt {
    * tell a payer-caused revert from an Expired revert caused by the relayer delaying the tx). Optional.
    */
   blockTimestamp?: bigint;
+  transfers?: ReturnType<typeof receiptTransfers>;
 }
 
 /** A pay transaction signed locally. Nothing has been sent yet; `nonce` is reserved by the NonceManager. */
@@ -89,6 +92,8 @@ export interface ChainPort {
   signCancel?(nonce: number, gasPrice: bigint): Promise<SignedTx>;
 }
 
+export type ExtendedChainPort = ChainPort & ChainExtensions & { preparePay(args: PayArgs, gas: bigint, gasPrice: bigint, nonce?: number): Promise<PreparedTx> };
+
 /** Gas of a plain value transfer (the cancel / gap-filling self-transfer). */
 export const CANCEL_GAS = 21_000n;
 
@@ -131,7 +136,7 @@ export class NonceManager {
   }
 }
 
-export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; relayerKey: Hex }): ChainPort {
+export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; relayerKey: Hex; nonceFloor?: () => number }): ExtendedChainPort {
   const chain = defineChain({
     id: cfg.chainId,
     name: "Whitechain Sepolia",
@@ -140,12 +145,20 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
   });
   const account: PrivateKeyAccount = privateKeyToAccount(cfg.relayerKey);
   const pub: PublicClient = createPublicClient({ chain, transport: http(cfg.rpcUrl) });
-  const nonces = new NonceManager(() => pub.getTransactionCount({ address: account.address, blockTag: "pending" }));
+  const nonces = new NonceManager(async () => Math.max(await pub.getTransactionCount({ address: account.address, blockTag: "pending" }), cfg.nonceFloor?.() ?? 0));
   const router = cfg.router;
   const argList = (a: PayArgs) =>
     [a.merchantId, a.orderId, a.payer, a.value, a.fee, a.validAfter, a.validBefore, a.signature] as const;
-  const toReceipt = async (r: { status: "success" | "reverted"; gasUsed: bigint; effectiveGasPrice: bigint; blockNumber: bigint }): Promise<TxReceipt> => {
+  const prepare = async (data: Hex, to: Hex, gas: bigint, gasPrice: bigint, explicitNonce?: number): Promise<PreparedTx> => {
+    const sign = async (nonce: number) => {
+      const raw = await account.signTransaction({ type: "legacy", chainId: cfg.chainId, to, data, gas, gasPrice, nonce, value: 0n });
+      return { hash: keccak256(raw), raw, nonce, gas, gasPrice };
+    };
+    return explicitNonce === undefined ? nonces.run(sign) : sign(explicitNonce);
+  };
+  const toReceipt = async (r: { status: "success" | "reverted"; gasUsed: bigint; effectiveGasPrice: bigint; blockNumber: bigint; logs?: Awaited<ReturnType<typeof pub.getTransactionReceipt>>["logs"] }): Promise<TxReceipt> => {
     const out: TxReceipt = { status: r.status, gasUsed: r.gasUsed, effectiveGasPrice: r.effectiveGasPrice, blockNumber: r.blockNumber };
+    if (r.logs) out.transfers = receiptTransfers(r.logs);
     if (r.status === "reverted") {
       // Only reverts need the block time (revert attribution); a failed lookup just leaves it unknown.
       try {
@@ -158,6 +171,8 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
   };
 
   return {
+    ...chainExtensions(pub, router, account.address, prepare),
+    preparePay: (a,gas,price,nonce) => prepare(encodeFunctionData({ abi: paymentRouterAbi, functionName: "pay", args: argList(a) }),router,gas,price,nonce),
     relayerAddress: account.address,
     async getMerchant(merchantId) {
       const [payout, refundSigner, maxRelayFee] = (await pub.readContract({

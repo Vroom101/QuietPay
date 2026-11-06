@@ -1,4 +1,10 @@
-import { ErrorResponse, ListOrdersResponse, type Order } from "@quietpay/shared";
+import {
+  ErrorResponse,
+  ListOrdersResponse,
+  MerchantRefundView,
+  MerchantRefundOperation,
+  type Order,
+} from "@quietpay/shared";
 import {
   FIXTURE_PAYER,
   makeOrder,
@@ -11,7 +17,8 @@ import {
 
 /** Local stand-in for GET /v1/orders (the mock relayer does not serve it). Toggled by VITE_USE_FIXTURES=1. */
 export function fixtureOrders(): Order[] {
-  const id = (n: number) => ("0x" + n.toString(16).padStart(64, "0")) as `0x${string}`;
+  const id = (n: number) =>
+    ("0x" + n.toString(16).padStart(64, "0")) as `0x${string}`;
   const base = orderSettled.createdAt;
   return [
     orderSettled,
@@ -34,32 +41,133 @@ export function fixtureOrders(): Order[] {
   ].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-export class DashboardError extends Error {}
+export class DashboardError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
+}
 
 export interface ListOptions {
-  relayerUrl: string;
+  relayerUrl?: string;
+  merchantUrl?: string;
   apiKey: string;
   useFixtures?: boolean;
 }
 
 export async function listOrders(opts: ListOptions): Promise<Order[]> {
   if (opts.useFixtures) return fixtureOrders();
-  if (!opts.apiKey) throw new DashboardError("Enter your API key to load orders.");
+  if (!opts.apiKey)
+    throw new DashboardError(
+      "Enter your dashboard access token to load orders.",
+    );
+  if (opts.merchantUrl)
+    return (
+      await merchantRequest(
+        { merchantUrl: opts.merchantUrl, apiKey: opts.apiKey },
+        "/orders",
+        ListOrdersResponse,
+      )
+    ).orders;
   let res: Response;
   try {
-    res = await fetch(`${opts.relayerUrl.replace(/\/+$/, "")}/v1/orders`, {
-      headers: { authorization: `Bearer ${opts.apiKey}` },
-    });
+    res = await fetch(
+      opts.merchantUrl
+        ? `${opts.merchantUrl.replace(/\/+$/, "")}/orders`
+        : `${opts.relayerUrl!.replace(/\/+$/, "")}/v1/orders`,
+      {
+        headers: { authorization: `Bearer ${opts.apiKey}` },
+      },
+    );
   } catch {
     throw new DashboardError("Could not reach the relayer.");
   }
   const body = (await res.json().catch(() => undefined)) as unknown;
-  if (res.status === 401 || res.status === 403) throw new DashboardError("The API key was not accepted.");
+  if (res.status === 401 || res.status === 403)
+    throw new DashboardError("The dashboard access token was not accepted.");
   if (!res.ok) {
     const e = ErrorResponse.safeParse(body);
-    throw new DashboardError(e.success ? e.data.error.message : `The relayer returned an error (${res.status}).`);
+    throw new DashboardError(
+      e.success
+        ? e.data.error.message
+        : `The relayer returned an error (${res.status}).`,
+    );
   }
   const parsed = ListOrdersResponse.safeParse(body);
-  if (!parsed.success) throw new DashboardError("The relayer sent an unexpected response.");
+  if (!parsed.success)
+    throw new DashboardError("The relayer sent an unexpected response.");
   return parsed.data.orders;
 }
+
+export interface MerchantOptions {
+  merchantUrl: string;
+  apiKey: string;
+}
+async function merchantRequest<T>(
+  options: MerchantOptions,
+  path: string,
+  schema: { parse(value: unknown): T },
+  payload?: unknown,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${options.merchantUrl.replace(/\/+$/, "")}${path}`,
+      {
+        method: payload ? "POST" : "GET",
+        redirect: "error",
+        credentials: "omit",
+        cache: "no-store",
+        headers: {
+          authorization: `Bearer ${options.apiKey}`,
+          ...(payload ? { "content-type": "application/json" } : {}),
+        },
+        body: payload ? JSON.stringify(payload) : undefined,
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+  } catch {
+    throw new DashboardError(
+      "Could not confirm the request. Refresh status or check the original request before continuing.",
+    );
+  }
+  const body = (await response.json().catch(() => undefined)) as
+    { error?: { message?: string; code?: string } } | undefined;
+  if (!response.ok)
+    throw new DashboardError(
+      body?.error?.message ??
+        `Merchant server returned HTTP ${response.status}.`,
+      body?.error?.code,
+      response.status,
+    );
+  try {
+    return schema.parse(body);
+  } catch {
+    throw new DashboardError(
+      "Merchant server returned an unexpected refund response. Refresh status before continuing.",
+    );
+  }
+}
+export const getMerchantRefundView = (
+  options: MerchantOptions,
+  orderId: string,
+) =>
+  merchantRequest(
+    options,
+    `/orders/${encodeURIComponent(orderId)}/refund-context`,
+    MerchantRefundView,
+  );
+export const submitMerchantRefund = (
+  options: MerchantOptions,
+  orderId: string,
+  body: { requestId: string; amount: string; refundIndex: number },
+) =>
+  merchantRequest(
+    options,
+    `/orders/${encodeURIComponent(orderId)}/refunds`,
+    MerchantRefundOperation,
+    body,
+  );

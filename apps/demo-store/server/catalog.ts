@@ -21,6 +21,9 @@ export class CartError extends Error {}
  * Throws CartError with a client-safe message on any invalid input.
  */
 export function priceCart(input: unknown): { lines: CartLine[]; total: bigint } {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    input = Object.entries(input).map(([id, quantity]) => ({ id, quantity }));
+  }
   if (!Array.isArray(input) || input.length === 0 || input.length > MAX_LINE_ITEMS) {
     throw new CartError(`items must be a non-empty array of at most ${MAX_LINE_ITEMS} { id, quantity } entries`);
   }

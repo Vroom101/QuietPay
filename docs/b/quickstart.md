@@ -23,7 +23,7 @@ const order = await createOrder({
 
 ## 2. Receive the webhook
 
-Events are `payment.settled` and `payment.failed`. Every event has a unique `id`; store the ids you
+Events are `payment.settled`, `payment.failed` and `payment.refunded`. Every event has a unique `id`; store the ids you
 have handled and ignore repeats, because delivery is at-least-once.
 
 ```ts
@@ -58,8 +58,58 @@ The same event `id` is reused on every retry.
 
 API failures throw `QuietpayApiError` with `.status` and `.code`, one of: `order_not_found`,
 `order_expired`, `bad_signature`, `amount_mismatch`, `already_settled`, `relayer_paused`,
-`rate_limited`, `simulation_failed`, `fee_over_cap`.
+`rate_limited`, `simulation_failed`, `fee_over_cap`, `insufficient_refund_balance`.
 
 ## Refunds
 
-`refund()` is a stub that throws. Refunds ship in P1.
+Refunds are signed on the merchant server with a separate funded `refundSigner` wallet.
+The key never reaches the relayer or browser. `amount` is in token base units; omit it
+for the remaining refundable amount. Pin the router and expected refund index.
+
+```ts
+import { getRefundContext, refund, getRefund } from "@quietpay/merchant-sdk";
+
+const server = { baseUrl, apiKey, orderId };
+const context = await getRefundContext(server);
+// Persist the index with this business refund request; do not fetch a fresh index on a retry.
+const expectedIndex = context.refundIndex;
+const pending = await refund({
+  ...server,
+  merchantId,
+  router: process.env.QUIETPAY_ROUTER_ADDRESS as `0x${string}`,
+  refundSignerPrivateKey: process.env.QUIETPAY_REFUND_SIGNER_PRIVATE_KEY as `0x${string}`,
+  refundIndex: expectedIndex,
+  amount: "5000000", // 5 USDT
+});
+// Persist pending.id; poll this ID until settled or failed, or receive payment.refunded.
+const status = await getRefund({ baseUrl, apiKey, refundId: pending.id as `0x${string}` });
+```
+
+The payout wallet keeps the original payment. The `refundSigner` supplies refund USDT;
+it needs enough to cover the refund including any portion originally collected as a relay fee.
+The operator sponsors refund gas and charges no refund fee. No token approval or gas
+balance is needed on the refundSigner.
+
+A stale SDK `refundIndex` is rejected before signing. After an uncertain response, use `listRefunds({baseUrl, apiKey, orderId})` to recover the original refund ID
+by its expected index, then inspect its status before issuing a new authorization. The HTTP endpoint deduplicates
+an exact signed request, including after a restart. A reverted refund keeps the original
+payment paid; inspect the refund's `failureCode`, fix the cause, and sign a fresh request
+at the same unused refund index. Full refunds do not make an order payable again.
+
+See [refund API and recovery](refunds.md) for HTTP requests and webhook fields.
+
+## Paid APIs
+
+The SDK exports paywall() middleware for server-side x402 v2 exact EIP-3009 payments.
+Run the combined facilitator with the existing relayer wallet/database and authenticate
+its calls with the merchant API key. See [facilitator operations](../../packages/facilitator/README.md)
+and [paid API usage](../../apps/paid-api/README.md). Resource execution follows confirmed
+settlement; timeouts must retry the same signed payload rather than authorizing twice.
+
+## Paying agent
+
+After starting the combined facilitator and paid API, follow [the agent demo setup](../../apps/agent-demo/README.md). Set a dedicated zero-native-balance test payer key, the API origin, recipient, RPC and explorer URL, then run `pnpm --filter @quietpay/agent-demo start`. It buys a quote and signal with a default total authorization budget of 30,000 base units and prints two public payment receipts. Keep the same process alive to retry uncertain payments; sessions are in memory.
+
+## Dashboard refunds
+
+The dashboard now uses separately authenticated merchant-server routes for orders and partial/full refunds. Configure the merchant's server-side key, pinned router, dashboard access token and persistent request database; see [dashboard refund setup and recovery](dashboard-refunds.md).
