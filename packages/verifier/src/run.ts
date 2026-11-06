@@ -1,4 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { redactUrls } from "./redact.js";
 import { isAddress } from "viem";
 import { formatHuman } from "./report.js";
 import type { VerifierSource } from "./types.js";
@@ -48,16 +51,36 @@ function parseArgs(args: string[]): Record<string, string | true> {
 }
 
 /** Hides the RPC URL (it may carry an API key) in anything printed. */
-function redact(msg: string, rpcUrl: string | undefined): string {
-  if (!rpcUrl) return msg;
-  let s = msg.split(rpcUrl).join("<rpc>");
+function redact(msg: string, ...urls: Array<string | undefined>): string {
+  return redactUrls(msg, urls);
+}
+
+/** Writes via a random exclusive temp file and rename; the final path is never opened for writing. */
+function writeReportAtomic(path: string, data: string): void {
+  const tmp = `${path}.${randomBytes(12).toString("hex")}.tmp`;
   try {
-    const u = new URL(rpcUrl);
-    s = s.split(u.origin + u.pathname).join("<rpc>");
-  } catch {
-    /* not a URL */
+    const fd = openSync(tmp, "wx", 0o644);
+    try {
+      writeFileSync(fd, data);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
   }
-  return s;
+}
+
+function sameFile(a: string, b: string): boolean {
+  if (resolve(a) === resolve(b)) return true;
+  try {
+    const x = statSync(a);
+    const y = statSync(b);
+    return x.ino !== 0 && x.ino === y.ino && x.dev === y.dev;
+  } catch {
+    return false;
+  }
 }
 
 /** Runs the CLI. Returns the exit code: 0 OK, 1 mismatch, 2 usage/RPC/config error. */
@@ -138,6 +161,19 @@ ${USAGE}`,
     return 2;
   }
 
+  if (sameFile(reportPath, csvPath!) || sameFile(reportPath, metaPath)) {
+    deps.stderr(`refusing to write the report over an input file: ${reportPath}`);
+    return 2;
+  }
+  try {
+    if (lstatSync(reportPath).isSymbolicLink()) {
+      deps.stderr(`refusing to write the report through a symlink: ${reportPath}`);
+      return 2;
+    }
+  } catch {
+    /* does not exist yet */
+  }
+
   try {
     const report = await verifyLedger({
       csvText: readFileSync(csvPath!, "utf8"),
@@ -151,13 +187,13 @@ ${USAGE}`,
       sleep: deps.sleep,
     });
     const json = JSON.stringify({ csv: csvPath, meta: metaPath, ...report }, null, 2) + "\n";
-    writeFileSync(reportPath, json);
+    writeReportAtomic(reportPath, json);
     deps.stdout(f.json ? json.trimEnd() : `${formatHuman(report, csvPath)}\nJSON report: ${reportPath}`);
     return report.ok ? 0 : 1;
   } catch (e) {
     const err = e as Error;
     const kind = err.name === "ConfigError" ? "config error" : "error (RPC or I/O)";
-    deps.stderr(`${kind}: ${redact(err.message ?? String(e), rpcUrl)}`);
+    deps.stderr(`${kind}: ${redact(err.message ?? String(e), rpcUrl, rpc2)}`);
     return 2;
   }
 }

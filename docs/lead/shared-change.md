@@ -50,3 +50,7 @@ A read-only grep of `apps/`, `packages/widget`, `packages/relayer`, `packages/me
 `computeRefundNonce` unchanged; `parseUsdt` is strict (plain decimal, at most 6 places, no rounding, throws
 `InvalidAmountError`); `formatUsdt` is exact (6 places); `formatUsdtShort` is lossy and display-only; error codes
 `invalid_amount` and `budget_exceeded` added; `checkFundPlan` guards `scripts/fund-payer.ts`.
+
+## Added after R4
+- **B (done by Lead at the owner's request, 2026-11-06):** the three `"DemoUSDT"` mock domain names in `merchant-sdk/test/refund.test.ts`, `relayer/test/config.test.ts`, `relayer/test/refunds.test.ts` were renamed to "Test Token" and the stale comment in `relayer/src/config.ts:45` was fixed. No behaviour change; merge main before editing those files. Two relayer tests (`pentest-round4` R4-VULN-1b and `refunds.test.ts` "requires merchant authentication") time out at 5 s when all packages run in parallel; they pass alone.
+- **B:** `packages/indexer/src/api/*` (written on the backend side) now redacts RPC URLs in errors and `/v1/health`, and parses blank env values as unset. Review it.

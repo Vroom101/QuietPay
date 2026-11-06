@@ -16,6 +16,9 @@ export interface LogSource {
 
 export const MAX_PAGE = 1000;
 
+/** Consecutive successful pages before a halved page grows 4x again (slow enough not to hammer a node with a hard limit). */
+const REGROW_AFTER = 24;
+
 function errText(e: unknown): string {
   const x = e as { code?: number; message?: string; details?: string; cause?: unknown; shortMessage?: string };
   return `${x?.code ?? ""} ${x?.message ?? ""} ${x?.details ?? ""} ${x?.shortMessage ?? ""} ${x?.cause ? errText(x.cause) : ""}`;
@@ -49,7 +52,9 @@ export async function getLogsPaged(
   to: number,
   opts: PagingOptions = {},
 ): Promise<ChainLog[]> {
-  let page = Math.min(opts.pageSize ?? MAX_PAGE, MAX_PAGE);
+  const maxPage = Math.min(opts.pageSize ?? MAX_PAGE, MAX_PAGE);
+  let page = maxPage;
+  let okRun = 0;
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const maxRetries = opts.maxRetries ?? 8;
   const out: ChainLog[] = [];
@@ -62,9 +67,15 @@ export async function getLogsPaged(
       out.push(...(await src.getLogs({ ...q, fromBlock: start, toBlock: end })));
       start = end + 1;
       retries = 0;
+      // Regrow after a run of successes so one dense block does not shrink the rest of the scan.
+      if (++okRun >= REGROW_AFTER && page < maxPage) {
+        page = Math.min(maxPage, page * 4);
+        okRun = 0;
+      }
     } catch (e) {
       if (isRangeError(e) && page > 1) {
         page = Math.max(1, Math.floor(page / 2));
+        okRun = 0;
         continue;
       }
       if (isRateLimit(e) && retries < maxRetries) {

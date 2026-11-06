@@ -16,3 +16,6 @@
 
 ## Dependency audit (T3-R4, 2026-11-06): `pnpm audit` = 28 findings (3 critical, 8 high)
 Critical: `vitest <3.2.6` and `tinypool` (test runner only, never shipped). High, reachable in shipped code: `fastify` (<5.12.2; relayer, B), `find-my-way` (<=9.6.0, via fastify), `zod` (<4.6.6; shared + others), `vite` (<=6.4.3; dev server of the demo store). Fixes are major-version upgrades (fastify 4 to 5, zod 3 to 4, vitest 2 to 3) that touch every package and were not attempted blind. Next step: B upgrades fastify and the relayer tests; Lead upgrades zod in `packages/shared` behind its 250 tests, then everyone re-runs `pnpm -r test`. Running the relayer behind the Render proxy with `TRUST_PROXY_HOPS=1` does not mitigate these.
+
+## CI pinning (R4, Low)
+`.github/workflows/ci.yml` pins actions by tag, not commit SHA, and `foundry-toolchain@v1` has no `version:`, so CI uses the current Foundry rather than the one the router was built with. Not changed here: the backend session owns the in-flight CI fix for the facilitator test and pinning Foundry could change its behaviour. Next step: pin a Foundry version and action SHAs together once CI is green.

@@ -104,3 +104,7 @@ Reuse the pure functions from `@quietpay/indexer`: `decodeRouterLog`, `decodeTra
 Testnet only. A confirmation depth is a setting, not a proof of finality. The ledger shows what the chain shows; it does
 not convert currency or claim custody. `net_usdt` is the merchant's result and is NOT clamped: a full refund gives `-fee`,
 because the router lets a refund reach the gross value while the relay fee is not returned.
+
+## Added in the finish run (2026-11-06)
+- The indexer database remembers the pay-to address (or none) it was indexed with. Exporting with a different pay-to is refused: re-index from a fresh database. Databases created before this change count as "no pay-to".
+- Catch-up commits in chunks of 20,000 blocks, so a late failure keeps earlier progress. The page size grows back after a run of good pages. Exports are written atomically.

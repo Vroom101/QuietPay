@@ -42,7 +42,7 @@ const EnvSchema = z.object({
   // Optional, additive to the frozen list.
   RELAY_FEE_USDT: decimal(6).default("0.05"),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(20),
-  /** EIP-712 domain of the payment token. Defaults to the live Whitechain test USDT. Set for the demo token. */
+  /** EIP-712 domain of the payment token. Defaults to the live Whitechain test USDT. */
   EXPLORER_BASE_URL: z.string().url().default("https://testnet.whitechain.io"),
   TOKEN_DOMAIN_NAME: z.string().trim().min(1).default("Tether USD"),
   TOKEN_DOMAIN_VERSION: z.string().trim().min(1).default("1"),

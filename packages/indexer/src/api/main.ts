@@ -1,3 +1,4 @@
+import { redactSecrets } from "../redact.js";
 import { loadConfig } from "./config.js";
 import { makeReader } from "./chain.js";
 import { IndexDb } from "./db.js";
@@ -13,7 +14,7 @@ const db = new IndexDb(cfg.databasePath, cfg.scope),
 await indexer.sync();
 const app = buildServer(indexer, cfg.apiKeys);
 indexer.start(cfg.pollMs, (e) =>
-  console.error("Indexer sync failed:", String(e)),
+  console.error("Indexer sync failed:", redactSecrets(String(e), [cfg.rpcUrl])),
 );
 await app.listen({ host: "0.0.0.0", port: cfg.port });
 console.log(

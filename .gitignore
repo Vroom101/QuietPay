@@ -20,3 +20,6 @@ skills-lock.json
 *.db-wal
 *.db-shm
 *.sqlite3
+
+__pycache__/
+*.pyc

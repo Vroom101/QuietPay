@@ -1,7 +1,6 @@
 #!/usr/bin/env tsx
-import { writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import { mkdirSync } from "node:fs";
+import { writeFilesAtomic } from "./atomic.js";
+import { redactSecrets } from "./redact.js";
 import { assertQualifyingConfig, getDeployment, getQualifyingDeployment, QUALIFYING_CHAIN_ID } from "@quietpay/shared";
 import { IndexerDb } from "./db.js";
 import { buildExport, indexOnce, rebuild, type IndexerConfig } from "./indexer.js";
@@ -13,6 +12,17 @@ const USAGE = `quietpay-indexer <command>
   rebuild                       recompute the ledger from raw events
   export --from N --to M --out FILE   write FILE (CSV) and FILE.meta.json
 Env: RPC_URL CHAIN_ID USDT_ADDRESS ROUTER_ADDRESS FACILITATOR_PAYTO DATABASE_PATH CONFIRMATIONS [DEPLOY_BLOCK]`;
+
+/** Empty or whitespace counts as unset (default). Anything else must be a plain non-negative integer. */
+function envInt(name: string, fallback: number | undefined, min = 0, decimal = false): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const t = raw.trim();
+  if (!(decimal ? /^\d{1,9}(\.\d{1,6})?$/ : /^\d{1,15}$/).test(t)) throw new Error(`${name} must be a non-negative integer, got "${t.slice(0, 40)}"`);
+  const n = Number(t);
+  if (n < min) throw new Error(`${name} must be at least ${min}`);
+  return n;
+}
 
 function need(name: string): string {
   const v = process.env[name];
@@ -48,7 +58,7 @@ function loadConfig(): { cfg: IndexerConfig; rpcUrl: string; dbPath: string } {
       return undefined;
     }
   })();
-  const deployBlock = Number(process.env.DEPLOY_BLOCK ?? dep?.deployBlock ?? NaN);
+  const deployBlock = envInt("DEPLOY_BLOCK", dep?.deployBlock ?? undefined) ?? NaN;
   if (!Number.isFinite(deployBlock)) throw new Error("No deploy block: set DEPLOY_BLOCK or record deployBlock in deployments.json");
   const usdt = process.env.USDT_ADDRESS ?? dep?.token ?? need("USDT_ADDRESS");
   assertQualifyingConfig({ chainId, tokenAddress: usdt });
@@ -61,7 +71,7 @@ function loadConfig(): { cfg: IndexerConfig; rpcUrl: string; dbPath: string } {
       router,
       usdt,
       facilitatorPayTo: process.env.FACILITATOR_PAYTO || undefined,
-      confirmations: Number(process.env.CONFIRMATIONS ?? 12),
+      confirmations: envInt("CONFIRMATIONS", 12)!,
       deployBlock,
     },
   };
@@ -91,10 +101,10 @@ async function main() {
         try {
           await indexOnce({ db, src, cfg, log });
         } catch (e) {
-          log(`error: ${(e as Error).message}`);
+          log(`error: ${redactSecrets((e as Error).message, [process.env.RPC_URL])}`);
           if (/reorg deeper/.test((e as Error).message)) throw e;
         }
-        await new Promise((r) => setTimeout(r, Number(process.env.POLL_SECONDS ?? 5) * 1000));
+        await new Promise((r) => setTimeout(r, envInt("POLL_SECONDS", 5, 0.01, true)! * 1000));
       }
     } else if (cmd === "rebuild") {
       log(`rebuilt ${rebuild(db, cfg).length} ledger rows from raw events`);
@@ -108,9 +118,10 @@ async function main() {
         to: to ? Number(to) : undefined,
         generatedAt: process.env.GENERATED_AT,
       });
-      mkdirSync(dirname(out), { recursive: true });
-      writeFileSync(out, res.csv);
-      writeFileSync(`${out}.meta.json`, JSON.stringify(res.meta, null, 2) + "\n");
+      writeFilesAtomic([
+        { path: out, data: res.csv },
+        { path: `${out}.meta.json`, data: JSON.stringify(res.meta, null, 2) + "\n" },
+      ]);
       log(`wrote ${res.rows.length} rows to ${out} (blocks ${res.meta.fromBlock}-${res.meta.toBlock}, finalized head ${db.getCursor()?.block})`);
     } else {
       console.log(USAGE);
@@ -122,6 +133,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e.message ?? e);
+  console.error(redactSecrets(String(e?.message ?? e), [process.env.RPC_URL]));
   process.exit(1);
 });
