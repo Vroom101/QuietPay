@@ -26,7 +26,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const out = process.env.CONTRACTS_OUT ?? resolve(here, "../../../contracts/out");
 const routerArtifact = resolve(out, "PaymentRouter.sol/PaymentRouter.json");
 const usdtArtifact = resolve(out, "MockUSDT.sol/MockUSDT.json");
-const haveArtifacts = existsSync(routerArtifact) && existsSync(usdtArtifact);
+const demoArtifact = resolve(out, "DemoUSDT.sol/DemoUSDT.json");
+const haveArtifacts = existsSync(routerArtifact) && existsSync(usdtArtifact) && existsSync(demoArtifact);
 
 // Standard anvil dev keys (public, test-only).
 const DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
@@ -65,7 +66,11 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
     hookServer?.close();
   });
 
-  it("settles a payment from a payer with no native balance", async () => {
+  it.each([
+    ["mock Tether-style token", usdtArtifact, { name: "Tether USD", version: "1" }, "mint"],
+    ["DemoUSDT with its own EIP-712 domain", demoArtifact, { name: "Quietpay Demo USDT", version: "1" }, "faucet"],
+  ] as const)("settles a payment from a payer with no native balance: %s", async (_label, tokenArtifact, domain, mintFn) => {
+    hooks.length = 0;
     const deployer = privateKeyToAccount(DEPLOYER_KEY);
     const relayer = privateKeyToAccount(RELAYER_KEY);
     const chainDef = { id: 31337, name: "anvil", nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [RPC] } } } as const;
@@ -73,7 +78,7 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
     const wallet = createWalletClient({ account: deployer, chain: chainDef, transport: http(RPC) });
 
     const load = (p: string) => JSON.parse(readFileSync(p, "utf8")) as { abi: Abi; bytecode: { object: Hex } };
-    const usdtJson = load(usdtArtifact);
+    const usdtJson = load(tokenArtifact);
     const routerJson = load(routerArtifact);
 
     const usdtHash = await wallet.deployContract({ abi: usdtJson.abi, bytecode: usdtJson.bytecode.object });
@@ -97,7 +102,7 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
     const payerKey = generatePrivateKey();
     const payer = privateKeyToAccount(payerKey);
     await pub.waitForTransactionReceipt({
-      hash: await wallet.writeContract({ address: usdt, abi: usdtJson.abi, functionName: "mint", args: [payer.address, parseUnits("100", 6)] }),
+      hash: await wallet.writeContract({ address: usdt, abi: usdtJson.abi, functionName: mintFn, args: [payer.address, parseUnits("100", 6)] }),
     });
     expect(await pub.getBalance({ address: payer.address })).toBe(0n);
 
@@ -110,6 +115,7 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
       relayerKey: RELAYER_KEY,
       apiKeys: new Map([["test-key", merchantId]]),
       lossBudgetWei: parseUnits("1", 18),
+      tokenDomain: domain,
     });
     const db = new Db(":memory:");
     const svc = new RelayerService({ cfg, db, chain: makeChain({ rpcUrl: RPC, chainId: 31337, router, relayerKey: RELAYER_KEY }) });
@@ -141,6 +147,8 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
         validBefore: BigInt(validBefore),
         chainId: 31337,
         token: usdt,
+        domainName: domain.name,
+        domainVersion: domain.version,
       }),
     );
 
@@ -163,7 +171,7 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
 
     // Poll until settled.
     let settled: Order | undefined;
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 100; i++) {
       const o = (await app.inject({ method: "GET", url: `/v1/orders/${order.id}` })).json() as Order;
       if (o.status === "settled") {
         settled = o;
@@ -194,6 +202,8 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
         validBefore: BigInt(vb2),
         chainId: 31337,
         token: usdt,
+        domainName: domain.name,
+        domainVersion: domain.version,
       }),
     );
     const again = await app.inject({

@@ -42,6 +42,8 @@ export const Order = z.object({
   createdAt: z.number().int(), // unix seconds
   expiresAt: z.number().int(),
   settledAt: z.number().int().optional(),
+  /** Total refunded so far, in base units. Absent means zero. */
+  refundedAmount: Amount.or(z.literal("0")).optional(),
   explorerUrl: z.string().url().optional(),
   checkout: CheckoutParams,
 });
@@ -115,3 +117,40 @@ export const AdminPauseRequest = z.object({ paused: z.boolean() });
 export type AdminPauseRequest = z.infer<typeof AdminPauseRequest>;
 export const AdminPauseResponse = z.object({ paused: z.boolean() });
 export type AdminPauseResponse = z.infer<typeof AdminPauseResponse>;
+
+// ---- Refunds (merchant API key) ----
+// GET /v1/orders/:id/refund-quote?amount=...  -> what the refundSigner must sign
+export const RefundQuoteResponse = z.object({
+  orderId: Bytes32,
+  merchantId: Bytes32,
+  payer: Address,
+  amount: Amount,
+  refundIndex: z.number().int().nonnegative(),
+  nonce: Bytes32,
+  totalRefunded: Amount.or(z.literal("0")),
+  remaining: Amount.or(z.literal("0")),
+  refundSigner: Address,
+  chainId: z.number().int(),
+  token: Address,
+  router: Address,
+  domain: z.object({ name: z.string(), version: z.string() }),
+});
+export type RefundQuoteResponse = z.infer<typeof RefundQuoteResponse>;
+
+// POST /v1/refund
+export const RefundRequest = z.object({
+  orderId: Bytes32,
+  amount: Amount,
+  validAfter: z.number().int().nonnegative(),
+  validBefore: z.number().int().positive(),
+  signature: Signature,
+});
+export type RefundRequest = z.infer<typeof RefundRequest>;
+export const RefundResponse = z.object({
+  orderId: Bytes32,
+  amount: Amount,
+  refundIndex: z.number().int().nonnegative(),
+  totalRefunded: Amount,
+  txHash: TxHash,
+});
+export type RefundResponse = z.infer<typeof RefundResponse>;
