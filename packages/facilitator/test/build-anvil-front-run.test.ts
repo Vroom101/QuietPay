@@ -143,7 +143,7 @@ describe.skipIf(!chainReady)("W6 front-run and cancel on a real chain", () => {
       const first = await t.pay(req);
       expect(first.status).toBe(402);
       // When the authorization is cancelled with a higher tip before ours is mined
-      await w.cancel(payer, nonce);
+      await w.cancel(payer, nonce as `0x${string}`);
       await mineSome(w);
       await vi.waitFor(
         async () => {

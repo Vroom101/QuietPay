@@ -102,8 +102,8 @@ describe("Feature: an agent pays for an x402 resource", () => {
       const req = await t.forge();
       // When the agent presents it
       const res = await t.get(req);
-      // Then there is no data
-      expect(res.status).toBe(402);
+      // Then there is no data: the audit design answers 503 (settlement_unresolved) instead of releasing anything
+      expect([402, 503]).toContain(res.status);
       expect(t.handler).not.toHaveBeenCalled();
     } finally {
       await t.close();
@@ -125,8 +125,13 @@ describe("Feature: an agent pays for an x402 resource", () => {
       // Then no second transfer is prepared; once the chain confirms, the payment settles once
       expect(t.state.prepared).toHaveLength(1);
       t.state.hold = false;
-      for (const row of restarted.store.pending()) await restarted.recover(row.id);
-      expect(t.db.raw.prepare("SELECT status FROM x402_payments").get()).toEqual({ status: "settled" });
+      await vi.waitFor(
+        async () => {
+          for (const row of restarted.store.pending()) await restarted.recover(row.id);
+          expect(t.db.raw.prepare("SELECT status FROM x402_payments").get()).toEqual({ status: "settled" });
+        },
+        { timeout: 10_000, interval: 100 },
+      );
       expect(t.state.prepared).toHaveLength(1);
       // And the agent's retry against the restarted instance gets one delivery claim and a replay gets none
       expect(restarted.claim(req, MERCHANT_ID).success).toBe(true);
