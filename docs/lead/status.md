@@ -32,3 +32,4 @@
 - 14:30 R1 on indexer/verifier: net unclamped, sidecar pins config, unanchored label, docs
 - 15:00 L5/L7: scripts (fund-payer, tampered samples, qualify-check), feedback, README
 - 15:40 L2 property tests, removed-log tests, live sample re-verified
+- 18:40 final report written; mutation sweep killed (low memory), recorded in blocked.md

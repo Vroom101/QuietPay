@@ -1,65 +1,34 @@
-# Final report (Lead, unattended run)
+# Final report (Lead run, 2026-11-06)
 
-## Phases
+Deadline placeholder was not filled in, so contracts were treated as frozen (no redeploy). "No findings" below means not found by these methods, not proven safe.
 
-| Phase | Status |
-| --- | --- |
-| 1. Router hardening, stand-in token removed | **Done** |
-| 2. Shared package hardening (`shared-v2` tagged) | **Done** |
-| 3. Qualifying deploy and live official-USDT payment | **Partly done**: router deployed and verified; payment and refund **pending: unfunded** |
-| 4. Indexer and ledger | **Done**; the live sample is pending the payment (a labelled synthetic sample stands in) |
-| 5. Late catch-up | Not run: waiting on official USDT (a poller checks every 10 minutes for 2 hours) |
+## 1. Components
+| Component | State |
+|---|---|
+| L0 Reconcile | done (`reconcile.md`) |
+| L1 Router hardening | partly done: invariants added (3, ~128k calls each), Opus R1/R3 review (3 Low, pinned as limitations). **Mutation sweep not completed** (stopped for low memory), no Slither/coverage run (`forge coverage` fails with stack-too-deep) |
+| L2 Shared | partly done: property tests, fund-payer guard. Nonce vectors already asserted both languages |
+| L3 Indexer | partly done: net unclamped, sidecar records router/usdt/payTo, removed-log tests; Opus R1 once |
+| L4 Verifier | done for the listed threats: independent decoder/rules, differential test, `--from/--to/--min-confirmations/--rpc2`, checkpoint, unanchored label, quoted-cell check |
+| L5 Scripts | done: `fund-payer.ts`, `make-tampered-samples.ts` (+ tests) |
+| L6 Handoff | done (`shared-change.md`) |
+| L7 Docs/qualify | done: README, `WHITECHAIN_FEEDBACK.md`, `qualify-check.ts` passes all Lead items |
+| L8 Whole-surface round | **not done**: no R5 fresh-eyes round, no combined closing rule |
 
-## Tests
+## 2. Tests (last full run, all green)
+Foundry 104 + 3 invariants + 3 expected-limitation; shared 200 (+6 property); indexer 27; relayer 281; widget 139; dashboard 13; SDK 10; demo-store 60; verifier 84 (1 live test needs `RPC_URL`; it passed). Anvil end-to-end tests need Foundry on PATH. Some new tests were written together with or after their code rather than shown red first. Mutation survivors: unknown (sweep incomplete).
 
-Contracts: **72 Foundry tests pass** (router 29, refund 24, hardening 13, deploy scripts 6) plus 1 fork compatibility test that skips offline.
-Shared: **109 pass** (including every pay and refund vector in `fixtures/nonce-vectors.json`, 83 parser cases, the qualifying guard).
-Indexer: **26 pass** (including an anvil end-to-end run with the real router).
-Not green: B's relayer and A's dashboard tests, by design until they merge (see below).
+## 3. Chain evidence
+Router `0xb9D475cdd817900B45C356169c6FdC379B942d82`, deploy block 12351795. Payment [0x1f2da106...](https://explorer.testnet.whitechain.io/tx/0x1f2da1062f4c941382d1f0d3c7134c49858662d8eb3a68436b8f88fc7d892384), refund [0x1ac62248...](https://explorer.testnet.whitechain.io/tx/0x1ac62248eb3def54499896fd8bfc197436fcb83d9544fe94432c138c2d85127d). Live sample re-verified with a pinned range: OK, 4 events.
 
-## Router
+## 4. Attacks
+Three Opus rounds' worth of Lead-surface review (see `attack-log.md`): indexer/verifier R1: 2 High, 1 Medium (fixed), 1 High accepted as design limitation, 5 Low (1 fixed, 4 open). Router R1/R3: 0 Critical/High, 3 Low accepted. Rounds R2, R4, R5 for the Lead components were not run, so the "two consecutive clean rounds" closing rule is **not met** for any component.
 
-`0xb9D475cdd817900B45C356169c6FdC379B942d82`, deploy block **12351795**, source verified, points at the official USDT
-`0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874. [Explorer](https://explorer.testnet.whitechain.io/address/0xb9D475cdd817900B45C356169c6FdC379B942d82).
+## 5. For A and B / for the user
+See `shared-change.md` (signed net in the dashboard, refund API, zero-id rejection, x402 front-run check, real browser checkout). User: fill in the deadline; free memory and re-run the mutation sweep if wanted; hosted relayer and x402 remain unbuilt.
 
-## Live payment and refund
+## 6. Model usage
+Opus: 2 calls this run (indexer/verifier R1, router R1/R3). Haiku: 1 (feedback draft, reviewed). See `model-usage.md`.
 
-**pending: unfunded.** The payer wallet `0x30Ab1c2f5d1D8794FdFE60EFa412F80D03037478` (WBT 0) and the refund signer
-`0xeF70298c52b917d2301F7331bfe7038550d2CD5d` hold no official USDT. The token has no public faucet and the run never mints or
-substitutes a token. When funded: `packages/shared/scripts/live-payment.mjs` then `first-refund.mjs` (the payment script was proven end
-to end on anvil, and refuses a payer with any WBT and any chain or token but the qualifying pair).
-
-## Review findings (A to I; lettered by this run, the review text was not supplied)
-
-A fee not bound (High): **fixed**. B fee equal to value (Medium): **fixed**. C refund signer rotation (Medium): **fixed**.
-D balance-delta check (Medium): **fixed**. E rollback and encoding tests: **fixed**. F stand-in token / qualification (High):
-**fixed in code, live evidence pending funds**. G lossy `parseUsdt` (High): **fixed**. H hidden decimals in `formatUsdt`
-(Medium): **fixed**. I wrong chain or token guard (Medium): **fixed**. Details in `review-resolution.md`. A read-only Opus review of
-the router changes found nothing exploitable; its deferred points (price not bound on-chain, fee recipient, Ownable2Step, rescue) are in
-`decisions.md`.
-
-## Nonce v2 and what A and B must do
-
-The pay nonce is now `keccak256(PAY_TAG v2, merchantId, orderId, payout, value, fee)`. **B:** add `fee` to the `computePayNonce` call in
-`packages/relayer/src/service.ts`, submit exactly `order.fee`, map `invalid_amount` and `budget_exceeded`, point at the new router,
-call `assertQualifyingConfig`. **A:** make the store's `parseUsdt` call strict-safe, update the dashboard format and its test, show the
-exact fee. Exact list with line numbers: `docs/lead/shared-change.md`. Until they merge, `main` is red in `packages/relayer` (does not
-compile) and `apps/merchant-dashboard` (one test).
-
-## Stand-in token references left in A and B folders
-
-Only `packages/relayer/test/e2e-anvil.test.ts` (and a comment in `packages/relayer/src/config.ts`). None in contracts, scripts, shared,
-the root README or `.env.example`.
-
-## Blocked or pending (`blocked.md`)
-
-Official USDT for the payer and refund signer (payment, refund, live ledger sample); A and B merging `main`; nothing else.
-
-## Not done and not claimed
-
-Hosted relayer, browser checkout run, relayer refund API and dashboard refund button, and the verifier. No audit, production custody or
-INR conversion is claimed anywhere.
-
-## Next step
-
-The verifier core (reusing the exported row functions from `@quietpay/indexer`), once the live payment and refund exist.
+## 7. Blocked / next
+`blocked.md`: mutation sweep, 4 open Low verifier/indexer items. Next: re-run mutation sweep, rounds R2/R4/R5 on indexer and verifier, then a whole-system R5 pass. One housekeeping note: an earlier broad `git add` committed an untracked relayer test (`packages/relayer/test/hardening-r3.test.ts`) from Person B's folder.

@@ -10,3 +10,6 @@
 - `parseCsvLine` accepts quoted cells such as `"router"`; the exporter never emits them.
 - `--rpc2` cross-checks ledger logs only; head, timestamps and settlement-tx Transfers come from the primary node.
 - A contract relayer that puts a pay-to deposit in the same transaction as a `pay` or `refund` hides it under the double-count rule.
+
+## Router mutation sweep not completed
+`scripts/mutate-router.py` ran for about 35 minutes and was stopped by Claude Code because the machine was critically low on memory (each mutant recompiles the router with viaIR and runs the suite). No survivor list exists, so "zero surviving mutants" is NOT claimed. To finish: close other programs, then run `python scripts/mutate-router.py` (consider running forge with `--no-match-test invariant` and a lower `FOUNDRY_FUZZ_RUNS`). Not restarted automatically.
