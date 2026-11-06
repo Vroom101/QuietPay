@@ -16,6 +16,13 @@ import {
   X402Payload,
   X402SettleResponse,
 } from "@quietpay/shared";
+import { createPersistentAgent } from "./persistent.js";
+import type { StoreConfig } from "./store.js";
+
+export * from "./store.js";
+export * from "./recovery.js";
+export { createPersistentAgent } from "./persistent.js";
+export type { RecoveryAction } from "./persistent.js";
 
 export class AgentError extends Error {
   constructor(
@@ -51,6 +58,11 @@ export interface AgentOptions {
   explorerUrl?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  /**
+   * Opt in to crash-safe persisted state (SQLite). Without it the agent is in-memory only.
+   * See store.ts for the threat model.
+   */
+  store?: StoreConfig;
 }
 export interface PaymentLog {
   id: Hex;
@@ -69,7 +81,13 @@ interface Payment {
 }
 
 /** One in-memory spending session. Every signature consumes budget, even if delivery fails. */
-export function createAgent(options: AgentOptions) {
+export function createAgent(
+  options: AgentOptions & { store: StoreConfig },
+): ReturnType<typeof createPersistentAgent>;
+export function createAgent(options: AgentOptions): InMemoryAgent;
+export function createAgent(options: AgentOptions): any {
+  if (options.store)
+    return createPersistentAgent(options as AgentOptions & { store: StoreConfig });
   // Snapshot policy: callers cannot relax it by mutating their options later.
   const { signer, chainId, domainName, domainVersion } = options;
   const address = getAddress(signer.address),
@@ -349,4 +367,10 @@ export function createAgent(options: AgentOptions) {
       return send(payment);
     },
   };
+}
+export interface InMemoryAgent {
+  readonly reservedAmount: bigint;
+  readonly payments: PaymentLog[];
+  fetch(url: string): Promise<Response>;
+  retry(id: Hex): Promise<Response>;
 }
