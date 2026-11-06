@@ -98,4 +98,16 @@ describe("mutation kills: facilitator", () => {
     expect(third.errorReason).toBe("budget_exceeded");
     expect(nonce(3)).toBeDefined();
   });
+
+  it("F11: a success receipt cannot resurrect a payment that is already failed", async () => {
+    const e = setup();
+    expect((await e.service.settle(await e.request(), MERCHANT_ID)).success).toBe(true);
+    const row = e.db.raw.prepare("SELECT id FROM x402_payments").get() as { id: string };
+    e.db.raw.prepare("UPDATE x402_payments SET status='failed', error_reason='invalid_transaction_state' WHERE id=?").run(row.id);
+    const hash = e.state.prepared[0]!.tx.hash;
+    const receipt = await e.chain.getReceipt(hash);
+    const finish = (e.service as unknown as { finish(id: string, h: string, r: unknown): Promise<void> }).finish.bind(e.service);
+    await finish(row.id, hash, receipt);
+    expect(e.db.raw.prepare("SELECT status FROM x402_payments").get()).toEqual({ status: "failed" });
+  });
 });

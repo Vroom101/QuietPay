@@ -252,4 +252,11 @@ describe("mutation kill P8: a refused delivery claim never runs the resource", (
     expect((await res.json()).error).toBe("payment_replayed");
     expect(s.delivered).not.toHaveBeenCalled();
   });
+
+  it("a refused claim is refused even when it still carries a payment id and lease (success=false is authoritative)", async () => {
+    const s = await start({ ...ok, "/v1/x402/delivery/claim": { json: { ...claim, success: false, errorReason: "payment_replayed" } } });
+    const res = await fetch(s.url + "/v1/quote", { headers: header() });
+    expect(res.status).toBe(402);
+    expect(s.delivered).not.toHaveBeenCalled();
+  });
 });
