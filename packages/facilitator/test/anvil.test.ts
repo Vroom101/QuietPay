@@ -1,3 +1,4 @@
+import { createServer, type AddressInfo } from "node:net";
 import { createAgent } from "@quietpay/agent-client";
 import { runDemo } from "@quietpay/agent-demo";
 import { spawn, spawnSync } from "node:child_process";
@@ -48,8 +49,20 @@ import { registerFacilitator } from "../src/server.js";
 import { buildPaidApi } from "../../../apps/paid-api/src/app.js";
 const here = dirname(fileURLToPath(import.meta.url)),
   out = process.env.CONTRACTS_OUT ?? resolve(here, "../../../contracts/out");
+// Ask the OS for free ports instead of hard-coding them, so a stale anvil or a parallel run cannot collide.
+const freePort = () =>
+  new Promise<number>((resolvePort, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as AddressInfo;
+      srv.close(() => resolvePort(port));
+    });
+  });
+const anvilPort = await freePort(),
+  apiPort = await freePort();
 const anvilBin = process.env.ANVIL_BIN ?? "anvil",
-  rpc = "http://127.0.0.1:20545";
+  rpc = `http://127.0.0.1:${anvilPort}`;
 const ready =
   existsSync(join(out, "PaymentRouter.sol/PaymentRouter.json")) &&
   spawnSync(anvilBin, ["--version"], { stdio: "ignore" }).status === 0;
@@ -61,7 +74,7 @@ describe.skipIf(!ready)(
   () => {
     let anvil: ReturnType<typeof spawn>;
     beforeAll(async () => {
-      anvil = spawn(anvilBin, ["--port", "20545", "--silent"], {
+      anvil = spawn(anvilBin, ["--port", String(anvilPort), "--silent"], {
         stdio: "ignore",
       });
       for (let i = 0; i < 60; i++) {
@@ -172,7 +185,7 @@ describe.skipIf(!ready)(
             nonceFloor: () => db.nonceFloor(),
           }),
         });
-      const apiUrl = "http://127.0.0.1:20547",
+      const apiUrl = `http://127.0.0.1:${apiPort}`,
         policies = makePaidPolicies({
           baseUrl: apiUrl,
           merchantId: merchant,
@@ -194,7 +207,7 @@ describe.skipIf(!ready)(
         facilitatorUrl,
         apiKey: "test-key",
       });
-      await api.listen({ host: "127.0.0.1", port: 20547 });
+      await api.listen({ host: "127.0.0.1", port: apiPort });
       const rpcCall = async (method: string, params: unknown[] = []) => {
         const body = await (
           await fetch(rpc, {
@@ -347,7 +360,7 @@ describe.skipIf(!ready)(
             }),
           })
         ).json();
-        expect(checkout.txHash).toBeTruthy();
+        expect(checkout.txHash).toMatch(/^0x[0-9a-f]{64}$/);
         const agentHash = await minePayment(third);
         await pub.waitForTransactionReceipt({ hash: checkout.txHash });
         await rpcCall("evm_mine");
