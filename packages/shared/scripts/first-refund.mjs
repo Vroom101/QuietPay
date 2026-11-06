@@ -6,7 +6,7 @@
 //   npx tsx scripts/first-refund.mjs
 import { createPublicClient, createWalletClient, defineChain, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { assertQualifyingConfig, buildRefundAuthorization, computeRefundNonce, paymentRouterAbi, parseUsdt } from "@quietpay/shared";
+import { assertQualifyingConfig, getQualifyingDeployment, buildRefundAuthorization, computeRefundNonce, paymentRouterAbi, parseUsdt } from "@quietpay/shared";
 
 const e = process.env;
 for (const k of ["RPC_URL", "ROUTER_ADDRESS", "USDT_ADDRESS", "MERCHANT_ID", "ORDER_ID", "AMOUNT", "REFUND_SIGNER_PRIVATE_KEY", "RELAYER_PRIVATE_KEY"]) {
@@ -19,6 +19,11 @@ const signer = privateKeyToAccount(e.REFUND_SIGNER_PRIVATE_KEY);
 const wallet = createWalletClient({ account: relayer, chain, transport: http(e.RPC_URL) });
 const router = e.ROUTER_ADDRESS;
 assertQualifyingConfig({ chainId: 1874, tokenAddress: e.USDT_ADDRESS });
+if (router.toLowerCase() !== getQualifyingDeployment().router.toLowerCase()) {
+  throw new Error(`Refusing: ROUTER_ADDRESS ${router} is not the qualifying router ${getQualifyingDeployment().router}`);
+}
+const nodeChain = await pub.getChainId();
+if (nodeChain !== 1874) throw new Error(`Refusing: the node reports chain ${nodeChain}, not 1874`);
 const amount = parseUsdt(e.AMOUNT); // a decimal such as 2 or 2.5, parsed strictly
 
 const receipt = await pub.readContract({ address: router, abi: paymentRouterAbi, functionName: "receipts", args: [e.MERCHANT_ID, e.ORDER_ID] });
