@@ -12,7 +12,7 @@ describe("ATTACK: paid API limits and error bodies", () => {
   it("has body-size and timeout limits", () => {
     const a = make();
     expect(a.initialConfig.bodyLimit).toBeLessThanOrEqual(64 * 1024);
-    expect(a.initialConfig.requestTimeout).toBeGreaterThan(0);
+    expect(a.server.requestTimeout).toBeGreaterThan(0);
     expect(a.initialConfig.connectionTimeout).toBeGreaterThan(0);
     expect(a.server.headersTimeout).toBeGreaterThan(0);
   });

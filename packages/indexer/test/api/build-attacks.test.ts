@@ -10,7 +10,7 @@ describe("ATTACK: indexer merchant-ledger API", () => {
   it("has body-size and timeout limits", () => {
     const a = make();
     expect(a.initialConfig.bodyLimit).toBeLessThanOrEqual(4 * 1024 * 1024);
-    expect(a.initialConfig.requestTimeout).toBeGreaterThan(0);
+    expect(a.server.requestTimeout).toBeGreaterThan(0);
     expect(a.initialConfig.connectionTimeout).toBeGreaterThan(0);
     expect(a.server.headersTimeout).toBeGreaterThan(0);
   });

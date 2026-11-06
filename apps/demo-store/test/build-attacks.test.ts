@@ -16,7 +16,7 @@ afterAll(() => app.close());
 describe("ATTACK: demo-store merchant server limits and errors", () => {
   it("has body-size and timeout limits", () => {
     expect(app.initialConfig.bodyLimit).toBeLessThanOrEqual(256 * 1024);
-    expect(app.initialConfig.requestTimeout).toBeGreaterThan(0);
+    expect(app.server.requestTimeout).toBeGreaterThan(0);
     expect(app.initialConfig.connectionTimeout).toBeGreaterThan(0);
     expect(app.server.headersTimeout).toBeGreaterThan(0);
   });

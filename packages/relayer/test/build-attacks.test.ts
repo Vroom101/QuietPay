@@ -125,8 +125,8 @@ describe("ATTACK: request limits exist on the server", () => {
     const { svc } = makeEnv();
     const app = buildServer(svc);
     expect(app.initialConfig.bodyLimit).toBeLessThanOrEqual(64 * 1024);
-    expect(app.initialConfig.requestTimeout).toBeGreaterThan(0);
-    expect(app.initialConfig.requestTimeout).toBeLessThanOrEqual(60_000);
+    expect(app.server.requestTimeout).toBeGreaterThan(0);
+    expect(app.server.requestTimeout).toBeLessThanOrEqual(60_000);
     expect(app.initialConfig.connectionTimeout).toBeGreaterThan(0);
     expect(app.server.headersTimeout).toBeGreaterThan(0);
     expect(app.server.headersTimeout).toBeLessThanOrEqual(30_000);

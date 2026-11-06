@@ -25,7 +25,7 @@ describe("ATTACK: facilitator routes (combined with the relayer server)", () => 
   it("bad JSON and oversize bodies get fixed errors, and the limits exist", async () => {
     const { a } = await app();
     expect(a.initialConfig.bodyLimit).toBeLessThanOrEqual(64 * 1024);
-    expect(a.initialConfig.requestTimeout).toBeGreaterThan(0);
+    expect(a.server.requestTimeout).toBeGreaterThan(0);
     expect(a.initialConfig.connectionTimeout).toBeGreaterThan(0);
     const bad = await a.inject({ method: "POST", url: "/settle", headers: { "content-type": "application/json" }, payload: "{oops" });
     const big = await a.inject({ method: "POST", url: "/settle", headers: { "content-type": "application/json" }, payload: JSON.stringify({ p: "x".repeat(80_000) }) });
