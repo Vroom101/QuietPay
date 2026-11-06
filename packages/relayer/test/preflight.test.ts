@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const client = vi.hoisted(() => ({ getChainId: vi.fn(), getCode: vi.fn(), getBalance: vi.fn(), readContract: vi.fn() }));
 vi.mock("viem", async importOriginal => ({ ...await importOriginal<typeof import("viem")>(), createPublicClient: () => client }));
-import { preflight } from "../src/preflight.js";
+import { preflight, isEntryPoint, main } from "../src/preflight.js";
 import { REFUND_TAG } from "@quietpay/shared";
 import { hashDomain } from "viem";
 import { makeCfg, PAYOUT } from "./helpers.js";
@@ -44,5 +44,66 @@ describe("read-only deployment preflight", () => {
     const original = client.readContract.getMockImplementation()!;
     client.readContract.mockImplementation(async args => args.functionName === "isRelayer" ? false : original(args));
     await expect(preflight(makeCfg())).rejects.toThrow("not allowlisted");
+  });
+});
+
+describe("preflight: every remaining refusal", () => {
+  const override = (fn: string, value: unknown) => {
+    const original = client.readContract.getMockImplementation()!;
+    client.readContract.mockImplementation(async args => (args.functionName === fn ? value : original(args)));
+  };
+  it("rejects a router whose token is not the configured USDT", async () => {
+    override("token", "0x" + "99".repeat(20));
+    await expect(preflight(makeCfg())).rejects.toThrow("Router token does not match USDT_ADDRESS.");
+  });
+  it("rejects a router with another refund authorization version", async () => {
+    override("REFUND_TAG", "0x" + "00".repeat(32));
+    await expect(preflight(makeCfg())).rejects.toThrow("refund authorization version");
+  });
+  it("rejects a token that does not use six decimals", async () => {
+    override("decimals", 18);
+    await expect(preflight(makeCfg())).rejects.toThrow("six decimals");
+  });
+  it("rejects a merchant that is not registered on the router", async () => {
+    const original = client.readContract.getMockImplementation()!;
+    client.readContract.mockImplementation(async args => (args.functionName === "merchants" ? ["0x" + "00".repeat(20), "0x" + "00".repeat(20), 0n] : original(args)));
+    await expect(preflight(makeCfg())).rejects.toThrow(/is not registered\./);
+  });
+  it("rejects a router with no code but a token with code, and the reverse", async () => {
+    client.getCode.mockResolvedValueOnce(undefined).mockResolvedValueOnce("0x1234");
+    await expect(preflight(makeCfg())).rejects.toThrow("ROUTER_ADDRESS has no deployed code.");
+    client.getCode.mockReset();
+    client.getCode.mockResolvedValueOnce("0x1234").mockResolvedValueOnce("0x");
+    await expect(preflight(makeCfg())).rejects.toThrow("USDT_ADDRESS has no deployed code.");
+  });
+  it("reports a low balance and a paused router without failing", async () => {
+    client.getBalance.mockResolvedValue(1n);
+    override("paused", true);
+    expect(await preflight(makeCfg())).toMatchObject({ ok: true, lowBalance: true, paused: true });
+  });
+});
+
+describe("preflight CLI wrapper", () => {
+  it("isEntryPoint is true only for the module that was started", () => {
+    const here = new URL("../src/preflight.ts", import.meta.url);
+    expect(isEntryPoint(undefined, here.href)).toBe(false);
+    expect(isEntryPoint("", here.href)).toBe(false);
+    expect(isEntryPoint(new URL("../src/other.ts", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), here.href)).toBe(false);
+    expect(isEntryPoint(decodeURIComponent(here.pathname).replace(/^\/([A-Za-z]:)/, "$1"), here.href)).toBe(true);
+  });
+  it("main prints a failure message and sets a non-zero exit code when the configuration is missing", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const saved = { ...process.env };
+    for (const k of Object.keys(process.env)) delete process.env[k];
+    const code = process.exitCode;
+    try {
+      await main();
+      expect(process.exitCode).toBe(1);
+      expect(err).toHaveBeenCalledWith("Preflight failed:", expect.any(String));
+    } finally {
+      process.exitCode = code;
+      Object.assign(process.env, saved);
+      err.mockRestore();
+    }
   });
 });
