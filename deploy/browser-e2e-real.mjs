@@ -92,9 +92,9 @@ try {
   const mer = await tab(browser, merchant);
   await mer.page.goto(DASH);
   await mer.page.getByRole("button", { name: /Sign in with MetaMask/ }).click();
-  await mer.page.getByText(/Signed in as/).first().waitFor({ timeout: 30_000 }).then(
+  await mer.page.getByTestId("wallet-chip").waitFor({ timeout: 30_000 }).then(
     () => check("merchant signed in with their wallet (EIP-4361 style challenge)", true),
-    () => check("merchant signed in with their wallet (EIP-4361 style challenge)", false, "no 'Signed in as'"),
+    () => check("merchant signed in with their wallet (EIP-4361 style challenge)", false, "no wallet chip in the header"),
   );
   await mer.page.getByRole("button", { name: "Transactions", exact: true }).click();
   const refundButton = mer.page.getByRole("button", { name: "Refund", exact: true }).first();

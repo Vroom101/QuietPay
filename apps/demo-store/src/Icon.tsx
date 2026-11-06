@@ -14,6 +14,9 @@ const paths = {
   plus: <path d="M12 5v14M5 12h14" />,
   minus: <path d="M5 12h14" />,
   spark: <path d="m13 2-8 12h6l-1 8 9-12h-7l1-8Z" />,
+  team: <><circle cx="12" cy="8" r="3" /><path d="M6 20v-2a6 6 0 0 1 12 0v2H6ZM6 5a3 3 0 0 0 0 6m12-6a3 3 0 0 1 0 6M5 13a4 4 0 0 0-3 4v2m17-6a4 4 0 0 1 3 4v2" /></>,
+  shield: <path d="M12 22s7-3 7-9V5l-7-3-7 3v8c0 6 7 9 7 9Zm-3-10 2 2 4-4" />,
+  layers: <path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5" />,
 } satisfies Record<string, React.ReactNode>;
 
 export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: keyof typeof paths }) {

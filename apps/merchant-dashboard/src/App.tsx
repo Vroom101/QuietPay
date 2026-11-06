@@ -24,6 +24,14 @@ const statusText = (status: string) => status.replace(/_/g, " ");
 
 const views = ["Overview", "Transactions", "Refunds", "Analytics", "Billing", "Settings"] as const;
 type View = (typeof views)[number];
+const viewIcons: Record<View, string> = {
+  Overview: "M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z",
+  Transactions: "M5 4h14v16H5z M8 8h8m-8 4h8m-8 4h5",
+  Refunds: "M8 5 3 10l5 5m-5-5h12a5 5 0 0 1 0 10h-4",
+  Analytics: "M4 20V10h4v10m2 0V4h4v16m2 0v-7h4v7M3 20h18",
+  Billing: "M3 5h18v14H3z M3 10h18m-14 5h4",
+  Settings: "M4 7h16M4 17h16M8 4v6m8 4v6",
+};
 
 function loadKey(): string {
   try {
@@ -41,11 +49,12 @@ function loadWalletAddress(): string {
   }
 }
 
-function loadDemoSession(): boolean {
+function loadDemoSession(): string {
   try {
-    return sessionStorage.getItem("qp-merchant-demo") === "1";
+    const name = sessionStorage.getItem("qp-merchant-demo");
+    return name === "1" ? merchantName : name ?? "";
   } catch {
-    return false;
+    return "";
   }
 }
 
@@ -53,6 +62,8 @@ export function App() {
   const [selected, setSelected] = useState<Order>();
   const [apiKey, setApiKey] = useState(loadKey);
   const [demoSession, setDemoSession] = useState(loadDemoSession);
+  const [registering, setRegistering] = useState(() => DEMO_MODE && new URLSearchParams(window.location.search).get("signup") === "1");
+  const [businessName, setBusinessName] = useState("");
   const [draft, setDraft] = useState("");
   const [wallet, setWallet] = useState(loadWalletAddress);
   const [walletBusy, setWalletBusy] = useState(false);
@@ -62,6 +73,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("all");
   const [view, setView] = useState<View>("Overview");
+  const [dockExpanded, setDockExpanded] = useState(false);
   const [range, setRange] = useState("all");
   const request = useRef(0);
   const activeToken = useRef(apiKey);
@@ -103,7 +115,7 @@ export function App() {
     request.current++;
     activeToken.current = "";
     try { sessionStorage.removeItem(DEMO_MODE ? "qp-merchant-demo" : "qp-dashboard-token"); } catch { /* Storage may be unavailable. */ }
-    if (DEMO_MODE) setDemoSession(false);
+    if (DEMO_MODE) setDemoSession("");
     setApiKey("");
     setDraft("");
     setOrders([]);
@@ -113,9 +125,21 @@ export function App() {
     changeView("Overview");
   }
 
-  function startDemo() {
-    try { sessionStorage.setItem("qp-merchant-demo", "1"); } catch { /* Keep the session in memory. */ }
-    setDemoSession(true);
+  function startDemo(name = merchantName) {
+    try { sessionStorage.setItem("qp-merchant-demo", name); } catch { /* Keep the session in memory. */ }
+    setDemoSession(name);
+  }
+
+  function registerMerchant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = businessName.trim();
+    if (!name) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("signup");
+    window.history.replaceState(null, "", url);
+    startDemo(name);
+    setRegistering(false);
+    changeView("Overview");
   }
 
   const load = useCallback(async () => {
@@ -182,18 +206,25 @@ export function App() {
     [apiKey],
   );
 
-  if (DEMO_MODE ? !demoSession : !apiKey) {
+  if (DEMO_MODE ? registering || !demoSession : !apiKey) {
     return (
       <main className="md-shell md-signin">
         <section className="md-glass md-signin-card" aria-labelledby="merchant-signin-title">
           <div className="md-brand"><span role="img" aria-label="QuietPay" style={{ maskImage: `url("${quietPayLogo}")` }} /></div>
           <div className="md-signin-tag">{DEMO_MODE ? "DEMO WORKSPACE" : "MERCHANT ACCESS"}</div>
-          <h1 id="merchant-signin-title">Merchant verification</h1>
-          <p>{DEMO_MODE ? "Preview how a merchant enters the dashboard. Verification is simulated for this demo." : "Enter your dashboard access token to open your merchant workspace."}</p>
-          {DEMO_MODE ? (
+          <h1 id="merchant-signin-title">{registering ? "Register your business" : "Merchant verification"}</h1>
+          <p>{registering ? "Set up a demo merchant workspace. No verification email is sent, and your email stays in this form." : DEMO_MODE ? "Preview how a merchant enters the dashboard. Verification is simulated for this demo." : "Enter your dashboard access token to open your merchant workspace."}</p>
+          {registering ? (
+            <form onSubmit={registerMerchant}>
+              <label>Business name<input value={businessName} onChange={(event) => setBusinessName(event.target.value)} autoComplete="organization" maxLength={80} required /></label>
+              <label>Business email<input type="email" autoComplete="email" maxLength={254} required /></label>
+              <button type="submit" className="md-signin-submit" disabled={!businessName.trim()}>Create demo workspace <span aria-hidden="true">→</span></button>
+            </form>
+          ) : DEMO_MODE ? (
             <>
               <div className="md-signin-account"><span>Demo merchant</span><strong>{merchantName}</strong></div>
-              <button type="button" className="md-signin-submit" onClick={startDemo}>Continue as demo merchant <span aria-hidden="true">→</span></button>
+              <button type="button" className="md-signin-submit" onClick={() => startDemo()}>Continue as demo merchant <span aria-hidden="true">→</span></button>
+              <a className="md-signin-link" href="?signup=1">Register a demo business</a>
             </>
           ) : (
             <form onSubmit={saveKey}>
@@ -209,17 +240,25 @@ export function App() {
   }
 
   return (
-    <div className="md-shell">
+    <div className="md-shell md-dashboard" data-dock-expanded={dockExpanded}>
       <aside className="md-glass md-sidebar">
-        <div className="md-brand">
-          <span role="img" aria-label="QuietPay" style={{ maskImage: `url("${quietPayLogo}")` }} />
+        <div className="md-dock-top">
+          <div className="md-brand">
+            <span role="img" aria-label="QuietPay" style={{ maskImage: `url("${quietPayLogo}")` }} />
+          </div>
+          <button className="md-dock-toggle" type="button" aria-expanded={dockExpanded} aria-controls="md-dock-nav" aria-label={dockExpanded ? "Collapse navigation" : "Expand navigation"} title={dockExpanded ? "Collapse navigation" : "Expand navigation"} onClick={() => setDockExpanded((expanded) => !expanded)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
+          </button>
         </div>
-        <nav aria-label="Merchant navigation">
+        <nav id="md-dock-nav" aria-label="Merchant navigation">
           {views.filter((item) => item !== "Billing" || DEMO_MODE).map((item) => (
-            <button key={item} type="button" aria-current={view === item ? "page" : undefined} onClick={() => changeView(item)}>{item}</button>
+            <button key={item} type="button" aria-label={item} title={dockExpanded ? undefined : item} aria-current={view === item ? "page" : undefined} onClick={() => changeView(item)}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d={viewIcons[item]} /></svg>
+              {dockExpanded && <span>{item}</span>}
+            </button>
           ))}
         </nav>
-        <div className="md-side-note"><strong>{merchantName}</strong><span>{DEMO_MODE ? "Storefront demo" : wallet ? "Signed in as " + shortAddress(wallet) : "Dashboard token access"}</span></div>
+        {dockExpanded && <div className="md-side-note"><strong>{DEMO_MODE ? demoSession : merchantName}</strong><span>{DEMO_MODE ? "Storefront demo" : wallet ? "Signed in as " + shortAddress(wallet) : "Dashboard token access"}</span></div>}
       </aside>
       <main className="md-main">
         <header className="md-top">
@@ -228,10 +267,11 @@ export function App() {
             <label className="md-glass md-range">Order date <select value={range} onChange={(event) => setRange(event.target.value)}>
               <option value="all">All time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option>
             </select></label>
+            {!DEMO_MODE && wallet && hasAccess && <span className="md-glass md-wallet-chip" data-testid="wallet-chip" title={wallet} style={{ padding: "0.55rem 0.9rem", borderRadius: "0.9rem", fontFamily: "ui-monospace, monospace", fontSize: "0.85rem" }}>{shortAddress(wallet)}</span>}
             <button className="md-glass" disabled={!hasAccess || loading} onClick={() => void load()}>Refresh</button>
           </div>
         </header>
-        <div className="md-heading"><h1>{view}</h1><p>{view === "Overview" ? "Your payments at a glance" : view === "Refunds" ? "Review refunds and manage eligible payments." : merchantName + " merchant workspace"}</p></div>
+        <div className="md-heading"><h1>{view}</h1><p>{view === "Overview" ? (DEMO_MODE ? `${demoSession} · Payments at a glance` : "Your payments at a glance") : view === "Refunds" ? "Review refunds and manage eligible payments." : (DEMO_MODE ? demoSession : merchantName) + " merchant workspace"}</p></div>
         {!DEMO_MODE && (!hasAccess || view === "Settings") && (
           <form onSubmit={saveKey} className="md-glass md-access">
             <label>Dashboard access token<input type="password" value={draft} onChange={(e) => setDraft(e.target.value)} autoComplete="off" required /></label>
