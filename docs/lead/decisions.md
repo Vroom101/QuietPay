@@ -57,3 +57,10 @@
 
 ## Net amount meaning (L3, Opus R1)
 Merchant view, unclamped: `net = value - fee - refunded`, negative after a refund beyond `value - fee`. The payout receives `value - fee` and refunds are funded by the merchant's refund signer, so clamping would hide a real loss and overstate income when rows are summed. Only `net_usdt` may carry a sign; `-0.000000` is invalid. Dashboard (A): if it shows net, it must render a leading minus.
+
+## Router review R1/R3 (Opus, read-only): three Low findings, accepted, no redeploy
+Contract change gate: no Critical or High, so the qualifying router stays. Each is pinned by `contracts/test/ExpectedLimitations.t.sol`.
+1. **Outgoing transfers are not balance-checked** (only the pull is). A token whose admin enables a transfer-only fee would underpay the merchant or payer while events claim full amounts. Mitigation: monitor the token implementation and fee rate off-chain. Fix in a later router: check balance deltas on both payout legs and the refund leg.
+2. **Plain `Ownable`**: `pause()` then `renounceOwnership()` (or a mistyped transfer) locks `pay` and `refund` for good. The router holds no funds. Later router: `Ownable2Step`, disable renounce.
+3. **Zero `orderId`/`merchantId` accepted.** Mitigation now: relayer must reject zero ids (listed for B in `shared-change.md`). Later router: revert on zero ids.
+Checked with no new finding: reentrancy, paused or blacklisting token, signer rotation, payout change, same order under two merchants, fee at value-1, nonce collisions across pay and refund, high-s signatures.
