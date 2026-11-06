@@ -41,4 +41,8 @@ consumed the nonce, paid the merchant and relayer exactly, rejected a replay, an
 separate refundSigner. This is a simulation on forked state, **not** a broadcast transaction, so it does not replace
 the live tx link below.
 
-Transaction link: _pending (needs a funded relayer key)_
+## Live gasless execution (2026-11-06)
+
+A zero-WBT payer completed a gasless payment through the deployed router on chain 1874: https://explorer.testnet.whitechain.io/tx/0xa7376dddb584f27c61ba67a793c86ef79dc040c077d899921cabe025bb0a4e70.
+That run used our testnet `DemoUSDT` (the official test USDT has no faucet, so we could not fund a payer with it).
+The official token's signature acceptance is covered by the fork test above, not by a broadcast transaction.

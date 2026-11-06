@@ -1,7 +1,8 @@
 # Refunds
 
-Gasless partial refunds in `PaymentRouter`. Status: **contract, tests, shared builders and mock endpoints done.
-Not yet deployed, verified or run on the testnet** (P0 itself is not deployed yet; see `deploy.md`).
+Gasless partial refunds in `PaymentRouter`. Status: **contract, tests, shared builders and mock endpoints done. Deployed, verified and used on the testnet.**
+The relayer HTTP endpoints for refunds are not built yet; the live refund below was submitted by the relayer wallet
+directly through `packages/shared/scripts/first-refund.mjs`.
 
 ## Flow
 
@@ -41,5 +42,8 @@ itself an allowlisted relayer, so only the reentrancy guard can stop the nested 
 
 ## Real testnet refund
 
-_Pending._ After deploying: fund the demo merchant's `refundSigner` with test USDT, make a payment, request a quote,
-sign, relay, and paste the explorer link here.
+Partial refund of 2.00 of the 5.00 demo USDT paid in `first-payment.md`, signed by the demo merchant's refundSigner and
+submitted by the relayer wallet: https://explorer.testnet.whitechain.io/tx/0xf628b683710360ccc20c1de1287e522d429112a1f431547bc798ea62384c0038
+
+Afterwards the payer's balance rose by exactly 2.00 USDT and the refundSigner's fell by 2.00; the order's
+`refundCount` is 1 and `totalRefunded` is 2.00. The router is the verified contract at https://explorer.testnet.whitechain.io/address/0x6a765694262E1c9CdDbb1C76008a61df7f58D86f.

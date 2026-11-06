@@ -20,7 +20,7 @@
 5. Host the relayer (`render.yaml`), set secrets in the dashboard, fund the relayer with WBT.
    Set `EXPLORER_BASE_URL` to the real explorer (not confirmed during the build).
 6. Mint demo USDT to the payer and refund signer with `cast send <token> "faucet(address,uint256)" <addr> 100000000`.
-   Run `scripts/first-payment.mjs` with a payer that holds USDT and zero WBT. Put the explorer link in
+   Run `packages/shared/scripts/first-payment.mjs` with a payer that holds USDT and zero WBT. Put the explorer link in
    `docs/lead/first-payment.md` and the README.
 
 Freeze contract signatures at hour 22.

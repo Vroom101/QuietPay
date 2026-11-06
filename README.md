@@ -6,7 +6,14 @@ fee in one atomic step.
 
 Built for ETHGlobal Mumbai 2026 (Whitechain: Operate and Scale tracks). **Testnet only.**
 
-> First real payment from a zero-WBT payer: _pending. It needs funded testnet keys; see `docs/lead/deploy.md`._
+## Live on Whitechain Sepolia (chain 1874)
+
+| | |
+| --- | --- |
+| PaymentRouter (verified) | [0x6a765694262E1c9CdDbb1C76008a61df7f58D86f](https://explorer.testnet.whitechain.io/address/0x6a765694262E1c9CdDbb1C76008a61df7f58D86f) |
+| DemoUSDT (verified, testnet stand-in, not Tether) | [0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4](https://explorer.testnet.whitechain.io/address/0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4) |
+| First payment from a payer with zero WBT | [tx](https://explorer.testnet.whitechain.io/tx/0xa7376dddb584f27c61ba67a793c86ef79dc040c077d899921cabe025bb0a4e70) |
+| First partial refund | [tx](https://explorer.testnet.whitechain.io/tx/0xf628b683710360ccc20c1de1287e522d429112a1f431547bc798ea62384c0038) |
 
 ## How it works
 
@@ -57,5 +64,5 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
   faucet. It is not Tether. Mainnet is a config change to the real USDT. USDT only, testnet only, no audit. No INR conversion or production custody is claimed.
 - The relayer is a trusted gas sponsor: it can censor or pause, but cannot redirect funds or exceed the fee cap.
 - The rate limiter is in memory; the gas loss budget is persisted.
-- Not done yet: live deployment and first real payment, hosted relayer, explorer verification, a browser run of the widget.
+- Not done yet: hosted relayer (payments so far ran through a local relayer), relayer refund endpoints, a browser run of the widget.
 - P1 (refunds, ledger and verifier, x402) is not started.

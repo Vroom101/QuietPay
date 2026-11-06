@@ -9,3 +9,8 @@
 ## CP2 (full checkout): code complete locally, tag `cp2-local`
 - Widget, relayer, SDK, store and dashboard merged; TS tests include an anvil end-to-end run with a zero-balance payer.
 - Not yet run: live chain, hosted relayer, browser walkthrough.
+
+## Update 2026-11-06: live on testnet
+- DemoUSDT and PaymentRouter (with refunds) deployed and source-verified on chain 1874.
+- Real gasless payment from a zero-WBT payer and a real partial refund recorded (see `first-payment.md`, `refund.md`).
+- Still open: hosted relayer, relayer refund endpoints, browser run of the widget, P1.
