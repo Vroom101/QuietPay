@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { QuietpayError, buildCheckoutAuthorization, type ErrorCode, type Order } from "@quietpay/shared";
+import { QuietpayError, buildCheckoutAuthorization, type ErrorCode, type Order, QUALIFYING_USDT, getQualifyingDeployment } from "@quietpay/shared";
 import { NonceManager } from "../src/chain.js";
 import { loadConfig } from "../src/config.js";
 import { Db } from "../src/db.js";
@@ -55,11 +55,11 @@ function deliveries(db: Db, type: string): number {
 
 const baseEnv = {
   RPC_URL: "http://localhost:8545",
-  USDT_ADDRESS: "0x" + "11".repeat(20),
-  ROUTER_ADDRESS: "0x" + "22".repeat(20),
+  USDT_ADDRESS: QUALIFYING_USDT,
+  ROUTER_ADDRESS: getQualifyingDeployment().router,
   RELAYER_PRIVATE_KEY: "0x" + "33".repeat(32),
   OPERATOR_TOKEN: "operator-token-123456",
-  MERCHANT_API_KEYS: "k:0x" + "01".repeat(32),
+  MERCHANT_API_KEYS: "merchant-key-0123456789abcdef:0x" + "01".repeat(32),
   WEBHOOK_SECRET: "whsec_0123456789abcdef",
 };
 

@@ -54,18 +54,28 @@ export function buildServer(svc: RelayerService): FastifyInstance {
     return reply.code(500).send({ error: { code: "simulation_failed", message: "Something went wrong on our side." } });
   });
 
+  // Failed bearer-token attempts (merchant key or operator token) are counted per client IP; once an IP has
+  // used up its failures the credential check is not even evaluated, so online key guessing is throttled.
+  const authFailLimiter = new RateLimiter(10, 60_000);
+  const authBlocked = (req: FastifyRequest) => !authFailLimiter.wouldAllow(clientKey(ipOf(req)));
+  const authFailed = (req: FastifyRequest) => void authFailLimiter.allow(clientKey(ipOf(req)));
+
   const merchantFromKey = (req: FastifyRequest, reply: FastifyReply) => {
+    if (authBlocked(req)) throw new QuietpayError("rate_limited");
     const key = bearer(req);
     const merchant = key ? svc.cfg.apiKeys.get(key) : undefined;
     if (!merchant) {
+      authFailed(req);
       void reply.code(401).send({ error: { code: "bad_signature", message: "Invalid API key." } });
       return undefined;
     }
     return merchant;
   };
   const operatorOnly = (req: FastifyRequest, reply: FastifyReply) => {
+    if (authBlocked(req)) throw new QuietpayError("rate_limited");
     const t = bearer(req);
     if (!t || !safeEqual(t, svc.cfg.operatorToken)) {
+      authFailed(req);
       void reply.code(401).send({ error: { code: "bad_signature", message: "Operator token required." } });
       return false;
     }
@@ -94,6 +104,7 @@ export function buildServer(svc: RelayerService): FastifyInstance {
   });
 
   app.get("/v1/orders", async (req, reply) => {
+    if (!ordersLimiter.allow(clientKey(ipOf(req)))) throw new QuietpayError("rate_limited");
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
     return { orders: svc.listOrders(merchant) };

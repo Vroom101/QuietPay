@@ -229,3 +229,15 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
     getBlockNumber: () => pub.getBlockNumber(),
   };
 }
+
+/**
+ * Startup check: the node behind RPC_URL must really report the configured chain id (the env value alone
+ * is not trusted). Throws on mismatch or when the node cannot be reached.
+ */
+export async function assertNodeChainId(rpcUrl: string, expected: number): Promise<void> {
+  const client = createPublicClient({ transport: http(rpcUrl) });
+  const actual = await client.getChainId();
+  if (actual !== expected) {
+    throw new Error(`RPC node reports chain id ${actual}, expected ${expected}; refusing to start`);
+  }
+}

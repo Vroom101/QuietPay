@@ -1,6 +1,6 @@
 import { loadConfig } from "./config.js";
 import { Db } from "./db.js";
-import { makeChain } from "./chain.js";
+import { assertNodeChainId, makeChain } from "./chain.js";
 import { RelayerService } from "./service.js";
 import { buildServer } from "./server.js";
 import { WebhookWorker } from "./webhooks.js";
@@ -12,6 +12,7 @@ const log = (msg: string, extra?: Record<string, unknown>) =>
 // transition is compare-and-set), but each process manages the relayer key's nonce on its own. Run one
 // process per relayer key, or put a shared lock around signing/sending, before scaling horizontally.
 const cfg = loadConfig();
+await assertNodeChainId(cfg.rpcUrl, cfg.chainId);
 const db = new Db(cfg.databasePath);
 const chain = makeChain({ rpcUrl: cfg.rpcUrl, chainId: cfg.chainId, router: cfg.router, relayerKey: cfg.relayerKey });
 const svc = new RelayerService({ cfg, db, chain, log });

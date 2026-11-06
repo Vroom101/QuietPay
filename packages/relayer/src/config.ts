@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { parseUnits } from "viem";
+import { assertQualifyingConfig, getQualifyingDeployment } from "@quietpay/shared";
 
 const hexAddress = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const hexKey = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
@@ -113,8 +114,17 @@ export interface Config {
 /** Lower bound for TX_MAX_AGE_SECONDS: the longest authorization window (10 min). */
 export const MIN_TX_MAX_AGE_SECONDS = 600;
 
+/** Minimum length of a merchant API key (OPERATOR_TOKEN needs 16; these are online-guessable, so longer). */
+export const MIN_API_KEY_LENGTH = 24;
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const e = EnvSchema.parse(env);
+  // Qualifying guard, no bypass: chain 1874, the official USDT, and the recorded qualifying router only.
+  assertQualifyingConfig({ chainId: e.CHAIN_ID, tokenAddress: e.USDT_ADDRESS });
+  const qualifyingRouter = getQualifyingDeployment().router;
+  if (e.ROUTER_ADDRESS.toLowerCase() !== qualifyingRouter.toLowerCase()) {
+    throw new Error(`Wrong router: expected the qualifying router ${qualifyingRouter}, got ${e.ROUTER_ADDRESS}`);
+  }
   if (e.TX_MAX_AGE_SECONDS < MIN_TX_MAX_AGE_SECONDS) {
     throw new Error(
       `TX_MAX_AGE_SECONDS must be at least ${MIN_TX_MAX_AGE_SECONDS} (got ${e.TX_MAX_AGE_SECONDS}): a shorter value fails orders whose tx is still valid and may still be mined.`,
@@ -125,6 +135,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     const [k, m] = pair.trim().split(":");
     if (!k || !m || !/^0x[0-9a-fA-F]{64}$/.test(m)) {
       throw new Error("MERCHANT_API_KEYS must be `apiKey:0x<bytes32 merchantId>` pairs");
+    }
+    if (k.length < MIN_API_KEY_LENGTH) {
+      throw new Error(`MERCHANT_API_KEYS: every API key must be at least ${MIN_API_KEY_LENGTH} characters`);
     }
     apiKeys.set(k, m as `0x${string}`);
   }

@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 import type { Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { QuietpayError, buildCheckoutAuthorization, type ErrorCode, type Order } from "@quietpay/shared";
+import { QuietpayError, buildCheckoutAuthorization, type ErrorCode, type Order, QUALIFYING_USDT, getQualifyingDeployment } from "@quietpay/shared";
 import { CANCEL_GAS, type TxReceipt } from "../src/chain.js";
 import { MIN_TX_MAX_AGE_SECONDS, loadConfig } from "../src/config.js";
 import type { Db } from "../src/db.js";
@@ -476,11 +476,11 @@ describe("round 4: FIRST_TIME_PAYER_LOSS_SHARE_PERCENT and FIRST_TIME_PAYER_LOSS
 describe("round 4: loadConfig", () => {
   const baseEnv = {
     RPC_URL: "http://localhost:8545",
-    USDT_ADDRESS: "0x" + "11".repeat(20),
-    ROUTER_ADDRESS: "0x" + "22".repeat(20),
+    USDT_ADDRESS: QUALIFYING_USDT,
+    ROUTER_ADDRESS: getQualifyingDeployment().router,
     RELAYER_PRIVATE_KEY: "0x" + "33".repeat(32),
     OPERATOR_TOKEN: "operator-token-123456",
-    MERCHANT_API_KEYS: "k:0x" + "01".repeat(32),
+    MERCHANT_API_KEYS: "merchant-key-0123456789abcdef:0x" + "01".repeat(32),
     WEBHOOK_SECRET: "whsec_0123456789abcdef",
   };
 

@@ -15,3 +15,6 @@ contracts/broadcast/
 .agents/
 .claude/
 skills-lock.json
+*.db-wal
+*.db-shm
+*.sqlite3
