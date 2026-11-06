@@ -1,6 +1,11 @@
 # Status
 
-## CP0 (shared specs)
-- `packages/shared` has zod schemas, error enum, typed-data builders, webhook signing, fixtures and a mock relayer. Tagged `shared-v1`.
-- Token facts read from the live USDT; primary path is `receiveWithAuthorization` (see `token-gate.md`).
-- Router written with 25 passing Foundry tests; on-chain gasless execution still pending a funded key.
+## CP0 (shared specs): done, tag `shared-v1`
+- Token facts read from the live USDT; primary path is `receiveWithAuthorization`. Live gasless tx still pending a funded key.
+
+## CP1 (router and first payment): partial
+- Router built, 25 Foundry tests pass. Not deployed or verified; no real payment yet (needs funded keys).
+
+## CP2 (full checkout): code complete locally, tag `cp2-local`
+- Widget, relayer, SDK, store and dashboard merged; TS tests include an anvil end-to-end run with a zero-balance payer.
+- Not yet run: live chain, hosted relayer, browser walkthrough.
