@@ -94,3 +94,37 @@ describe("cli", () => {
     expect(o.err.join("\n")).toMatch(/Wrong token/);
   });
 });
+
+describe("cli expected range and second node (L4)", () => {
+  it("--from/--to exit 1 when the sidecar range differs, 0 when it matches, and print the checkpoint", async () => {
+    const chain = scenario();
+    const { csvPath } = await files(chain);
+    const meta = JSON.parse(readFileSync(`${csvPath}.meta.json`, "utf8"));
+    const ok = io();
+    expect(await runCli([...base(csvPath), "--from", String(meta.fromBlock), "--to", String(meta.toBlock)], { makeSource: () => chain, ...ok })).toBe(0);
+    expect(ok.out.join("\n")).toMatch(/checkpoint/i);
+    const bad = io();
+    expect(await runCli([...base(csvPath), "--from", String(meta.fromBlock), "--to", String(meta.toBlock + 5)], { makeSource: () => chain, ...bad })).toBe(1);
+    expect(bad.out.join("\n")).toMatch(/range_mismatch/);
+  });
+
+  it("rejects a non-integer --from and a missing value", async () => {
+    const chain = scenario();
+    const { csvPath } = await files(chain);
+    for (const args of [["--from", "abc"], ["--to", "-1"], ["--min-confirmations", "1.5"]]) {
+      const o = io();
+      expect(await runCli([...base(csvPath), ...args], { makeSource: () => chain, ...o })).toBe(2);
+    }
+  });
+
+  it("--rpc2 exits 1 when the second node disagrees", async () => {
+    const chain = scenario();
+    const liar = scenario();
+    liar.logs = liar.logs.slice(0, -3);
+    const { csvPath } = await files(chain);
+    const o = io();
+    const code = await runCli([...base(csvPath), "--rpc2", "http://liar"], { makeSource: (u) => (u.includes("liar") ? liar : chain), ...o });
+    expect(code).toBe(1);
+    expect(o.out.join("\n")).toMatch(/rpc_disagreement/);
+  });
+});

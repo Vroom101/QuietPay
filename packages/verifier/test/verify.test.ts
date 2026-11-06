@@ -292,3 +292,72 @@ describe("qualifying guard on chain 1874", () => {
     expect(r.chainId).toBe(1874);
   });
 });
+
+describe("declared-range truncation (L4)", () => {
+  it("fails when the sidecar range is narrower than the range the verifier was told to expect", async () => {
+    const chain = scenario();
+    const { meta, csv, metaText } = await valid();
+    // attacker keeps only the first rows and shrinks toBlock in the sidecar so everything still self-matches
+    const shrunk = await exportWithIndexer(chain, { from: meta.fromBlock, to: 120 });
+    const r = await run(shrunk.csv, shrunk.metaText, chain, { expected: { fromBlock: meta.fromBlock, toBlock: meta.toBlock } });
+    expect(r.ok).toBe(false);
+    expect(codes(r)).toContain("range_mismatch");
+    // while the same shrunken file passes when no expectation is supplied (documents why --from/--to exists)
+    const loose = await run(shrunk.csv, shrunk.metaText, chain);
+    expect(loose.ok).toBe(true);
+    expect(csv).not.toBe(shrunk.csv);
+    expect(metaText).not.toBe(shrunk.metaText);
+  });
+
+  it("fails when only fromBlock moved, and when the sidecar range is wider", async () => {
+    const chain = scenario();
+    const { meta, csv, metaText } = await valid();
+    const r1 = await run(csv, metaText, chain, { expected: { fromBlock: meta.fromBlock + 1, toBlock: meta.toBlock } });
+    expect(codes(r1)).toContain("range_mismatch");
+    const r2 = await run(csv, metaText, chain, { expected: { fromBlock: meta.fromBlock, toBlock: meta.toBlock - 1 } });
+    expect(codes(r2)).toContain("range_mismatch");
+  });
+
+  it("passes with the matching expected range and prints the checkpoint", async () => {
+    const chain = scenario();
+    const { meta, csv, metaText } = await valid();
+    const r = await run(csv, metaText, chain, { expected: { fromBlock: meta.fromBlock, toBlock: meta.toBlock } });
+    expect(r.issues).toEqual([]);
+    expect(r.checkpoint).toEqual({ fromBlock: meta.fromBlock, toBlock: meta.toBlock, eventCount: r.eventsInRange, eventSetHash: meta.eventSetHash });
+  });
+
+  it("fails when the export was made with fewer confirmations than the verifier requires", async () => {
+    const chain = scenario();
+    const { csv, metaText } = await valid();
+    const r = await run(csv, metaText, chain, { expected: { minConfirmations: 1000 } });
+    expect(codes(r)).toContain("confirmations_below_expected");
+  });
+
+  it("never says OK for an empty export over a range that has events", async () => {
+    const chain = scenario();
+    const { metaText, meta } = await valid();
+    const emptyCsv = "date_utc,source,order_id,merchant_id,payer,gross_usdt,relay_fee_usdt,refunded_usdt,net_usdt,status,tx_hash,block,log_index\n";
+    const r = await run(emptyCsv, metaText, chain, { expected: { fromBlock: meta.fromBlock, toBlock: meta.toBlock } });
+    expect(r.ok).toBe(false);
+    expect(codes(r)).toContain("missing_row");
+  });
+});
+
+describe("second RPC cross-check (L4)", () => {
+  it("passes when both nodes agree", async () => {
+    const chain = scenario();
+    const { csv, metaText } = await valid();
+    const r = await run(csv, metaText, chain, { src2: scenario() });
+    expect(r.issues).toEqual([]);
+  });
+
+  it("fails when the second node serves different logs", async () => {
+    const chain = scenario();
+    const { csv, metaText } = await valid();
+    const liar = scenario();
+    liar.logs = liar.logs.slice(0, -2);
+    const r = await run(csv, metaText, chain, { src2: liar });
+    expect(r.ok).toBe(false);
+    expect(codes(r)).toContain("rpc_disagreement");
+  });
+});

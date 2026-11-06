@@ -16,6 +16,10 @@ export function formatHuman(r: VerifyReport, csvPath?: string): string {
   L.push(`  rows          ${r.rowsInCsv} in CSV, ${r.rowsExpected ?? "-"} rebuilt from ${r.eventsInRange ?? "-"} chain events`);
   L.push(`  eventSetHash  sidecar    ${r.eventSetHash.sidecar ?? "-"}`);
   L.push(`                recomputed ${r.eventSetHash.recomputed ?? "-"}`);
+  if (r.checkpoint) {
+    L.push(`  checkpoint    blocks ${r.checkpoint.fromBlock}-${r.checkpoint.toBlock}, ${r.checkpoint.eventCount} events, hash ${r.checkpoint.eventSetHash}`);
+    L.push("                (compare this line with the publisher out of band; a self-consistent but truncated file differs here)");
+  }
   L.push("");
   L.push("Checks");
   for (const [name, status] of Object.entries(r.checks)) L.push(`  [${status.toUpperCase().padEnd(7)}] ${name}`);

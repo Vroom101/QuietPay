@@ -31,6 +31,13 @@ export interface VerifyInput {
   /** The facilitator pay-to address the export used (FACILITATOR_PAYTO). Omit if the export had none. */
   payTo?: string;
   decimals?: number;
+  /**
+   * The range and depth the reader expects, supplied OUTSIDE the export's own sidecar. Without it a forger who edits
+   * both the CSV and the sidecar to a smaller range produces a file that looks complete.
+   */
+  expected?: { fromBlock?: number; toBlock?: number; minConfirmations?: number };
+  /** A second, independent node. Its logs for the same range must be identical. */
+  src2?: VerifierSource;
   pageSize?: number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -87,6 +94,7 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
     rowsExpected: null,
     eventsInRange: null,
     eventSetHash: { sidecar: null, recomputed: null },
+    checkpoint: null,
     checks: Object.fromEntries(CHECKS.map((c) => [c, "skipped"])) as VerifyReport["checks"],
     issues,
     trust: TRUST_NOTE,
@@ -120,10 +128,34 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
     }
   }
 
+  const want = input.expected ?? {};
+  for (const [name, exp, got] of [["fromBlock", want.fromBlock, meta.fromBlock], ["toBlock", want.toBlock, meta.toBlock]] as const) {
+    if (exp !== undefined && exp !== got) {
+      issues.push({
+        check: "sidecar",
+        code: "range_mismatch",
+        field: name,
+        expected: String(exp),
+        actual: String(got),
+        message: `sidecar ${name} ${got} differs from the expected ${exp}: the export may be truncated or shifted`,
+      });
+    }
+  }
+
   // 2. Finality: refuse a range that reaches past head - confirmations.
   ran.add("finality");
+  if (want.minConfirmations !== undefined && meta.confirmations < want.minConfirmations) {
+    issues.push({
+      check: "finality",
+      code: "confirmations_below_expected",
+      field: "confirmations",
+      expected: `>= ${want.minConfirmations}`,
+      actual: String(meta.confirmations),
+      message: `export used ${meta.confirmations} confirmations, fewer than the ${want.minConfirmations} required`,
+    });
+  }
   const head = await src.getBlockNumber();
-  const finalized = head - meta.confirmations;
+  const finalized = head - Math.max(meta.confirmations, want.minConfirmations ?? 0);
   report.headBlock = head;
   report.finalizedBlock = finalized;
   if (meta.toBlock > finalized) {
@@ -139,23 +171,43 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
 
   // Fetch and decode, like the indexer does, but straight from the node.
   const paging = { pageSize: input.pageSize, sleep: input.sleep };
-  const decoded: { log: ChainLog; kind: RawEvent["kind"]; args: Record<string, string> }[] = [];
-  for (const log of await getLogsPaged(src, { address: router }, meta.fromBlock, meta.toBlock, paging)) {
-    const ev = decodeRouterLog(log);
-    if (ev) decoded.push({ log, ...ev });
-  }
-  if (payTo) {
-    const toTopic = lc(pad(payTo as Hex, { size: 32 }));
-    for (const log of await getLogsPaged(src, { address: usdt, topics: [TRANSFER_TOPIC, null, toTopic] }, meta.fromBlock, meta.toBlock, paging)) {
-      const ev = decodeTransferLog(log);
-      if (ev) decoded.push({ log, ...ev });
-    }
-  }
   const timestamps = new Map<number, number>();
   const timestamp = async (n: number) => {
     if (!timestamps.has(n)) timestamps.set(n, (await src.getBlock(n)).timestamp);
     return timestamps.get(n)!;
   };
+  const fetchLogs = async (node: VerifierSource) => {
+    const logs: ChainLog[] = [];
+    logs.push(...(await getLogsPaged(node, { address: router }, meta.fromBlock, meta.toBlock, paging)));
+    if (payTo) {
+      const toTopic = lc(pad(payTo as Hex, { size: 32 }));
+      logs.push(...(await getLogsPaged(node, { address: usdt, topics: [TRANSFER_TOPIC, null, toTopic] }, meta.fromBlock, meta.toBlock, paging)));
+    }
+    return logs;
+  };
+  const fingerprint = (logs: ChainLog[]) =>
+    logs
+      .map((l) => `${lc(l.transactionHash)}:${l.logIndex}:${l.blockNumber}:${lc(l.address)}:${l.topics.map(lc).join("|")}:${lc(l.data)}`)
+      .sort()
+      .join(";");
+  const primaryLogs = await fetchLogs(src);
+  if (input.src2) {
+    const second = await fetchLogs(input.src2);
+    if (fingerprint(second) !== fingerprint(primaryLogs)) {
+      issues.push({
+        check: "event_set_hash",
+        code: "rpc_disagreement",
+        expected: `${primaryLogs.length} logs`,
+        actual: `${second.length} logs`,
+        message: `the two RPC nodes returned different logs for blocks ${meta.fromBlock}-${meta.toBlock} (${primaryLogs.length} vs ${second.length}); do not trust either until resolved`,
+      });
+    }
+  }
+  const decoded: { log: ChainLog; kind: RawEvent["kind"]; args: Record<string, string> }[] = [];
+  for (const log of primaryLogs) {
+    const ev = log.address.toLowerCase() === router ? decodeRouterLog(log) : decodeTransferLog(log);
+    if (ev) decoded.push({ log, ...ev });
+  }
   const events: RawEvent[] = [];
   for (const { log, kind, args } of decoded) {
     events.push({
@@ -182,6 +234,7 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
   ran.add("event_set_hash");
   const recomputed = eventSetHash(events);
   report.eventSetHash.recomputed = recomputed;
+  report.checkpoint = { fromBlock: meta.fromBlock, toBlock: meta.toBlock, eventCount: events.length, eventSetHash: recomputed };
   if (recomputed !== meta.eventSetHash) {
     issues.push({
       check: "event_set_hash",

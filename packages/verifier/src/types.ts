@@ -27,6 +27,9 @@ export type IssueCode =
   // sidecar / finality
   | "bad_sidecar"
   | "to_block_not_final"
+  | "range_mismatch"
+  | "confirmations_below_expected"
+  | "rpc_disagreement"
   // rows (CSV vs rows rebuilt from chain logs)
   | "missing_row"
   | "extra_row"
@@ -78,6 +81,8 @@ export interface VerifyReport {
   rowsExpected: number | null;
   eventsInRange: number | null;
   eventSetHash: { sidecar: string | null; recomputed: string | null };
+  /** What a reader can compare out of band: the range the verifier checked, the events found, their hash. */
+  checkpoint: { fromBlock: number; toBlock: number; eventCount: number; eventSetHash: string } | null;
   checks: Record<CheckName, CheckStatus>;
   issues: Issue[];
   trust: string;

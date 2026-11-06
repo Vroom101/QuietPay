@@ -6,10 +6,15 @@ import { verifyLedger } from "./verify.js";
 
 export const USAGE = `quietpay-verifier verify --csv FILE --rpc URL --router 0x.. --usdt 0x.. [--payto 0x..]
                          [--meta FILE] [--report FILE] [--json]
+                         [--from BLOCK] [--to BLOCK] [--min-confirmations N] [--rpc2 URL]
   Recomputes a ledger export from chain logs and checks the CSV and its .meta.json sidecar.
   --meta    sidecar path (default FILE.meta.json)
   --report  where to write the JSON report (default FILE.verify.json)
   --json    print the JSON report instead of the human report
+  --from/--to  the block range you expect, taken from outside the export. Fails if the sidecar says otherwise
+               (a forger can shrink the range in both files). Always compare the printed checkpoint out of band.
+  --min-confirmations  fail if the export used a shallower finality depth
+  --rpc2    a second node; fails if it serves different logs for the range
 Exit codes: 0 everything matches, 1 mismatch, 2 usage or RPC error.`;
 
 export interface CliDeps {
@@ -19,7 +24,7 @@ export interface CliDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
-const VALUE_FLAGS = new Set(["csv", "rpc", "router", "usdt", "payto", "meta", "report"]);
+const VALUE_FLAGS = new Set(["csv", "rpc", "router", "usdt", "payto", "meta", "report", "from", "to", "min-confirmations", "rpc2"]);
 const BOOL_FLAGS = new Set(["json", "help"]);
 
 function parseArgs(args: string[]): Record<string, string | true> {
@@ -91,6 +96,21 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
       return 2;
     }
   }
+  const uint = (k: string): number | undefined | "bad" => {
+    const v = str(k);
+    if (v === undefined) return undefined;
+    return /^\d{1,15}$/.test(v) ? Number(v) : "bad";
+  };
+  const fromBlock = uint("from");
+  const toBlock = uint("to");
+  const minConf = uint("min-confirmations");
+  for (const [k, v] of [["from", fromBlock], ["to", toBlock], ["min-confirmations", minConf]] as const) {
+    if (v === "bad") {
+      deps.stderr(`--${k} must be a non-negative integer`);
+      return 2;
+    }
+  }
+  const rpc2 = str("rpc2");
   const metaPath = str("meta") ?? `${csvPath}.meta.json`;
   const reportPath = str("report") ?? `${csvPath}.verify.json`;
   if (!existsSync(csvPath!)) {
@@ -110,6 +130,8 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
       router: router!,
       usdt: usdt!,
       payTo,
+      expected: { fromBlock: fromBlock as number | undefined, toBlock: toBlock as number | undefined, minConfirmations: minConf as number | undefined },
+      src2: rpc2 ? deps.makeSource(rpc2) : undefined,
       sleep: deps.sleep,
     });
     const json = JSON.stringify({ csv: csvPath, meta: metaPath, ...report }, null, 2) + "\n";
