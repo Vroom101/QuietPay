@@ -461,6 +461,15 @@ export function createPersistentAgent(
           );
         return send(await signStored(rec));
       }
+      // Never replay an authorization past its validBefore (chain time, not the local clock).
+      let latest: bigint;
+      try {
+        latest = await cfg.chain.latestTimestamp();
+      } catch {
+        throw new AgentError("payment_status_unknown", "Chain time unavailable; not resending", id);
+      }
+      if (latest >= BigInt(rec.validBefore) && !rec.delivered && rec.state !== "settled")
+        throw new AgentError("payment_failed", "Authorization expired; recover() will resolve it", id);
       return send(rec);
     },
     /** Resolve every unresolved record from chain evidence; never signs a new nonce. */

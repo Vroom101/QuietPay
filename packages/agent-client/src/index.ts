@@ -21,6 +21,7 @@ import type { StoreConfig } from "./store.js";
 
 export * from "./store.js";
 export * from "./recovery.js";
+export * from "./facilitator.js";
 export { createPersistentAgent } from "./persistent.js";
 export type { RecoveryAction } from "./persistent.js";
 

@@ -1,8 +1,14 @@
-import { createPublicClient, getAddress, http } from "viem";
+import { createPublicClient, getAddress, http, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { z } from "zod";
 import { token } from "@quietpay/shared";
-import { AgentError, createAgent } from "@quietpay/agent-client";
+import {
+  AgentError,
+  createAgent,
+  httpFacilitatorLookup,
+  viemChainEvidence,
+  type AgentOptions,
+} from "@quietpay/agent-client";
 import { runDemo } from "./demo.js";
 
 async function main() {
@@ -21,6 +27,10 @@ async function main() {
         .regex(/^[1-9][0-9]*$/)
         .default("30000"),
       AGENT_EXPLORER_URL: z.string().url(),
+      // Opt-in crash-safe state. The secret keys the store's integrity MACs; it is never written to disk.
+      AGENT_STORE_PATH: z.string().min(1).optional(),
+      AGENT_STORE_SECRET: z.string().min(16).optional(),
+      FACILITATOR_URL: z.string().url().optional(),
     })
     .parse(process.env);
   const account = privateKeyToAccount(env.AGENT_PRIVATE_KEY as `0x${string}`);
@@ -32,7 +42,7 @@ async function main() {
     throw new Error(
       "Use a dedicated demo payer with USDT and zero native currency",
     );
-  const agent = createAgent({
+  const agentOptions: AgentOptions = {
     signer: account,
     chainId: token.chainId,
     asset: getAddress(token.address),
@@ -43,7 +53,27 @@ async function main() {
     perCallLimit: BigInt(env.AGENT_PER_CALL_LIMIT),
     sessionBudget: BigInt(env.AGENT_SESSION_BUDGET),
     explorerUrl: env.AGENT_EXPLORER_URL,
-  });
+  };
+  if (env.AGENT_STORE_PATH) {
+    if (!env.AGENT_STORE_SECRET)
+      throw new Error("AGENT_STORE_SECRET is required with AGENT_STORE_PATH");
+    agentOptions.store = {
+      path: env.AGENT_STORE_PATH,
+      secret: env.AGENT_STORE_SECRET,
+      chain: viemChainEvidence(pub as PublicClient),
+      facilitator: env.FACILITATOR_URL
+        ? httpFacilitatorLookup(env.FACILITATOR_URL)
+        : undefined,
+    };
+  }
+  const agent = createAgent(agentOptions);
+  // A restarted agent first resolves anything left in flight (same nonce, never a new one).
+  if (agentOptions.store && "recover" in agent)
+    console.log(
+      JSON.stringify({
+        recovered: await (agent as unknown as { recover(): Promise<unknown> }).recover(),
+      }),
+    );
   console.log(
     JSON.stringify({
       payer: account.address,
