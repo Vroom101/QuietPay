@@ -16,7 +16,7 @@ await assertNodeChainId(cfg.rpcUrl, cfg.chainId);
 const db = new Db(cfg.databasePath);
 const chain = makeChain({ rpcUrl: cfg.rpcUrl, chainId: cfg.chainId, router: cfg.router, relayerKey: cfg.relayerKey, nonceFloor: () => db.nonceFloor() });
 const svc = new RelayerService({ cfg, db, chain, log });
-const worker = new WebhookWorker(db, cfg.webhookSecret, undefined, undefined, log, { allowPrivate: cfg.allowPrivateWebhooks });
+const worker = new WebhookWorker(db, cfg.webhookSecret, undefined, undefined, log, { allowPrivate: cfg.allowPrivateWebhooks, pinConnections: true });
 
 svc.recoverPending();
 // Every RECONCILE_INTERVAL_SECONDS (30 s): heartbeat, sweep stale claims, and resolve every signed tx that

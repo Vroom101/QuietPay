@@ -23,7 +23,7 @@ const db = new Db(cfg.relay.databasePath),
   });
 const relayer = new RelayerService({ cfg: cfg.relay, db, chain, log }),
   facilitator = new FacilitatorService(relayer, { ...cfg, log });
-const worker = new WebhookWorker(db, cfg.relay.webhookSecret, undefined, undefined, log, { allowPrivate: cfg.relay.allowPrivateWebhooks }),
+const worker = new WebhookWorker(db, cfg.relay.webhookSecret, undefined, undefined, log, { allowPrivate: cfg.relay.allowPrivateWebhooks, pinConnections: true }),
   app = buildServer(relayer);
 await registerFacilitator(app, facilitator);
 app.addHook("onClose", async () => {
