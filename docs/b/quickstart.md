@@ -97,3 +97,11 @@ payment paid; inspect the refund's `failureCode`, fix the cause, and sign a fres
 at the same unused refund index. Full refunds do not make an order payable again.
 
 See [refund API and recovery](refunds.md) for HTTP requests and webhook fields.
+
+## Paid APIs
+
+The SDK exports paywall() middleware for server-side x402 v2 exact EIP-3009 payments.
+Run the combined facilitator with the existing relayer wallet/database and authenticate
+its calls with the merchant API key. See [facilitator operations](../../packages/facilitator/README.md)
+and [paid API usage](../../apps/paid-api/README.md). Resource execution follows confirmed
+settlement; timeouts must retry the same signed payload rather than authorizing twice.

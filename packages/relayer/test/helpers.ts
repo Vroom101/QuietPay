@@ -43,6 +43,9 @@ export class FakeChain implements ChainPort {
     if (this.simulateFails) throw new Error("execution reverted: invalid signature");
     return this.gas;
   }
+  async authorizationUsed() { return false; }
+  async simulateTransfer() { throw new Error("Configure a transfer fake for x402 tests"); return 0n; }
+  async prepareTransfer(): Promise<PreparedTx> { throw new Error("Configure a transfer fake for x402 tests"); }
   async getGasPrice() {
     return this.gasPrice;
   }

@@ -131,7 +131,10 @@ export class RelayerService {
   metrics(): MetricsResponse {
     const counts = this.db.countByStatus();
     const spent = this.db.spentSince(this.now() - HOUR);
+    const agentRows = this.db.raw.prepare("SELECT status,COUNT(*) count FROM x402_payments GROUP BY status").all() as {status:string;count:number}[];
+    const agents = Object.fromEntries(agentRows.map(r=>[r.status,r.count]));
     return {
+      agentPayments: {settling:agents.settling??0,settled:agents.settled??0,failed:agents.failed??0},
       balanceWbt: this.balanceWei === null ? null : formatUnits(this.balanceWei, 18),
       lowBalance: this.balanceLow,
       lowBalanceThresholdWbt: formatUnits(this.cfg.lowBalanceWei, 18),
@@ -190,8 +193,10 @@ export class RelayerService {
 
   // ------------------------------------------------------------------ relay
 
+  recordRejection(code: string) { this.rejected.set(code,(this.rejected.get(code)??0)+1); }
+  recordRelay() { this.relayed += 1; }
   private reject(code: ErrorCode, message?: string): never {
-    this.rejected.set(code, (this.rejected.get(code) ?? 0) + 1);
+    this.recordRejection(code);
     throw new QuietpayError(code, message);
   }
 

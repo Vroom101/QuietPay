@@ -40,6 +40,8 @@ describe("errors", () => {
       "simulation_failed",
       "fee_over_cap",
       "insufficient_refund_balance",
+      "budget_exceeded",
+      "payment_replayed",
     ]);
     for (const c of ERROR_CODES) {
       expect(ERROR_HTTP_STATUS[c]).toBeGreaterThanOrEqual(400);

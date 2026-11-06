@@ -101,6 +101,7 @@ export type HealthResponse = z.infer<typeof HealthResponse>;
 
 // ---- GET /v1/metrics (operator token) ----
 export const MetricsResponse = z.object({
+  agentPayments: z.object({settling:z.number().int(),settled:z.number().int(),failed:z.number().int()}).optional(),
   balanceWbt: z.string().nullable().optional(),
   lowBalance: z.boolean().optional(),
   lowBalanceThresholdWbt: z.string().optional(),

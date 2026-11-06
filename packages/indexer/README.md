@@ -21,7 +21,7 @@ refunded_usdt, net_usdt, status, tx_hash, block, log_index.
 Optional FACILITATOR_PAYTO plus FACILITATOR_MERCHANT_ID enables USDT Transfer accounting
 to that recipient, labeled source=x402. Router-originated transfers are excluded to avoid
 counting merchant payouts twice. These are observed transfers, not proof that an API call
-was delivered. The facilitator itself is not built yet. The payTo cannot be the router.
+was delivered. The facilitator is implemented in packages/facilitator. The payTo cannot be the router.
 
 ## Run
 
@@ -107,6 +107,8 @@ Live Whitechain exports and UI integration are still pending deployment.
 ### Current validation
 
 The indexer package has 30 passing tests, including its real Anvil/HTTP/CLI integration.
-The full workspace has 180 passing tests with both Anvil integrations enabled; workspace
+At the ledger checkpoint, the workspace had 180 passing tests with both then-existing Anvil integrations enabled; workspace
 typechecks and app/widget builds pass. No contracts were changed by this feature.
 These results use local test contracts, not a live Whitechain deployment.
+
+The subsequent x402 implementation brings the workspace total to 211 tests and three Anvil integrations.

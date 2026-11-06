@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+.git
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+**/dist
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+contracts/out
+contracts/cache
+contracts/broadcast
+.remember

@@ -4,7 +4,7 @@
 - Token facts read from the live USDT; primary path is `receiveWithAuthorization`. Live gasless tx still pending a funded key.
 
 ## CP1 (router and first payment): partial
-- Router built, 36 Foundry tests pass. Not deployed or verified; no real payment yet (needs funded keys).
+- Router built, 37 Foundry tests pass. Not deployed or verified; no real payment yet (needs funded keys).
 
 ## CP2 (full checkout): code complete locally, tag `cp2-local`
 - Widget, relayer, SDK, store and dashboard merged; TS tests include an anvil end-to-end run with a zero-balance payer.
@@ -22,3 +22,10 @@
 - Optional direct-transfer accounting is supported for an explicitly configured payTo/merchant pair; this is not an x402 facilitator implementation.
 - The verifier reports altered, missing, extra and duplicate rows and a repeatable chain checkpoint; pre-range history supports refund-only exports.
 - Live exports, hosting and a verifier/dashboard UI remain pending deployment.
+
+## x402 facilitator and paid API: implemented locally
+- x402 v2 exact EIP-3009/upfront schemas, verification, direct settlement and structured HTTP headers are implemented.
+- One combined relayer/facilitator shares the wallet nonce manager, persisted gas budget, sender lock and pause controls.
+- SDK paywall middleware guards two demo API resources and uses exclusive delivery leases with at most one failed-delivery retry.
+- Anvil integration proves paid HTTP requests, duplicate rejection, concurrent checkout/agent wallet nonces and verified ledger export.
+- Official-client interoperability, the separate agent client/demo UI, hosted services and live testnet settlement remain pending.

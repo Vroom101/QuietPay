@@ -114,3 +114,26 @@ chain indexing, partial/full refunds, direct-transfer accounting, authenticated 
 HTTP endpoints, CSV/metadata exports, independent verification, tamper detection,
 CLI exit status and an actual chain reorg. See packages/indexer/README.md for operation
 and the declared-range/RPC trust boundary. Live deployment and UI integration remain pending.
+
+## Subsequent x402 implementation
+
+The combined facilitator and paid API add x402 v2 exact EIP-3009/upfront settlement,
+structured payment headers, replay protection and exclusive delivery leases. The current
+suites total 211 passing workspace tests (22 shared, 79 relayer, 30 indexer, 19 merchant
+SDK, 29 widget, 4 dashboard, 4 demo-store, 16 facilitator and 8 paid-API), plus 37 passing
+Solidity tests. All three Anvil integrations ran. Workspace typechecks and application
+builds passed; the final uncertainty guard was checked by the paid-API tests and typecheck.
+
+The new real-chain flow exercises unpaid challenges, direct USDT settlement, exact
+Transfer-log confirmation, concurrent redemption rejection, concurrent checkout and
+agent transactions with consecutive nonces from the same gas wallet, and independent
+verification of their shared ledger export. Fault-injection tests cover slow/unknown
+settlement, reopen/recovery, same-nonce replacement, gas budgets, wrong requirements,
+expired/used signatures and bounded failed-delivery retries. Unknown settlement errors
+return 503 without inviting a new authorization. Malformed payment headers return 400.
+
+Only the repository's signer was tested; official x402 client interoperability and live
+Whitechain settlement are unverified. Dockerfiles and hosting configuration were prepared,
+but containers were not built or deployed during this implementation. The separate agent
+client/demo UI remains pending. See packages/facilitator/README.md for operation and the
+network-delivery acknowledgement limitation.

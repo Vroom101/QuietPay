@@ -205,3 +205,5 @@ export async function refund(opts: RefundOptions): Promise<Refund> {
   });
   return parse(res, Refund);
 }
+
+export { paywall, type PaywallOptions } from "./paywall.js";

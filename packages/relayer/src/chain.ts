@@ -2,6 +2,8 @@ import {
   createPublicClient,
   encodeFunctionData,
   parseAbi,
+  parseEventLogs,
+  erc20Abi,
   keccak256,
   TransactionReceiptNotFoundError,
   createWalletClient,
@@ -46,7 +48,10 @@ export interface PreparedTx {
   gasPrice: bigint;
 }
 
+export interface TransferArgs { from: Hex; to: Hex; value: bigint; validAfter: bigint; validBefore: bigint; nonce: Hex; signature: Hex }
+
 export interface TxReceipt {
+  transfers?: { token: Hex; from: Hex; to: Hex; value: bigint; logIndex: number }[];
   status: "success" | "reverted";
   gasUsed: bigint;
   effectiveGasPrice: bigint;
@@ -65,6 +70,9 @@ export interface ChainPort {
   getTokenBalance(address: Hex): Promise<bigint>;
   simulateRefund(args: RefundArgs): Promise<bigint>;
   prepareRefund(args: RefundArgs, gas: bigint, gasPrice: bigint, nonce?: number): Promise<PreparedTx>;
+  authorizationUsed(payer: Hex, nonce: Hex): Promise<boolean>;
+  simulateTransfer(args: TransferArgs): Promise<bigint>;
+  prepareTransfer(args: TransferArgs, gas: bigint, gasPrice: bigint, nonce?: number): Promise<PreparedTx>;
   getGasPrice(): Promise<bigint>;
   preparePay(args: PayArgs, gas: bigint, gasPrice: bigint, nonce?: number): Promise<PreparedTx>;
   broadcast(raw: Hex): Promise<Hex>;
@@ -114,13 +122,24 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
     [a.merchantId, a.orderId, a.payer, a.value, a.fee, a.validAfter, a.validBefore, a.signature] as const;
 
   const refundArgs = (a: RefundArgs) => [a.merchantId, a.orderId, a.amount, a.validAfter, a.validBefore, a.signature] as const;
-  const prepare = async (data: Hex, gas: bigint, gasPrice: bigint, replacementNonce?: number) => {
+  const prepare = async (data: Hex, gas: bigint, gasPrice: bigint, replacementNonce?: number, destination: Hex = router) => {
     const sign = async (nonce: number): Promise<PreparedTx> => {
-      const raw = await wallet.signTransaction({ chain, account, to: router, type: "legacy", value: 0n, data, gas, gasPrice, nonce });
+      const raw = await wallet.signTransaction({ chain, account, to: destination, type: "legacy", value: 0n, data, gas, gasPrice, nonce });
       return { hash: keccak256(raw), raw, nonce, gas, gasPrice };
     };
     return replacementNonce === undefined ? nonces.run(sign) : sign(replacementNonce);
   };
+  const tokenAbi = parseAbi([
+    "function transferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce,uint8 v,bytes32 r,bytes32 s)",
+    "function authorizationState(address authorizer,bytes32 nonce) view returns (bool)",
+  ]);
+  const tokenAddress = () => pub.readContract({address:router,abi:paymentRouterAbi,functionName:"token"});
+  const transferArgs = (a: TransferArgs) => {
+    let v = parseInt(a.signature.slice(-2),16); if (v < 27) v += 27;
+    return [a.from,a.to,a.value,a.validAfter,a.validBefore,a.nonce,v,a.signature.slice(0,66) as Hex,("0x"+a.signature.slice(66,130)) as Hex] as const;
+  };
+  const transfers = (receipt: Awaited<ReturnType<typeof pub.getTransactionReceipt>>) => parseEventLogs({abi:erc20Abi,eventName:"Transfer",logs:receipt.logs,strict:true})
+    .map(log=>({token:log.address,from:log.args.from,to:log.args.to,value:log.args.value,logIndex:log.logIndex}));
   return {
     relayerAddress: account.address,
     async getMerchant(merchantId) {
@@ -148,6 +167,17 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
       await pub.simulateContract({ address: router, abi: paymentRouterAbi, functionName: "pay", args: argList(a), account });
       return pub.estimateContractGas({ address: router, abi: paymentRouterAbi, functionName: "pay", args: argList(a), account });
     },
+    async authorizationUsed(payer,nonce) {
+      return pub.readContract({address:await tokenAddress(),abi:tokenAbi,functionName:"authorizationState",args:[payer,nonce]});
+    },
+    async simulateTransfer(a) {
+      const address=await tokenAddress();
+      await pub.simulateContract({address,abi:tokenAbi,functionName:"transferWithAuthorization",args:transferArgs(a),account});
+      return pub.estimateContractGas({address,abi:tokenAbi,functionName:"transferWithAuthorization",args:transferArgs(a),account});
+    },
+    async prepareTransfer(a,gas,gasPrice,nonce) {
+      return prepare(encodeFunctionData({abi:tokenAbi,functionName:"transferWithAuthorization",args:transferArgs(a)}),gas,gasPrice,nonce,await tokenAddress());
+    },
     getGasPrice: () => pub.getGasPrice(),
     preparePay: (a, gas, gasPrice, nonce) => prepare(encodeFunctionData({ abi: paymentRouterAbi, functionName: "pay", args: argList(a) }), gas, gasPrice, nonce),
     prepareRefund: (a, gas, gasPrice, nonce) => prepare(encodeFunctionData({ abi: paymentRouterAbi, functionName: "refund", args: refundArgs(a) }), gas, gasPrice, nonce),
@@ -169,7 +199,7 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
       try {
         const r = await pub.getTransactionReceipt({ hash });
         if (await pub.getBlockNumber({ cacheTime: 0 }) < r.blockNumber + 1n) return null;
-        return { status: r.status, gasUsed: r.gasUsed, effectiveGasPrice: r.effectiveGasPrice, blockNumber: r.blockNumber };
+        return { status: r.status, gasUsed: r.gasUsed, effectiveGasPrice: r.effectiveGasPrice, blockNumber: r.blockNumber, transfers: transfers(r) };
       } catch (e) {
         if (e instanceof TransactionReceiptNotFoundError) return null;
         throw e;
@@ -182,6 +212,7 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
         gasUsed: r.gasUsed,
         effectiveGasPrice: r.effectiveGasPrice,
         blockNumber: r.blockNumber,
+        transfers: transfers(r),
       };
     },
     getBlockNumber: () => pub.getBlockNumber(),

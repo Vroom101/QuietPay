@@ -112,6 +112,71 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
 
+  apps/paid-api:
+    dependencies:
+      '@quietpay/merchant-sdk':
+        specifier: workspace:*
+        version: link:../../packages/merchant-sdk
+      '@quietpay/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      fastify:
+        specifier: ^5.1.0
+        version: 5.12.8
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.15
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@quietpay/relayer':
+        specifier: workspace:*
+        version: link:../../packages/relayer
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
+  packages/facilitator:
+    dependencies:
+      '@quietpay/relayer':
+        specifier: workspace:*
+        version: link:../relayer
+      '@quietpay/shared':
+        specifier: workspace:*
+        version: link:../shared
+      fastify:
+        specifier: ^5.1.0
+        version: 5.12.8
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.15
+      viem:
+        specifier: ^2.21.0
+        version: 2.57.16(typescript@5.9.3)(zod@3.25.76)
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@quietpay/indexer':
+        specifier: workspace:*
+        version: link:../indexer
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
   packages/indexer:
     dependencies:
       '@quietpay/shared':
@@ -154,6 +219,9 @@ importers:
       viem:
         specifier: ^2.21.0
         version: 2.57.16(typescript@5.9.3)(zod@3.25.76)
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^20.14.0

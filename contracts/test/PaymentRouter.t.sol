@@ -59,7 +59,7 @@ contract PaymentRouterTest is Test {
     }
 
     function _unpack(bytes memory sig) internal pure returns (bytes32 r, bytes32 s, uint8 v) {
-        assembly {
+        assembly ("memory-safe") {
             r := mload(add(sig, 32))
             s := mload(add(sig, 64))
             v := byte(0, mload(add(sig, 96)))
@@ -472,6 +472,31 @@ contract PaymentRouterTest is Test {
         assertEq(router.receipts(MERCHANT, ORDER).refunded, amount);
         assertLe(router.receipts(MERCHANT, ORDER).refunded, PRICE);
         assertEq(usdt.balanceOf(address(router)), 0);
+    }
+
+    function _agentSignature(bytes32 nonce) internal view returns (bytes memory) {
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdt.DOMAIN_SEPARATOR(),
+            keccak256(abi.encode(usdt.TRANSFER_TYPEHASH(), payer, payout, uint256(1_000_000), validAfter, validBefore, nonce))));
+        (uint8 v, bytes32 r, bytes32 sigS) = vm.sign(payerPk, digest);
+        return abi.encodePacked(r, sigS, v);
+    }
+
+    function _agentTransfer(bytes32 nonce, bytes memory sig) internal {
+        (bytes32 r, bytes32 sigS, uint8 v) = _unpack(sig);
+        usdt.transferWithAuthorization(payer, payout, 1_000_000, validAfter, validBefore, nonce, v, r, sigS);
+    }
+
+    function test_agentTransferAuthorizationPaysRecipientWithoutRouterReceipt() public {
+        bytes32 nonce = keccak256("agent-payment");
+        bytes memory sig = _agentSignature(nonce);
+        vm.prank(relayer);
+        _agentTransfer(nonce, sig);
+        assertEq(usdt.balanceOf(payout), 1_000_000);
+        assertTrue(usdt.authorizationState(payer, nonce));
+        assertFalse(router.receipts(MERCHANT, ORDER).settled);
+        assertEq(payer.balance, 0);
+        vm.expectRevert(bytes("auth used"));
+        _agentTransfer(nonce, sig);
     }
 
 }

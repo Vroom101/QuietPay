@@ -100,6 +100,13 @@ export class Db {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_refund_active ON refunds(order_id,refund_index)
         WHERE status IN ('pending','settled');
+      CREATE TABLE IF NOT EXISTS x402_payments (
+        id TEXT PRIMARY KEY, payer TEXT NOT NULL, nonce TEXT NOT NULL, merchant_id TEXT NOT NULL,
+        resource TEXT NOT NULL, pay_to TEXT NOT NULL, amount TEXT NOT NULL, fingerprint TEXT NOT NULL, request TEXT NOT NULL,
+        status TEXT NOT NULL, tx_hash TEXT UNIQUE, error_reason TEXT, created_at INTEGER NOT NULL,
+        delivered_at INTEGER, delivery_attempts INTEGER NOT NULL DEFAULT 0, lease_token TEXT, lease_until INTEGER,
+        UNIQUE(payer,nonce)
+      );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
     const columns = this.raw.pragma("table_info(orders)") as { name: string }[];
@@ -166,7 +173,9 @@ export class Db {
     const rows = this.raw
       .prepare("SELECT amount FROM orders WHERE payer=? AND status IN ('pending','settled','partially_refunded','refunded') AND COALESCE(payer_volume_at,created_at)>=?")
       .all(payer.toLowerCase(), since) as { amount: string }[];
-    return rows.reduce((a, r) => a + BigInt(r.amount), 0n);
+    const agents = this.raw.prepare("SELECT amount FROM x402_payments WHERE payer=? AND status IN ('settling','settled') AND created_at>=?")
+      .all(payer.toLowerCase(),since) as {amount:string}[];
+    return [...rows,...agents].reduce((a, r) => a + BigInt(r.amount), 0n);
   }
 
   countByStatus(): Record<string, number> {
@@ -194,7 +203,7 @@ export class Db {
     return (this.raw.prepare("SELECT COALESCE(MAX(nonce)+1,0) n FROM relay_attempts").get() as { n: number }).n;
   }
 
-  saveAttempt(a: AttemptRow, target: "orders" | "refunds" = "orders") {
+  saveAttempt(a: AttemptRow, target: "orders" | "refunds" | "x402_payments" = "orders") {
     this.raw.transaction(() => {
       this.raw.prepare(`INSERT INTO relay_attempts VALUES (@hash,@order_id,@raw,@nonce,@gas,@gas_price,@sent_at,@replacement)`).run(a);
       this.raw.prepare(`UPDATE ${target} SET tx_hash=? WHERE id=?`).run(a.hash, a.order_id);
@@ -206,7 +215,7 @@ export class Db {
 
   reservedSpend(since: number): bigint {
     const rows = this.raw.prepare(`SELECT s.wei FROM spend s WHERE s.ts>=? OR EXISTS
-      (SELECT 1 FROM orders o WHERE o.status='pending' AND o.tx_hash=s.tx_hash) OR EXISTS (SELECT 1 FROM refunds r WHERE r.status='pending' AND r.tx_hash=s.tx_hash)`).all(since) as { wei: string }[];
+      (SELECT 1 FROM orders o WHERE o.status='pending' AND o.tx_hash=s.tx_hash) OR EXISTS (SELECT 1 FROM refunds r WHERE r.status='pending' AND r.tx_hash=s.tx_hash) OR EXISTS (SELECT 1 FROM x402_payments x WHERE x.status='settling' AND x.tx_hash=s.tx_hash)`).all(since) as { wei: string }[];
     return rows.reduce((sum, r) => sum + BigInt(r.wei), 0n);
   }
 
