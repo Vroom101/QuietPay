@@ -13,6 +13,8 @@ export const token = tokenJson;
 
 /** keccak256("quietpay.pay.v1") */
 export const PAY_TAG = keccak256(stringToHex("quietpay.pay.v1"));
+/** keccak256("quietpay.refund.v1") */
+export const REFUND_TAG = keccak256(stringToHex("quietpay.refund.v1"));
 /** validBefore may be at most this many seconds after validAfter. */
 export const MAX_AUTH_WINDOW_SECONDS = 600;
 
@@ -126,4 +128,41 @@ export function formatUsdt(value: bigint | string, decimals: number = token.deci
 export function parseUsdt(amount: string): bigint {
   const [w, f = ""] = amount.split(".");
   return BigInt(w || "0") * 10n ** BigInt(token.decimals) + BigInt(f.padEnd(token.decimals, "0").slice(0, token.decimals));
+}
+
+/** Must match PaymentRouter.computeRefundNonce. `payer` comes from the receipt, never from the caller. */
+export function computeRefundNonce(args: {
+  merchantId: Hex;
+  orderId: Hex;
+  payer: Address;
+  amount: bigint;
+  refundIndex: bigint | number;
+}): Hex {
+  return keccak256(
+    encodeAbiParameters(parseAbiParameters("bytes32, bytes32, bytes32, address, uint256, uint256"), [
+      REFUND_TAG,
+      args.merchantId,
+      args.orderId,
+      args.payer,
+      args.amount,
+      BigInt(args.refundIndex),
+    ]),
+  );
+}
+
+export interface RefundAuthorizationInput extends Omit<CheckoutAuthorizationInput, "from" | "value"> {
+  /** The merchant's refundSigner wallet. It signs; the router forwards to the stored payer. */
+  refundSigner: Address;
+  /** Refund amount in token base units. */
+  amount: bigint;
+}
+
+/** Same ReceiveWithAuthorization shape as checkout: from = refundSigner, to = router, value = refund amount. */
+export function buildRefundAuthorization(i: RefundAuthorizationInput) {
+  const { refundSigner, amount, ...rest } = i;
+  return buildCheckoutAuthorization({ ...rest, from: refundSigner, value: amount });
+}
+
+export function recoverRefundSigner(input: RefundAuthorizationInput, signature: Hex): Promise<Address> {
+  return recoverTypedDataAddress({ ...buildRefundAuthorization(input), signature });
 }

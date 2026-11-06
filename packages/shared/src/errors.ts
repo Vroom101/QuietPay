@@ -11,6 +11,9 @@ export const ERROR_CODES = [
   "rate_limited",
   "simulation_failed",
   "fee_over_cap",
+  // added with refunds (shared-change)
+  "insufficient_refund_balance",
+  "payment_replayed",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -35,6 +38,8 @@ export const ERROR_HTTP_STATUS: Record<ErrorCode, number> = {
   rate_limited: 429,
   simulation_failed: 422,
   fee_over_cap: 422,
+  insufficient_refund_balance: 422,
+  payment_replayed: 409,
 };
 
 /** Plain-words text for end users. Never mentions gas, WBT or transactions. */
@@ -48,6 +53,8 @@ export const ERROR_USER_MESSAGES: Record<ErrorCode, string> = {
   rate_limited: "Too many attempts. Please wait a minute and try again.",
   simulation_failed: "This payment could not go through, and you have not been charged. Please check your balance and try again.",
   fee_over_cap: "This payment could not be processed right now, and you have not been charged. Please try again later.",
+  insufficient_refund_balance: "The merchant's refund wallet does not hold enough to cover this refund yet. Please top it up and try again.",
+  payment_replayed: "This approval was already used. Please start a new payment.",
 };
 
 export function errorBody(code: ErrorCode, message?: string): ErrorResponse {

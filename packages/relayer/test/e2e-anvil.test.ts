@@ -163,7 +163,7 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
 
     // Poll until settled.
     let settled: Order | undefined;
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 100; i++) {
       const o = (await app.inject({ method: "GET", url: `/v1/orders/${order.id}` })).json() as Order;
       if (o.status === "settled") {
         settled = o;

@@ -365,6 +365,18 @@ contract PaymentRouterRefundTest is Test {
         router.pay(MERCHANT, ORDER, payer, PRICE, FEE, vA, b2, sig);
     }
 
+    /// @dev Pinned against packages/shared computeRefundNonce so on-chain and TS agree.
+    function test_refundNonceMatchesSharedTypeScriptBuilder() public view {
+        bytes32 n = router.computeRefundNonce(
+            bytes32(hex"0101010101010101010101010101010101010101010101010101010101010101"),
+            bytes32(hex"0202020202020202020202020202020202020202020202020202020202020202"),
+            0x3333333333333333333333333333333333333333,
+            5_000_000,
+            0
+        );
+        assertEq(n, 0x714ed318025e3e52735fc272c242c144d0bf97a60518adfe2f729adb50b29d66);
+    }
+
     // ------------------------------------------------------------ registry interaction
 
     function test_refundSignerIsPerMerchant() public {
