@@ -10,3 +10,8 @@ contracts/cache/
 contracts/broadcast/
 .remember/
 .DS_Store
+
+# local agent tooling
+.agents/
+.claude/
+skills-lock.json
