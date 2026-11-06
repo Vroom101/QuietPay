@@ -93,7 +93,7 @@ Reuse the pure functions from `@quietpay/indexer`: `decodeRouterLog`, `decodeTra
 
 ## Samples
 
-- **Live sample (chain data):** `docs/lead/samples/live-sample.csv` and `.meta.json`, exported from the qualifying router, blocks 12351795-12361516. One router row: 1.000000 gross, 0.050000 fee, 0.500000 refunded, 0.450000 net, `partially_refunded`, from the live payment and refund in `live-usdt.md`.
+- **Live sample (chain data):** `docs/lead/samples/live-sample.csv` and `.meta.json`, exported from the qualifying router, blocks 12351795-12361516. One router row: 1.000000 gross, 0.050000 fee, 0.500000 refunded, 0.450000 net, `partially_refunded`, from the live payment and refund in `live-usdt.md`. Re-exported on 2026-11-06 in the new sidecar format (`router`, `usdt`, `payTo: null`); the CSV is unchanged and it verifies with `--no-payto`.
 - **Synthetic sample (format only):** `docs/lead/samples/synthetic-sample.csv` and `.meta.json` are generated from
   hand-made logs by `packages/indexer/scripts/make-synthetic-sample.ts`. They are **not** chain data. They show a partly
   refunded router row, a plain `payto_transfer` deposit row, and the double-count rule (a router payout to the facilitator address is counted

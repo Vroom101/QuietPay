@@ -109,7 +109,7 @@ the facilitator.
   rows, rebuilds the hash over router events and sets `payTo: null` gets `config_mismatch` from a reader who passes
   `--payto`, and a refusal from a reader who passes neither flag. What remains is the reader's own statement: a reader
   who wrongly passes `--no-payto` for an export that had a pay-to address is told only what they asserted.
-  Sidecars written before 2026-11-06 (no pins, for example `docs/lead/samples/live-sample.csv.meta.json`) must be
+  Sidecars written before 2026-11-06 (no pins) must be
   re-exported to verify.
 - **A refund appears only in the export that contains its payment.** Rows are placed at their `Paid` block, so a refund
   made after `toBlock` of an earlier export, or of a payment before `fromBlock`, is not visible in a later range's rows.
