@@ -1,18 +1,17 @@
 import { isAddress, pad, type Hex } from "viem";
 import { ConfigError, QUALIFYING_CHAIN_ID, assertQualifyingConfig, getQualifyingDeployment, token } from "@quietpay/shared";
 import {
-  TRANSFER_TOPIC,
-  buildLedgerRows,
-  decodeRouterLog,
-  decodeTransferLog,
-  eventSetHash,
-  formatAmount,
-  getLogsPaged,
-  isoUtc,
-  type ChainLog,
-  type LedgerRow,
-  type RawEvent,
-} from "@quietpay/indexer";
+  TOPICS,
+  amountText,
+  decodeRouter,
+  decodeTransfer,
+  deriveRows,
+  eventSetDigest,
+  fetchPaged,
+  type SpecEvent,
+  type SpecLog,
+  type SpecRow,
+} from "./spec.js";
 import { checkStructure, type Column, type CsvRow } from "./csv.js";
 import { parseSidecar } from "./sidecar.js";
 import type { CheckName, Issue, VerifierSource, VerifyReport } from "./types.js";
@@ -177,15 +176,15 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
     return timestamps.get(n)!;
   };
   const fetchLogs = async (node: VerifierSource) => {
-    const logs: ChainLog[] = [];
-    logs.push(...(await getLogsPaged(node, { address: router }, meta.fromBlock, meta.toBlock, paging)));
+    const logs: SpecLog[] = [];
+    logs.push(...(await fetchPaged(node, { address: router }, meta.fromBlock, meta.toBlock, paging)));
     if (payTo) {
       const toTopic = lc(pad(payTo as Hex, { size: 32 }));
-      logs.push(...(await getLogsPaged(node, { address: usdt, topics: [TRANSFER_TOPIC, null, toTopic] }, meta.fromBlock, meta.toBlock, paging)));
+      logs.push(...(await fetchPaged(node, { address: usdt, topics: [TOPICS.Transfer, null, toTopic] }, meta.fromBlock, meta.toBlock, paging)));
     }
     return logs;
   };
-  const fingerprint = (logs: ChainLog[]) =>
+  const fingerprint = (logs: SpecLog[]) =>
     logs
       .map((l) => `${lc(l.transactionHash)}:${l.logIndex}:${l.blockNumber}:${lc(l.address)}:${l.topics.map(lc).join("|")}:${lc(l.data)}`)
       .sort()
@@ -203,18 +202,17 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
       });
     }
   }
-  const decoded: { log: ChainLog; kind: RawEvent["kind"]; args: Record<string, string> }[] = [];
+  const decoded: { log: SpecLog; kind: SpecEvent["kind"]; args: Record<string, string> }[] = [];
   for (const log of primaryLogs) {
-    const ev = log.address.toLowerCase() === router ? decodeRouterLog(log) : decodeTransferLog(log);
+    const ev = log.address.toLowerCase() === router ? decodeRouter(log) : decodeTransfer(log);
     if (ev) decoded.push({ log, ...ev });
   }
-  const events: RawEvent[] = [];
+  const events: SpecEvent[] = [];
   for (const { log, kind, args } of decoded) {
     events.push({
       txHash: lc(log.transactionHash),
       logIndex: log.logIndex,
       block: log.blockNumber,
-      blockHash: lc(log.blockHash),
       timestamp: await timestamp(log.blockNumber),
       address: lc(log.address),
       kind,
@@ -224,15 +222,15 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
   events.sort((a, b) => a.block - b.block || a.logIndex - b.logIndex);
   report.eventsInRange = events.length;
 
-  // 3. Rebuild the rows with the indexer's pure rules and compare row by row.
+  // 3. Rebuild the rows with the verifier's own rules (src/spec.ts) and compare row by row.
   ran.add("rows");
-  const expected = buildLedgerRows(events, { router, facilitatorPayTo: payTo, decimals }).filter((r) => r.block >= meta.fromBlock && r.block <= meta.toBlock);
+  const expected = deriveRows(events, { router, payTo, decimals }).filter((r) => r.block >= meta.fromBlock && r.block <= meta.toBlock);
   report.rowsExpected = expected.length;
   issues.push(...compareRows(csvRows, expected));
 
   // 4. Event set hash.
   ran.add("event_set_hash");
-  const recomputed = eventSetHash(events);
+  const recomputed = eventSetDigest(events);
   report.eventSetHash.recomputed = recomputed;
   report.checkpoint = { fromBlock: meta.fromBlock, toBlock: meta.toBlock, eventCount: events.length, eventSetHash: recomputed };
   if (recomputed !== meta.eventSetHash) {
@@ -253,7 +251,7 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
   ran.add("timestamps");
   for (const r of csvRows) {
     if (r.block < meta.fromBlock || r.block > meta.toBlock) continue; // already reported; do not read non-final blocks
-    const want = isoUtc(await timestamp(r.block));
+    const want = new Date((await timestamp(r.block)) * 1000).toISOString();
     if (r.cells.date_utc !== want) {
       issues.push({ check: "timestamps", code: "wrong_date", line: r.line, key: r.key, field: "date_utc", expected: want, actual: r.cells.date_utc, message: `date_utc ${r.cells.date_utc} is not the timestamp of block ${r.block} (${want})` });
     }
@@ -263,16 +261,16 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
 }
 
 /** Expected value of each CSV column for a rebuilt row (dates are checked separately against the block). */
-function expectedCells(r: LedgerRow): Record<Exclude<Column, "date_utc">, string> {
+function expectedCells(r: SpecRow): Record<Exclude<Column, "date_utc">, string> {
   return {
     source: r.source,
     order_id: r.orderId,
     merchant_id: r.merchantId,
     payer: r.payer,
-    gross_usdt: r.grossUsdt,
-    relay_fee_usdt: r.relayFeeUsdt,
-    refunded_usdt: r.refundedUsdt,
-    net_usdt: r.netUsdt,
+    gross_usdt: r.gross,
+    relay_fee_usdt: r.fee,
+    refunded_usdt: r.refunded,
+    net_usdt: r.net,
     status: r.status,
     tx_hash: r.txHash,
     block: String(r.block),
@@ -299,12 +297,12 @@ const FIELD_CODE: Record<Exclude<Column, "date_utc">, Issue["code"]> = {
  * Matches CSV rows to rebuilt rows by `tx_hash:log_index`. Leftovers are paired by tx hash (so a wrong block or log
  * index is named as such) or by (block, log index) (a wrong tx hash); anything still unpaired is missing or extra.
  */
-export function compareRows(csvRows: CsvRow[], expected: LedgerRow[]): Issue[] {
+export function compareRows(csvRows: CsvRow[], expected: SpecRow[]): Issue[] {
   const issues: Issue[] = [];
   const expByKey = new Map(expected.map((r) => [`${r.txHash}:${r.logIndex}`, r]));
-  const pairs: [CsvRow, LedgerRow][] = [];
+  const pairs: [CsvRow, SpecRow][] = [];
   const extra: CsvRow[] = [];
-  const used = new Set<LedgerRow>();
+  const used = new Set<SpecRow>();
   for (const c of csvRows) {
     const e = expByKey.get(c.key);
     if (e) {
@@ -345,30 +343,30 @@ export function compareRows(csvRows: CsvRow[], expected: LedgerRow[]): Issue[] {
     issues.push({ check: "rows", code: "extra_row", line: c.line, key: c.key, message: `row ${c.key} (${c.cells.source}, ${c.cells.gross_usdt}) has no matching event on chain in range` });
   }
   for (const e of left()) {
-    issues.push({ check: "rows", code: "missing_row", key: `${e.txHash}:${e.logIndex}`, expected: `${e.source} ${e.grossUsdt} at block ${e.block}`, message: `chain has a ${e.source} row ${e.txHash}:${e.logIndex} (block ${e.block}, gross ${e.grossUsdt}) that the CSV lacks` });
+    issues.push({ check: "rows", code: "missing_row", key: `${e.txHash}:${e.logIndex}`, expected: `${e.source} ${e.gross} at block ${e.block}`, message: `chain has a ${e.source} row ${e.txHash}:${e.logIndex} (block ${e.block}, gross ${e.gross}) that the CSV lacks` });
   }
   return issues.sort((a, b) => (a.line ?? Infinity) - (b.line ?? Infinity));
 }
 
 /**
- * Invariants from chain data, independent of buildLedgerRows: for every CSV router row backed by a Paid log,
+ * Invariants from chain data, independent of buildSpecRows: for every CSV router row backed by a Paid log,
  * gross == Paid.value, fee == Paid.fee, refunded == latest Refunded.totalRefunded, net == max(0, gross - fee - refunded),
  * status consistent, and the USDT Transfers in the Paid tx are exactly what the router does:
  * payer -> router gross, router -> payout gross - fee, router -> relayer fee (if fee > 0).
  */
 async function checkInvariants(
   csvRows: CsvRow[],
-  events: RawEvent[],
+  events: SpecEvent[],
   ctx: { src: VerifierSource; usdt: string; router: string; decimals: number },
 ): Promise<Issue[]> {
   const issues: Issue[] = [];
-  const fmt = (v: bigint) => formatAmount(v, ctx.decimals);
+  const fmt = (v: bigint) => amountText(v, ctx.decimals);
   const paid = new Map(events.filter((e) => e.kind === "Paid" && e.address === ctx.router).map((e) => [`${e.txHash}:${e.logIndex}`, e]));
   const latestRefund = new Map<string, bigint>();
   for (const e of events) {
     if (e.kind === "Refunded" && e.address === ctx.router) latestRefund.set(`${e.args.merchantId}:${e.args.orderId}`, BigInt(e.args.totalRefunded!));
   }
-  const transfersByBlock = new Map<number, ChainLog[]>();
+  const transfersByBlock = new Map<number, SpecLog[]>();
 
   for (const r of csvRows) {
     if (r.cells.source !== "router") continue;
@@ -395,12 +393,12 @@ async function checkInvariants(
 
     // The real USDT transfers inside the settlement transaction.
     if (!transfersByBlock.has(p.block)) {
-      transfersByBlock.set(p.block, await getLogsPaged(ctx.src, { address: ctx.usdt, topics: [TRANSFER_TOPIC] }, p.block, p.block));
+      transfersByBlock.set(p.block, await fetchPaged(ctx.src, { address: ctx.usdt, topics: [TOPICS.Transfer] }, p.block, p.block));
     }
     const inTx = transfersByBlock
       .get(p.block)!
       .filter((l) => lc(l.transactionHash) === p.txHash)
-      .map((l) => decodeTransferLog(l))
+      .map((l) => decodeTransfer(l))
       .filter((d): d is NonNullable<typeof d> => d !== null)
       .map((d) => ({ from: d.args.from!, to: d.args.to!, value: BigInt(d.args.value!) }));
     const want = [

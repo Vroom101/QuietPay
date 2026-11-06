@@ -1,4 +1,10 @@
-import type { ExportMeta } from "@quietpay/indexer";
+export interface ExportMeta {
+  fromBlock: number;
+  toBlock: number;
+  confirmations: number;
+  eventSetHash: string;
+  generatedAt: string;
+}
 
 const isUint = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 

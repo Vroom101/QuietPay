@@ -1,4 +1,10 @@
-import type { LogSource } from "@quietpay/indexer";
+import type { SpecLog, SpecLogSource } from "./spec.js";
+
+export interface LogSource extends SpecLogSource {
+  getBlockNumber(): Promise<number>;
+  getBlock(n: number): Promise<{ hash: string; timestamp: number }>;
+}
+export type { SpecLog };
 
 /** What the verifier needs from a node: the indexer's LogSource plus eth_chainId. Faked in tests. */
 export interface VerifierSource extends LogSource {

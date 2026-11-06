@@ -1,4 +1,5 @@
-import { CSV_COLUMNS } from "@quietpay/indexer";
+/** Column order from docs/lead/ledger.md. */
+export const CSV_COLUMNS = ["date_utc", "source", "order_id", "merchant_id", "payer", "gross_usdt", "relay_fee_usdt", "refunded_usdt", "net_usdt", "status", "tx_hash", "block", "log_index"] as const;
 import type { Issue } from "./types.js";
 
 export type Column = (typeof CSV_COLUMNS)[number];
