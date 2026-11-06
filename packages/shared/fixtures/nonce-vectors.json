@@ -1,0 +1,65 @@
+{
+  "_comment": "Asserted by contracts/test/PaymentRouter.t.sol (Solidity) and packages/shared tests (TypeScript). Pay tag quietpay.pay.v2 binds the relay fee. Do not edit by hand.",
+  "payTag": "quietpay.pay.v2",
+  "refundTag": "quietpay.refund.v1",
+  "pay": [
+    {
+      "merchantId": "0x0101010101010101010101010101010101010101010101010101010101010101",
+      "orderId": "0x0202020202020202020202020202020202020202020202020202020202020202",
+      "payout": "0x2222222222222222222222222222222222222222",
+      "value": "25000000",
+      "fee": "50000",
+      "nonce": "0x7d34cf687124d572b706bb38f780e9e9858da1a4d95ebf5244a034b607afebc0"
+    },
+    {
+      "merchantId": "0x0101010101010101010101010101010101010101010101010101010101010101",
+      "orderId": "0x0202020202020202020202020202020202020202020202020202020202020202",
+      "payout": "0x2222222222222222222222222222222222222222",
+      "value": "25000000",
+      "fee": "50001",
+      "nonce": "0x914a556db076479bc87ba3858d6dc6b148d7aa59a17fc32998b39ddb3df6cb66"
+    },
+    {
+      "merchantId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "orderId": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "payout": "0x3333333333333333333333333333333333333333",
+      "value": "1",
+      "fee": "0",
+      "nonce": "0x2ab976db1628eb7aa9eda67ae58b251ed94f7bdd24fe4376da555329ffd02af5"
+    },
+    {
+      "merchantId": "0x1010101010101010101010101010101010101010101010101010101010101010",
+      "orderId": "0x2020202020202020202020202020202020202020202020202020202020202020",
+      "payout": "0x000000000000000000000000000000000000dEaD",
+      "value": "999999999999",
+      "fee": "999999999998",
+      "nonce": "0xcc2b8e8d07900da5b957ec463fbfccb29ffeeea37e9355e97bc6978c956b74f7"
+    }
+  ],
+  "refund": [
+    {
+      "merchantId": "0x0101010101010101010101010101010101010101010101010101010101010101",
+      "orderId": "0x0202020202020202020202020202020202020202020202020202020202020202",
+      "payer": "0x3333333333333333333333333333333333333333",
+      "amount": "5000000",
+      "refundIndex": "0",
+      "nonce": "0x714ed318025e3e52735fc272c242c144d0bf97a60518adfe2f729adb50b29d66"
+    },
+    {
+      "merchantId": "0x0101010101010101010101010101010101010101010101010101010101010101",
+      "orderId": "0x0202020202020202020202020202020202020202020202020202020202020202",
+      "payer": "0x3333333333333333333333333333333333333333",
+      "amount": "5000000",
+      "refundIndex": "1",
+      "nonce": "0x0ca2ca775e1420353b9b8a373cd784cd56daed736bcf8b61c939c5a60d8af2e0"
+    },
+    {
+      "merchantId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "orderId": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "payer": "0x4444444444444444444444444444444444444444",
+      "amount": "1",
+      "refundIndex": "7",
+      "nonce": "0x276b44a3730a2590fc6095fcf16679a6a16752bb9febff0f0eb212cb8dc71eec"
+    }
+  ]
+}

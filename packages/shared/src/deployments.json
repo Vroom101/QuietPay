@@ -3,13 +3,15 @@
     "network": "Whitechain Sepolia",
     "router": "0x6a765694262E1c9CdDbb1C76008a61df7f58D86f",
     "token": "0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4",
-    "tokenKind": "DemoUSDT (testnet only, public faucet)",
+    "tokenKind": "self-minted stand-in token (superseded; not the official USDT)",
     "deployTx": "0x34c3ac16785052021ccc1030dce2bc41031b416fb159872a3b63353d3b12badb",
     "tokenDeployTx": "0x8c42668e8303a929ba87566352b4d823ef9017d27600a520b29cebbd16b9f5e4",
     "explorerUrl": "https://explorer.testnet.whitechain.io/address/0x6a765694262E1c9CdDbb1C76008a61df7f58D86f",
     "tokenExplorerUrl": "https://explorer.testnet.whitechain.io/address/0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4",
     "verified": true,
     "demoMerchantSlug": "demo-store",
-    "deployBlock": 12347996
+    "deployBlock": 12347996,
+    "qualifying": false,
+    "note": "stand-in token, superseded"
   }
 }

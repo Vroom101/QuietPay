@@ -3,10 +3,10 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {PaymentRouter} from "../src/PaymentRouter.sol";
-import {MockUSDT} from "./MockUSDT.sol";
+import {MockAuthToken} from "./mocks/MockAuthToken.sol";
 
 /// @dev Token that calls back into a contract recipient, like an ERC-777 style hook.
-contract HookUSDT is MockUSDT {
+contract HookAuthToken is MockAuthToken {
     function _update(address from, address to, uint256 value) internal override {
         super._update(from, to, value);
         if (to.code.length > 0 && from != address(0)) {
@@ -52,7 +52,7 @@ contract ReentrantPayer {
 
 contract PaymentRouterRefundTest is Test {
     PaymentRouter router;
-    MockUSDT usdt;
+    MockAuthToken usdt;
 
     address owner = makeAddr("owner");
     address relayer = makeAddr("relayer");
@@ -72,7 +72,7 @@ contract PaymentRouterRefundTest is Test {
     uint256 vA;
     uint256 vB;
 
-    function _deploy(MockUSDT t) internal {
+    function _deploy(MockAuthToken t) internal {
         usdt = t;
         router = new PaymentRouter(address(usdt), owner);
         vm.startPrank(owner);
@@ -85,7 +85,7 @@ contract PaymentRouterRefundTest is Test {
         vm.warp(1_000_000);
         payer = vm.addr(payerPk);
         refundSigner = vm.addr(refundPk);
-        _deploy(new MockUSDT());
+        _deploy(new MockAuthToken());
         usdt.mint(payer, 1_000_000_000);
         usdt.mint(refundSigner, 100_000_000);
         vA = block.timestamp - 1;
@@ -107,7 +107,7 @@ contract PaymentRouterRefundTest is Test {
     }
 
     function _payOrder(address who, uint256 pk) internal {
-        bytes32 n = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 n = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         bytes memory sig = _sign(pk, who, address(router), PRICE, vA, vB, n);
         vm.prank(relayer);
         router.pay(MERCHANT, ORDER, who, PRICE, FEE, vA, vB, sig);
@@ -257,7 +257,7 @@ contract PaymentRouterRefundTest is Test {
     function test_signatureNamingDifferentOrderDoesNotVerify() public {
         // A second settled order; a signature made for ORDER cannot refund ORDER2.
         bytes32 order2 = keccak256("order-2");
-        bytes32 n = router.computeNonce(MERCHANT, order2, payout, PRICE);
+        bytes32 n = router.computeNonce(MERCHANT, order2, payout, PRICE, FEE);
         bytes memory paySig = _sign(payerPk, payer, address(router), PRICE, vA, vB, n);
         vm.prank(relayer);
         router.pay(MERCHANT, order2, payer, PRICE, FEE, vA, vB, paySig);
@@ -357,7 +357,7 @@ contract PaymentRouterRefundTest is Test {
         _refund(PRICE, 0);
         assertTrue(router.receipts(MERCHANT, ORDER).settled);
 
-        bytes32 n = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 n = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         uint256 b2 = block.timestamp + 6 minutes;
         bytes memory sig = _sign(payerPk, payer, address(router), PRICE, vA, b2, n);
         vm.prank(relayer);
@@ -385,7 +385,7 @@ contract PaymentRouterRefundTest is Test {
         uint256 otherPk = 0xCAFE;
         vm.prank(owner);
         router.registerMerchant(m2, payout, vm.addr(otherPk), 100_000);
-        bytes32 n = router.computeNonce(m2, ORDER, payout, PRICE);
+        bytes32 n = router.computeNonce(m2, ORDER, payout, PRICE, FEE);
         bytes memory paySig = _sign(payerPk, payer, address(router), PRICE, vA, vB, n);
         vm.prank(relayer);
         router.pay(m2, ORDER, payer, PRICE, FEE, vA, vB, paySig);
@@ -423,7 +423,7 @@ contract PaymentRouterRefundTest is Test {
     /// A contract payer receives the refund and tries to refund again from the token hook.
     /// It is allowlisted as a relayer, so only the reentrancy guard can stop the nested call.
     function test_refundToReentrantPayerCannotReenter() public {
-        _deploy(new HookUSDT()); // fresh router and hooked token; the order below is new here
+        _deploy(new HookAuthToken()); // fresh router and hooked token; the order below is new here
         usdt.mint(refundSigner, 100_000_000);
 
         // The mock verifies signatures with ecrecover only, so the payer pays as an EOA key and is then

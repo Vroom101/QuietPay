@@ -5,9 +5,9 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
-/// @dev Test double mirroring the live token facts: 6 decimals, EIP-712 domain
+/// @dev TEST-ONLY mock (never deployed to a public network). Mirrors the official token facts: 6 decimals, EIP-712 domain
 ///      {"Tether USD","1"}, EIP-3009 receiveWithAuthorization (caller must be `to`).
-contract MockUSDT is ERC20, EIP712 {
+contract MockAuthToken is ERC20, EIP712 {
     bytes32 public constant RECEIVE_TYPEHASH = keccak256(
         "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
     );

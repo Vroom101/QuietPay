@@ -10,7 +10,9 @@ interface IUSDT {
     function authorizationState(address, bytes32) external view returns (bool);
 }
 
-/// Runs the router against the REAL test USDT proxy on a fork of Whitechain Sepolia.
+/// COMPATIBILITY CHECK, NOT QUALIFICATION EVIDENCE. Runs the router against the real test USDT proxy on a fork of
+/// Whitechain Sepolia. Balances are SIMULATED with `deal()` on the fork only; nothing here touches the public testnet.
+/// The qualifying evidence is a real public-testnet payment (docs/lead/live-usdt.md).
 /// Skipped unless QUIETPAY_FORK_RPC is set:
 ///   QUIETPAY_FORK_RPC=https://rpc.ankr.com/whitechain_testnet forge test --match-contract ForkTest -vv
 contract ForkTest is Test {
@@ -30,6 +32,7 @@ contract ForkTest is Test {
     bytes32 constant MERCHANT = keccak256("demo-store");
     bytes32 constant ORDER = keccak256("fork-order-1");
     uint256 constant PRICE = 25_000_000;
+    uint256 constant FEE = 50_000;
     uint256 vA;
     uint256 vB;
 
@@ -44,6 +47,7 @@ contract ForkTest is Test {
         router.registerMerchant(MERCHANT, payout, refundSigner, 100_000);
         router.setRelayer(relayer, true);
         vm.stopPrank();
+        // SIMULATED funding on the fork only (vm.deal-style cheat). Never done on the public testnet.
         deal(USDT, payer, 100_000_000);
         deal(USDT, refundSigner, 100_000_000);
         vA = block.timestamp - 1;
@@ -57,10 +61,10 @@ contract ForkTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function test_fork_payThenRefundOnRealToken() public {
+    function test_forkCompatibility_realTokenAcceptsRouterPayAndRefund() public {
         assertEq(payer.balance, 0, "payer has no native gas token");
 
-        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE);
+        bytes32 nonce = router.computeNonce(MERCHANT, ORDER, payout, PRICE, FEE);
         bytes memory sig = _sign(payerPk, payer, PRICE, nonce);
         vm.prank(relayer);
         router.pay(MERCHANT, ORDER, payer, PRICE, 50_000, vA, vB, sig);

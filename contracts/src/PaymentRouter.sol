@@ -29,7 +29,7 @@ interface IReceiveWithAuthorization {
 contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    bytes32 public constant PAY_TAG = keccak256("quietpay.pay.v1");
+    bytes32 public constant PAY_TAG = keccak256("quietpay.pay.v2");
     bytes32 public constant REFUND_TAG = keccak256("quietpay.refund.v1");
     uint256 public constant MAX_WINDOW = 10 minutes;
 
@@ -59,6 +59,7 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
 
     event MerchantRegistered(bytes32 indexed merchantId, address payout, address refundSigner, uint256 maxRelayFee);
     event PayoutChanged(bytes32 indexed merchantId, address payout);
+    event RefundSignerChanged(bytes32 indexed merchantId, address oldSigner, address newSigner);
     event RelayerSet(address indexed relayer, bool allowed);
     event Paid(
         bytes32 indexed merchantId,
@@ -91,6 +92,7 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
     error BadSignatureLength();
     error NoReceipt();
     error RefundOverValue();
+    error TokenAmountMismatch();
 
     constructor(address token_, address owner_) Ownable(owner_) {
         if (token_ == address(0)) revert ZeroAddress();
@@ -116,6 +118,19 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         emit PayoutChanged(merchantId, payout);
     }
 
+    /// @notice Rotates a merchant's refund signer. Policy: the registry is operator-controlled in this MVP, so only
+    ///         the owner may call this (a merchant asks the operator). Existing receipts and totalRefunded are
+    ///         unchanged; authorizations signed by the old signer stop working because `refund` always pulls from
+    ///         the registry's current signer.
+    function setRefundSigner(bytes32 merchantId, address newSigner) external onlyOwner {
+        Merchant storage m = merchants[merchantId];
+        if (m.payout == address(0)) revert UnknownMerchant();
+        if (newSigner == address(0)) revert ZeroAddress();
+        address old = m.refundSigner;
+        m.refundSigner = newSigner;
+        emit RefundSignerChanged(merchantId, old, newSigner);
+    }
+
     function setRelayer(address relayer, bool allowed) external onlyOwner {
         isRelayer[relayer] = allowed;
         emit RelayerSet(relayer, allowed);
@@ -135,14 +150,15 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         return _receipts[merchantId][orderId];
     }
 
-    /// @notice The EIP-3009 nonce the payer must sign for this order. Bound to the
-    ///         payout, so changing the registry payout invalidates old signatures.
-    function computeNonce(bytes32 merchantId, bytes32 orderId, address payout, uint256 value)
+    /// @notice The EIP-3009 nonce the payer must sign for this order. Bound to the merchant, order,
+    ///         payout, value AND relay fee: changing the registry payout, or submitting a different fee
+    ///         than the payer saw, produces a different nonce and the token rejects the signature.
+    function computeNonce(bytes32 merchantId, bytes32 orderId, address payout, uint256 value, uint256 fee)
         public
         pure
         returns (bytes32)
     {
-        return keccak256(abi.encode(PAY_TAG, merchantId, orderId, payout, value));
+        return keccak256(abi.encode(PAY_TAG, merchantId, orderId, payout, value, fee));
     }
 
     /// @notice The EIP-3009 nonce the refundSigner must sign for refund number `refundIndex`.
@@ -184,7 +200,7 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         r.paidAt = uint64(block.timestamp);
         r.settled = true;
 
-        _pull(computeNonce(merchantId, orderId, payout, value), payer, value, validAfter, validBefore, signature);
+        _pull(computeNonce(merchantId, orderId, payout, value, fee), payer, value, validAfter, validBefore, signature);
 
         token.safeTransfer(payout, value - fee);
         if (fee > 0) token.safeTransfer(msg.sender, fee);
@@ -245,7 +261,7 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         if (payout == address(0)) revert UnknownMerchant();
         if (payer == address(0)) revert ZeroAddress();
         if (value == 0) revert ZeroValue();
-        if (fee > m.maxRelayFee || fee > value) revert FeeOverCap();
+        if (fee > m.maxRelayFee || fee >= value) revert FeeOverCap();
         _checkWindow(validAfter, validBefore);
         if (sigLen != 65) revert BadSignatureLength();
     }
@@ -266,9 +282,12 @@ contract PaymentRouter is Ownable, Pausable, ReentrancyGuard {
         bytes calldata sig
     ) private {
         (bytes32 r, bytes32 s, uint8 v) = _split(sig);
+        uint256 before_ = token.balanceOf(address(this));
         IReceiveWithAuthorization(address(token)).receiveWithAuthorization(
             from, address(this), value, validAfter, validBefore, nonce, v, r, s
         );
+        // Fee-on-transfer or otherwise lossy tokens would leave the router short; refuse them outright.
+        if (token.balanceOf(address(this)) - before_ != value) revert TokenAmountMismatch();
     }
 
     function _split(bytes calldata sig) private pure returns (bytes32 r, bytes32 s, uint8 v) {

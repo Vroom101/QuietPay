@@ -18,7 +18,7 @@ import { IndexerDb, buildExport, indexOnce, makeLogSource, rebuild } from "../sr
 const here = dirname(fileURLToPath(import.meta.url));
 const out = process.env.CONTRACTS_OUT ?? resolve(here, "../../../contracts/out");
 const routerArtifact = resolve(out, "PaymentRouter.sol/PaymentRouter.json");
-const tokenArtifact = resolve(out, "DemoUSDT.sol/DemoUSDT.json");
+const tokenArtifact = resolve(out, "MockAuthToken.sol/MockAuthToken.json");
 const have = existsSync(routerArtifact) && existsSync(tokenArtifact);
 
 const DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
@@ -69,12 +69,12 @@ describe.skipIf(!have)("13. end to end on anvil with the real router", () => {
     await wait(await w.writeContract({ address: router, abi: paymentRouterAbi, functionName: "registerMerchant", args: [merchantId, facilitator, refundSigner.address, 100_000n] }));
     await wait(await w.writeContract({ address: router, abi: paymentRouterAbi, functionName: "setRelayer", args: [relayer.address, true] }));
     for (const to of [payer.address, refundSigner.address]) {
-      await wait(await w.writeContract({ address: usdt, abi: tok.abi, functionName: "faucet", args: [to, 100_000_000n] }));
+      await wait(await w.writeContract({ address: usdt, abi: tok.abi, functionName: "mint", args: [to, 100_000_000n] }));
     }
 
     const block = async () => Number((await pub.getBlock()).timestamp);
     const sign = async (acct: typeof payer, td: ReturnType<typeof buildCheckoutAuthorization>) => acct.signTypedData(td);
-    const domain = { chainId: 31337, token: usdt, domainName: "Quietpay Demo USDT", domainVersion: "1" };
+    const domain = { chainId: 31337, token: usdt, domainName: "Tether USD", domainVersion: "1" };
 
     // 1. A router payment of 25.00 with a 0.05 fee. The payout equals the facilitator address.
     const orderId = ("0x" + "ab".repeat(32)) as Hex;

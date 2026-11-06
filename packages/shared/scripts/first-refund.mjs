@@ -2,7 +2,7 @@
 // The relayer HTTP endpoints for refunds are not built yet (B), so this talks to the chain directly.
 // Usage (local shell, from packages/shared):
 //   RPC_URL=... ROUTER_ADDRESS=0x.. USDT_ADDRESS=0x.. MERCHANT_ID=0x.. ORDER_ID=0x.. AMOUNT=2000000 \
-//   REFUND_SIGNER_PRIVATE_KEY=0x.. RELAYER_PRIVATE_KEY=0x.. TOKEN_DOMAIN_NAME=".." TOKEN_DOMAIN_VERSION=1 \
+//   REFUND_SIGNER_PRIVATE_KEY=0x.. RELAYER_PRIVATE_KEY=0x.. \
 //   npx tsx scripts/first-refund.mjs
 import { createPublicClient, createWalletClient, defineChain, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -38,8 +38,6 @@ const signature = await signer.signTypedData(
     validBefore: BigInt(validBefore),
     chainId: 1874,
     token: e.USDT_ADDRESS,
-    domainName: e.TOKEN_DOMAIN_NAME,
-    domainVersion: e.TOKEN_DOMAIN_VERSION,
   }),
 );
 await pub.simulateContract({ address: router, abi: paymentRouterAbi, functionName: "refund", args: [e.MERCHANT_ID, e.ORDER_ID, amount, BigInt(validAfter), BigInt(validBefore), signature], account: relayer });
