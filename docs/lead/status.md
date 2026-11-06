@@ -1,14 +1,14 @@
 # Status
 
 ## CP0 (shared specs): done, tag `shared-v1`
-- Token facts read from the live USDT; primary path is `receiveWithAuthorization`. Live gasless tx still pending a funded key.
+- Token facts read from the live USDT; primary path is `receiveWithAuthorization`. Live gasless tx recorded on 2026-11-06 (see the update below).
 
-## CP1 (router and first payment): partial
-- Router built, 25 Foundry tests pass. Not deployed or verified; no real payment yet (needs funded keys).
+## CP1 (router and first payment): done on 2026-11-06
+- Router deployed and verified; real payment from a zero-WBT payer recorded (see the update below).
 
 ## CP2 (full checkout): code complete locally, tag `cp2-local`
 - Widget, relayer, SDK, store and dashboard merged; TS tests include an anvil end-to-end run with a zero-balance payer.
-- Not yet run: live chain, hosted relayer, browser walkthrough.
+- Live chain run via a local relayer; hosted relayer and browser walkthrough still open.
 
 ## Update 2026-11-06: live on testnet
 - DemoUSDT and PaymentRouter (with refunds) deployed and source-verified on chain 1874.
