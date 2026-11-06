@@ -15,6 +15,17 @@ const STEPS: Record<string, string> = {
 
 const short = (s: string) => `${s.slice(0, 8)}...${s.slice(-6)}`;
 
+/** Returns the URL only when it parses as http(s); javascript:, data:, vbscript: etc. yield null. */
+export function safeHttpUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export class QuietpayCheckout extends LitElement {
   static properties = {
     orderId: { type: String, attribute: "order-id" },
@@ -192,8 +203,8 @@ export class QuietpayCheckout extends LitElement {
           ${o ? html`<div class="amount">${formatUsdt(o.amount)} USDT</div>` : nothing}
           ${o?.payer ? html`<div class="row"><span>Paid by</span><code>${o.payer}</code></div>` : nothing}
           ${o?.txHash ? html`<div class="row"><span>Receipt</span><code data-testid="receipt">${o.txHash}</code></div>` : nothing}
-          ${o?.explorerUrl
-            ? html`<a href=${o.explorerUrl} target="_blank" rel="noopener noreferrer">View receipt online</a>`
+          ${safeHttpUrl(o?.explorerUrl)
+            ? html`<a href=${safeHttpUrl(o?.explorerUrl)} target="_blank" rel="noopener noreferrer">View receipt online</a>`
             : nothing}
         `;
         break;

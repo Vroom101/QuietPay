@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { Order } from "@quietpay/shared";
 import { DashboardError, listOrders } from "./lib/api";
-import { STATUS_STYLES, shortHex, toRow } from "./lib/view";
+import { STATUS_STYLES, safeHttpUrl, shortHex, toRow } from "./lib/view";
 
 const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || "http://localhost:8787";
 const USE_FIXTURES = import.meta.env.VITE_USE_FIXTURES === "1";
@@ -107,8 +107,8 @@ export function App() {
                 <td className="px-3 py-2 font-mono text-xs" title={r.payer ?? undefined}>{r.payer ? shortHex(r.payer) : "-"}</td>
                 <td className="px-3 py-2 text-stone-500">{r.created}</td>
                 <td className="px-3 py-2">
-                  {r.explorerUrl ? (
-                    <a className="text-blue-700 underline" href={r.explorerUrl} target="_blank" rel="noopener noreferrer">View</a>
+                  {safeHttpUrl(r.explorerUrl) ? (
+                    <a className="text-blue-700 underline" href={safeHttpUrl(r.explorerUrl)!} target="_blank" rel="noopener noreferrer">View</a>
                   ) : (
                     "-"
                   )}

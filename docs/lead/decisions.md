@@ -51,3 +51,6 @@
   router and the official USDT on chain 1874.
 - forge writes the wrong hash into `transactions[].hash` of a broadcast file for the creation tx; `record-deployment.mjs`
   reads the creation receipt instead.
+
+## Pen test round 1 (contracts): accepted finding
+`registerMerchant` and `setPayout` accept the router (or token) address as a merchant payout, which would strand funds (low, owner-only misconfiguration; no sweep function). Fixing it changes the bytecode, which means redeploying the qualifying router and repeating the live evidence, so it is accepted for now and queued for the next router version (reject `address(this)` and `address(token)` in both functions; add a rescue). Pinned by `test_DOC_payoutCanBeRouterItselfStrandingFunds_knownAccepted`. Other adversarial attacks (32 tests in `PenTestRouter.t.sol`: replay, malleability, reentrancy, refund races, privilege escalation, fee and window edges) held.
