@@ -26,7 +26,8 @@ export function Checkout() {
       const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ cartTotal: total }),
+        // Send only product ids and quantities; the server prices the cart from its own catalog.
+        body: JSON.stringify({ items: Object.entries(items).map(([id, quantity]) => ({ id, quantity })) }),
       });
       if (!res.ok) throw new Error("checkout failed");
       setOrderId(((await res.json()) as { orderId: string }).orderId);
