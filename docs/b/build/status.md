@@ -1,0 +1,4 @@
+- 17:35 W0 done: worktree, merges, baseline green, chain checks, reconcile, deployment-state, config-matrix
+- 17:54 W1+W2 merged: preflight (19 codes), deployment-state test; 85 new tests
+- 18:00 merged audit-b2 into backend/remaining-build (1 conflict resolved, see harmony-log); relayer 503 green
+- 18:35 merged W5, W7, W3 (1 conflict in demo-store app.ts: combined logger + limits); relayer 585, facilitator 169 green

@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { signWebhook, WEBHOOK_SIGNATURE_HEADER } from "@quietpay/shared/webhook";
+import { pinnedPost, resolveDeliveryTarget } from "./webhook-pin.js";
 import { DELIVERY_BACKOFF_SECONDS, MAX_DELIVERY_ATTEMPTS, type Db, type DeliveryRow } from "./db.js";
 
 // ------------------------------------------------------------------ per-merchant secrets
@@ -211,6 +212,8 @@ export interface WebhookWorkerOptions {
   /** Hard per-delivery timeout. */
   timeoutMs?: number;
   lookup?: LookupFn;
+  /** Connect only to the addresses validated for this delivery (no second DNS lookup). Production wiring sets it. */
+  pinConnections?: boolean;
 }
 
 /**
@@ -224,18 +227,21 @@ export class WebhookWorker {
   private readonly allowPrivate: boolean;
   private readonly timeoutMs: number;
   private readonly lookup: LookupFn;
+  private readonly pinConnections: boolean;
 
   constructor(
     private readonly db: Db,
     private readonly masterSecret: string,
     private readonly now: () => number = () => Math.floor(Date.now() / 1000),
-    private readonly doFetch: FetchLike = (url, init) => fetch(url, init),
+    /** Test seam. When omitted, delivery uses the pinned connection path (pinConnections) or global fetch. */
+    private readonly doFetch?: FetchLike,
     private readonly log: (msg: string, extra?: Record<string, unknown>) => void = () => undefined,
     opts: WebhookWorkerOptions = {},
   ) {
     this.allowPrivate = opts.allowPrivate ?? false;
     this.timeoutMs = opts.timeoutMs ?? 10_000;
     this.lookup = opts.lookup ?? defaultLookup;
+    this.pinConnections = opts.pinConnections ?? false;
   }
 
   start(intervalMs = 2000) {
@@ -282,24 +288,22 @@ export class WebhookWorker {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), this.timeoutMs);
     try {
-      const problem = await deliveryTargetProblem(d.url, this.allowPrivate, this.lookup);
+      const pinned = this.doFetch || !this.pinConnections ? undefined : await resolveDeliveryTarget(d.url, this.allowPrivate, this.lookup);
+      const problem = pinned ? pinned.problem : await deliveryTargetProblem(d.url, this.allowPrivate, this.lookup);
       const merchantId = this.merchantOf(d.order_id, d.body);
       if (problem) {
         this.log("webhook target refused", { id: d.id, reason: problem });
       } else if (!merchantId) {
         this.log("webhook has no merchant", { id: d.id });
       } else {
+        const headers = {
+          "content-type": "application/json",
+          [WEBHOOK_SIGNATURE_HEADER]: signWebhook(merchantWebhookSecret(this.masterSecret, merchantId), d.body, this.now()),
+        };
         // Abort signal for well-behaved fetches, plus a race so a fetch that ignores it cannot stall the worker.
-        const res = await withTimeout(this.doFetch(d.url, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            [WEBHOOK_SIGNATURE_HEADER]: signWebhook(merchantWebhookSecret(this.masterSecret, merchantId), d.body, this.now()),
-          },
-          body: d.body,
-          signal: ctl.signal,
-          redirect: "manual",
-        }), this.timeoutMs);
+        const res = pinned
+          ? await pinnedPost(d.url, pinned.addresses, { headers, body: d.body, timeoutMs: this.timeoutMs, signal: ctl.signal, allowPrivate: this.allowPrivate })
+          : await withTimeout((this.doFetch ?? ((u, i) => fetch(u, i)))(d.url, { method: "POST", headers, body: d.body, signal: ctl.signal, redirect: "manual" }), this.timeoutMs);
         ok = res.status >= 200 && res.status < 300;
       }
     } catch (e) {

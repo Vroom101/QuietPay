@@ -1,0 +1,26 @@
+{
+  "name": "@quietpay/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "e2e": "tsx src/run.ts"
+  },
+  "dependencies": {
+    "@quietpay/indexer": "workspace:*",
+    "@quietpay/merchant-sdk": "workspace:*",
+    "@quietpay/shared": "workspace:*",
+    "@quietpay/verifier": "workspace:*",
+    "better-sqlite3": "^11.5.0",
+    "tsx": "^4.19.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

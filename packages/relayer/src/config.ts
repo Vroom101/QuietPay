@@ -45,6 +45,7 @@ const EnvSchema = z.object({
   // Optional, additive to the frozen list.
   RELAY_FEE_USDT: decimal(6).default("0.05"),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(20),
+  ORDERS_PER_MINUTE_PER_MERCHANT: z.coerce.number().int().positive().max(1_000_000).default(1200),
   /** EIP-712 domain of the payment token. Defaults to the live Whitechain test USDT. */
   EXPLORER_BASE_URL: z.string().url().default("https://testnet.whitechain.io"),
   TOKEN_DOMAIN_NAME: z.string().trim().min(1).default("Tether USD"),
@@ -112,6 +113,8 @@ export interface Config {
   payerCap: bigint; // USDT base units
   relayFee: bigint; // USDT base units
   rateLimitPerMinute: number;
+  /** Per-merchant (valid API key) cap for the orders routes, per minute. Default 1200. */
+  ordersPerMinutePerMerchant?: number;
   tokenDomain: { name: string; version: string };
   explorerBaseUrl: string;
   port: number;
@@ -179,6 +182,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     payerCap: parseUnits(e.PAYER_CAP_USDT, 6),
     relayFee: parseUnits(e.RELAY_FEE_USDT, 6),
     rateLimitPerMinute: e.RATE_LIMIT_PER_MINUTE,
+    ordersPerMinutePerMerchant: e.ORDERS_PER_MINUTE_PER_MERCHANT,
     tokenDomain: { name: e.TOKEN_DOMAIN_NAME, version: e.TOKEN_DOMAIN_VERSION },
     explorerBaseUrl: e.EXPLORER_BASE_URL.replace(/\/$/, ""),
     port: e.PORT,

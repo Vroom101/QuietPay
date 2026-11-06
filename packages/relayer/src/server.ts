@@ -188,10 +188,17 @@ export function buildServer(svc: RelayerService): FastifyInstance {
     return svc.health();
   });
 
-  // Order creation is per-IP limited before the API-key check, so unauthenticated floods are counted too.
+  // Orders routes. A request with a VALID API key is limited per merchant (ORDERS_PER_MINUTE_PER_MERCHANT, default 1200),
+  // so one merchant server behind a single IP is not capped at the unauthenticated per-IP rate. Anything else (missing or
+  // wrong key) is limited per client IP before the key check, so unauthenticated floods and key guessing stay throttled.
   const ordersLimiter = new RateLimiter(120, 60_000);
+  const ordersMerchantLimiter = new RateLimiter(svc.cfg.ordersPerMinutePerMerchant ?? 1200, 60_000);
+  const ordersAllowed = (req: FastifyRequest): boolean => {
+    const merchant = lookupKey(bearer(req));
+    return merchant ? ordersMerchantLimiter.allow(merchant.toLowerCase()) : ordersLimiter.allow(clientKey(ipOf(req)));
+  };
   app.post("/v1/orders", async (req, reply) => {
-    if (!ordersLimiter.allow(clientKey(ipOf(req)))) throw new QuietpayError("rate_limited");
+    if (!ordersAllowed(req)) throw new QuietpayError("rate_limited");
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
     const body = CreateOrderRequest.parse(req.body);
@@ -203,7 +210,7 @@ export function buildServer(svc: RelayerService): FastifyInstance {
   });
 
   app.get("/v1/orders", async (req, reply) => {
-    if (!ordersLimiter.allow(clientKey(ipOf(req)))) throw new QuietpayError("rate_limited");
+    if (!ordersAllowed(req)) throw new QuietpayError("rate_limited");
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
     return { orders: svc.listOrders(merchant) };
@@ -216,9 +223,13 @@ export function buildServer(svc: RelayerService): FastifyInstance {
     return svc.relayPay(body, { ip: ipOf(req) });
   });
 
+  // refund-context does RPC reads, so a valid key is limited per client (/64 for IPv6) and per merchant.
+  const refundCtxIpLimiter = new RateLimiter(60, 60_000);
+  const refundCtxMerchantLimiter = new RateLimiter(60, 60_000);
   app.get<{ Params: { id: string } }>("/v1/orders/:id/refund-context", async (req, reply) => {
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
+    if (!refundCtxIpLimiter.allow(clientKey(ipOf(req))) || !refundCtxMerchantLimiter.allow(merchant.toLowerCase())) throw new QuietpayError("rate_limited");
     return svc.refunds.context(merchant as `0x${string}`, req.params.id as `0x${string}`);
   });
   app.get<{ Params: { id: string } }>("/v1/orders/:id/refunds", async (req, reply) => {

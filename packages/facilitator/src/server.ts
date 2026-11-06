@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { FacilitatorRequest, Bytes32 } from "@quietpay/shared";
+import { FacilitatorRequest, Bytes32, Address } from "@quietpay/shared";
 import { RateLimiter, clientKey, resolveClientIp } from "@quietpay/relayer/core";
 import { FacilitatorService, PaymentError } from "./service.js";
 export async function registerFacilitator(
@@ -70,6 +70,18 @@ export async function registerFacilitator(
         ],
       },
     }));
+    // Read-only payment status for the paying agent (it has no merchant key). Rate limited per client, strict params,
+    // never cached. Answers only for the exact payer+nonce asked about: ids are hashes that include the payer.
+    const statusLimiter = new RateLimiter(service.relayer.cfg.rateLimitPerMinute);
+    api.get("/v1/x402/payments/:payer/:nonce", async (req, reply) => {
+      reply.header("cache-control", "no-store");
+      if (!statusLimiter.allow(req.ip))
+        return reply.code(429).send({ error: { code: "rate_limited", message: "Too many status requests." } });
+      const p = z.object({ payer: Address, nonce: Bytes32 }).safeParse(req.params);
+      if (!p.success)
+        return reply.code(400).send({ error: { code: "invalid_payload", message: "Invalid payer or nonce." } });
+      return { ...service.paymentStatus(p.data.payer, p.data.nonce), network: `eip155:${service.relayer.cfg.chainId}` };
+    });
     api.post("/verify", async (req, reply) => {
       const parsed = FacilitatorRequest.safeParse(req.body);
       if (!parsed.success)

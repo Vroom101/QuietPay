@@ -195,10 +195,56 @@ importers:
       '@quietpay/shared':
         specifier: workspace:*
         version: link:../shared
+      better-sqlite3:
+        specifier: ^11.5.0
+        version: 11.10.0
       viem:
         specifier: ^2.21.0
         version: 2.57.16(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.11
+        version: 7.6.13
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.43
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.15
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
+  packages/e2e:
+    dependencies:
+      '@quietpay/indexer':
+        specifier: workspace:*
+        version: link:../indexer
+      '@quietpay/merchant-sdk':
+        specifier: workspace:*
+        version: link:../merchant-sdk
+      '@quietpay/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@quietpay/verifier':
+        specifier: workspace:*
+        version: link:../verifier
+      better-sqlite3:
+        specifier: ^11.5.0
+        version: 11.10.0
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.15
+      viem:
+        specifier: ^2.21.0
+        version: 2.57.16(typescript@5.9.3)(zod@3.25.76)
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.11
+        version: 7.6.13
       '@types/node':
         specifier: ^20.14.0
         version: 20.19.43

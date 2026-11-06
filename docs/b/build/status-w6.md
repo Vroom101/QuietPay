@@ -1,0 +1,3 @@
+- W6 step 1: read-only GET /v1/x402/payments/:payer/:nonce + tests
+- W6 step 2: second real-chain front-run + cancel tests (own kit, cancel-capable fixture token)
+- W6 step 3: official x402 client probe + docs/b/build/x402-interop.md

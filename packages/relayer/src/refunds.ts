@@ -4,7 +4,7 @@ import { QuietpayError, buildRefundAuthorization, checkAuthWindow, type RelayRef
 import type { RelayerService } from "./service.js";
 import type { RefundRow } from "./db.js";
 import type { RefundArgs, TxReceipt } from "./chain.js";
-import { RateLimiter } from "./ratelimit.js";
+import { RateLimiter, clientKey } from "./ratelimit.js";
 
 /** Refunds share the payment sender lock, wallet nonce manager and persisted gas budget. */
 export class RefundService {
@@ -49,7 +49,7 @@ export class RefundService {
   }
   async submit(merchant: Hex, req: RelayRefundRequest, ip: string): Promise<Refund> {
     this.owned(merchant, req.orderId);
-    if (!this.limiter.allow(`ip:${ip}`) || !this.limiter.allow(`merchant:${merchant.toLowerCase()}`)) throw new QuietpayError("rate_limited");
+    if (!this.limiter.allow(`ip:${clientKey(ip)}`) || !this.limiter.allow(`merchant:${merchant.toLowerCase()}`)) throw new QuietpayError("rate_limited");
     // Full request identity makes exact retries stable, including after restart.
     const id = keccak256(stringToHex(JSON.stringify([merchant.toLowerCase(), req.orderId.toLowerCase(), req.amount,
       req.refundIndex, req.validAfter, req.validBefore, req.signature.toLowerCase()])));
