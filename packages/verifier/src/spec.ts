@@ -17,7 +17,7 @@ export interface SpecLog {
   data: string;
 }
 
-export type SpecKind = "Paid" | "Refunded" | "MerchantRegistered" | "PayoutChanged" | "RelayerSet" | "Transfer";
+export type SpecKind = "Paid" | "Refunded" | "MerchantRegistered" | "PayoutChanged" | "RelayerSet" | "RefundSignerChanged" | "Transfer";
 
 export interface SpecEvent {
   txHash: string;
@@ -54,6 +54,7 @@ export const TOPICS = {
   MerchantRegistered: sig("MerchantRegistered(bytes32,address,address,uint256)"),
   PayoutChanged: sig("PayoutChanged(bytes32,address)"),
   RelayerSet: sig("RelayerSet(address,bool)"),
+  RefundSignerChanged: sig("RefundSignerChanged(bytes32,address,address)"),
   Transfer: sig("Transfer(address,address,uint256)"),
 };
 
@@ -99,6 +100,9 @@ export function decodeRouter(l: SpecLog): { kind: SpecKind; args: Record<string,
   // Operator events only matter to the event-set hash, not to any row.
   if (t0 === TOPICS.MerchantRegistered && l.topics.length === 2 && d.length === 3 * 64) return { kind: "MerchantRegistered", args: {} };
   if (t0 === TOPICS.PayoutChanged && l.topics.length === 2 && d.length === 64) return { kind: "PayoutChanged", args: {} };
+  if (t0 === TOPICS.RefundSignerChanged && l.topics.length === 2 && isWord(l.topics[1]) && d.length === 2 * 64) {
+    return { kind: "RefundSignerChanged", args: { merchantId: lc(l.topics[1]!), oldSigner: addrOf(word(d, 0)), newSigner: addrOf(word(d, 1)) } };
+  }
   if (t0 === TOPICS.RelayerSet && l.topics.length === 2 && d.length === 64) return { kind: "RelayerSet", args: {} };
   return null;
 }

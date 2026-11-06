@@ -15,6 +15,7 @@ export type RawKind =
   | "MerchantRegistered"
   | "PayoutChanged"
   | "RelayerSet"
+  | "RefundSignerChanged"
   | "Transfer";
 
 /** A decoded event as stored. All numeric args are decimal strings (they are uint256 base units). */
@@ -57,6 +58,8 @@ export interface ExportMeta {
   toBlock: number;
   confirmations: number;
   eventSetHash: string;
+  /** 2 = the event set includes RefundSignerChanged. Exports without this field are version 1. */
+  hashVersion?: number;
   /** What the export covered, so a verifier can refuse a mismatched setup. Absent in exports made before 2026-11-06. */
   router?: string;
   usdt?: string;

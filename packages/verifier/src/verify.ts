@@ -157,6 +157,17 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
     return finish();
   }
   const meta = sc.meta;
+  if (meta.hashVersion !== 2) {
+    issues.push({
+      check: "sidecar",
+      code: "unsupported_hash_version",
+      field: "hashVersion",
+      expected: "2",
+      actual: String(meta.hashVersion ?? 1),
+      message: `this export uses event-set hash version ${meta.hashVersion ?? 1}; the verifier supports version 2 (adds RefundSignerChanged). It is not necessarily tampered: re-export it with the current indexer`,
+    });
+    return finish();
+  }
   Object.assign(report, { fromBlock: meta.fromBlock, toBlock: meta.toBlock, confirmations: meta.confirmations });
   report.eventSetHash.sidecar = meta.eventSetHash;
   for (const r of csvRows) {
