@@ -91,7 +91,10 @@ export function buildServer(svc: RelayerService): FastifyInstance {
 
   app.get("/v1/metrics", async (req, reply) => {
     if (!operatorOnly(req, reply)) return reply;
-    return svc.metrics();
+    await svc.refreshBalance();
+    const metrics = svc.metrics();
+    metrics.paused = svc.localPaused || await svc.chain.isPaused();
+    return metrics;
   });
 
   app.post("/v1/admin/pause", async (req, reply) => {

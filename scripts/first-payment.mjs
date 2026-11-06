@@ -2,6 +2,7 @@
 // Usage (local shell, from the repo root):
 //   RELAYER_URL=... QUIETPAY_API_KEY=... QUIETPAY_MERCHANT_ID=0x... PAYER_PRIVATE_KEY=0x... \
 //   pnpm --filter @quietpay/shared exec tsx ../../scripts/first-payment.mjs
+import { createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { buildCheckoutAuthorization } from "@quietpay/shared";
 
@@ -16,13 +17,18 @@ const j = async (r) => {
   return b;
 };
 const payer = privateKeyToAccount(PAYER_PRIVATE_KEY);
+if (!process.env.RPC_URL) throw new Error("Set RPC_URL to verify the payer's zero-WBT balance.");
+const chain = createPublicClient({ transport: http(process.env.RPC_URL) });
+if (await chain.getChainId() !== 1874) throw new Error("Expected Whitechain Sepolia (1874).");
+if (await chain.getBalance({ address: payer.address }) !== 0n) throw new Error("Payer must hold zero WBT before the payment.");
 const order = await j(
   await fetch(`${RELAYER_URL}/v1/orders`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${QUIETPAY_API_KEY}` },
-    body: JSON.stringify({ merchantId: QUIETPAY_MERCHANT_ID, amount, reference: "first-payment" }),
+    body: JSON.stringify({ merchantId: QUIETPAY_MERCHANT_ID, amount, reference: "first-payment", webhookUrl: process.env.FIRST_PAYMENT_WEBHOOK_URL }),
   }),
 );
+if (order.checkout.chainId !== 1874) throw new Error("Relayer returned the wrong chain.");
 const now = Math.floor(Date.now() / 1000);
 const c = order.checkout;
 const validAfter = now - 5;
@@ -52,6 +58,8 @@ console.log("submitted", relay.txHash);
 for (let i = 0; i < 60; i++) {
   const o = await j(await fetch(`${RELAYER_URL}/v1/orders/${order.id}`));
   if (o.status === "settled") {
+    if (await chain.getBalance({ address: payer.address }) !== 0n) throw new Error("Payer no longer has zero WBT.");
+    console.log("Zero-WBT payer verified:", payer.address);
     console.log("SETTLED", o.explorerUrl ?? o.txHash);
     process.exit(0);
   }

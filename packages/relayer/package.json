@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "preflight": "tsx src/preflight.ts"
   },
   "dependencies": {
     "@quietpay/shared": "workspace:*",

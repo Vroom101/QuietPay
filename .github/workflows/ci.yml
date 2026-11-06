@@ -1,7 +1,7 @@
 name: ci
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "backend/**"]
   pull_request:
 jobs:
   contracts:

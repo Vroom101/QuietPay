@@ -55,6 +55,8 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 - Demo-grade payer wallet: a random key encrypted with AES-GCM in IndexedDB. Not production custody.
 - USDT only, testnet only, no audit. No INR conversion or production custody is claimed.
 - The relayer is a trusted gas sponsor: it can censor or pause, but cannot redirect funds or exceed the fee cap.
-- The rate limiter is in memory; the gas loss budget is persisted.
+- The rate limiter is in memory; signed transactions and gas reservations persist in SQLite.
+- Run one relayer process per gas wallet/database. Pending payments recover after restart and use bounded same-nonce replacements.
+- P0 operations, safety settings and read-only deployment checks: [`docs/b/p0-backend.md`](docs/b/p0-backend.md).
 - Not done yet: live deployment and first real payment, hosted relayer, explorer verification, a browser run of the widget.
 - P1 (refunds, ledger and verifier, x402) is not started.

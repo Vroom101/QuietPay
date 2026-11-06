@@ -5,6 +5,8 @@ dist/
 !.env.example
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 contracts/out/
 contracts/cache/
 contracts/broadcast/

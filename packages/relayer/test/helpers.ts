@@ -1,7 +1,7 @@
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
 import { buildCheckoutAuthorization, type Order } from "@quietpay/shared";
-import type { ChainPort, MerchantRegistry, PayArgs, TxReceipt } from "../src/chain.js";
+import type { ChainPort, MerchantRegistry, PayArgs, TxReceipt, PreparedTx } from "../src/chain.js";
 import type { Config } from "../src/config.js";
 import { Db } from "../src/db.js";
 import { RelayerService } from "../src/service.js";
@@ -44,11 +44,29 @@ export class FakeChain implements ChainPort {
   async getGasPrice() {
     return this.gasPrice;
   }
-  async sendPay(args: PayArgs) {
-    this.sent.push(args);
-    return ("0x" + this.sent.length.toString(16).padStart(64, "0")) as Hex;
+  prepared: { tx: PreparedTx; args: PayArgs }[] = [];
+  balance = 10n ** 18n;
+  receiptFails = false;
+  broadcastFails = false;
+  async getReceipt(): Promise<TxReceipt | null> {
+    if (this.receiptFails || this.holdReceipt) return null;
+    return { status: this.receiptStatus, gasUsed: this.gas, effectiveGasPrice: this.gasPrice, blockNumber: 1n };
+  }
+  async getBalance() { return this.balance; }
+  async preparePay(args: PayArgs, gas: bigint, gasPrice: bigint, nonce?: number): Promise<PreparedTx> {
+    const hash = ("0x" + (this.prepared.length + 1).toString(16).padStart(64, "0")) as Hex;
+    const tx = { hash, raw: hash, nonce: nonce ?? this.prepared.length, gas, gasPrice };
+    this.prepared.push({ tx, args });
+    return tx;
+  }
+  async broadcast(raw: Hex) {
+    if (this.broadcastFails) throw new Error("network unavailable");
+    const p = this.prepared.find(p => p.tx.raw === raw)!;
+    if (!this.sent.includes(p.args)) this.sent.push(p.args);
+    return p.tx.hash;
   }
   waitForReceipt(): Promise<TxReceipt> {
+    if (this.receiptFails) return Promise.reject(new Error("receipt timeout"));
     const r: TxReceipt = { status: this.receiptStatus, gasUsed: this.gas, effectiveGasPrice: this.gasPrice, blockNumber: 1n };
     if (!this.holdReceipt) return Promise.resolve(r);
     return new Promise((res) => (this.resolveReceipt = () => res(r)));
@@ -74,6 +92,10 @@ export function makeCfg(over: Partial<Config> = {}): Config {
     databasePath: ":memory:",
     lossBudgetWei: 50_000_000_000_000_000n, // 0.05 WBT
     maxGasPrice: null,
+    maxGasLimit: 500_000n,
+    lowBalanceWei: 10n ** 16n,
+    pendingRetrySeconds: 30,
+    maxReplacements: 3,
     payerCap: 100_000_000n, // 100 USDT
     relayFee: 50_000n,
     rateLimitPerMinute: 1000,

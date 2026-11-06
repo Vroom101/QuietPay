@@ -153,6 +153,10 @@ describe.skipIf(!haveArtifacts)("end to end on anvil: zero-WBT payer, real route
     const { txHash } = relay.json();
     expect(txHash).toMatch(/^0x[0-9a-f]{64}$/);
 
+    // Settlement requires two confirmations; Anvil mines only when asked or sent a transaction.
+    await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "evm_mine", params: [] }) });
+
     // Repeating returns the same hash.
     const repeat = await app.inject({
       method: "POST",
