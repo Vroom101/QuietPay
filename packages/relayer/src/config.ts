@@ -40,6 +40,7 @@ const EnvSchema = z.object({
   PENDING_RETRY_SECONDS: z.coerce.number().int().min(5).default(30),
   MAX_REPLACEMENTS: z.coerce.number().int().min(0).max(10).default(3),
   /** Blocks a success receipt must be buried under before an order settles (reorg protection). 1 = first receipt. */
+  CORS_ORIGINS: z.string().default(""),
   SETTLE_CONFIRMATIONS: z.coerce.number().int().min(1).max(64).default(1),
   // Optional, additive to the frozen list.
   RELAY_FEE_USDT: decimal(6).default("0.05"),
@@ -106,6 +107,8 @@ export interface Config {
   pendingRetrySeconds: number;
   maxReplacements: number;
   settleConfirmations: number;
+  /** Browser origins allowed to call authenticated routes (CORS_ORIGINS, comma separated). Empty = none. */
+  corsOrigins: string[];
   payerCap: bigint; // USDT base units
   relayFee: bigint; // USDT base units
   rateLimitPerMinute: number;
@@ -172,6 +175,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     pendingRetrySeconds: e.PENDING_RETRY_SECONDS,
     maxReplacements: e.MAX_REPLACEMENTS,
     settleConfirmations: e.SETTLE_CONFIRMATIONS,
+    corsOrigins: e.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean),
     payerCap: parseUnits(e.PAYER_CAP_USDT, 6),
     relayFee: parseUnits(e.RELAY_FEE_USDT, 6),
     rateLimitPerMinute: e.RATE_LIMIT_PER_MINUTE,
