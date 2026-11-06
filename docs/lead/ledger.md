@@ -24,7 +24,8 @@
 **x402** (one row per qualifying Transfer): `order_id` and `merchant_id` empty, fee and refunded `0.000000`,
 `net_usdt` = gross, `status` = `settled`.
 
-Amounts are decimal strings with exactly 6 places, built from integer base units (no floating point).
+Amounts are decimal strings with exactly as many places as the token has (6 for the official USDT, read from `token.json`,
+never hardcoded), built from integer base units (no floating point).
 
 ### The double-count rule
 
@@ -63,6 +64,8 @@ pnpm cli rebuild                                 # recompute the ledger from raw
 pnpm cli export --from N --to M --out out.csv    # writes out.csv and out.csv.meta.json
 ```
 
+On chain 1874 the CLI accepts only the qualifying router and the official USDT (`assertQualifyingConfig`).
+
 `FACILITATOR_PAYTO` is optional; without it only router rows are produced. `export` clamps `--to` to the finalized
 cursor, so non-final blocks are never included. Set `GENERATED_AT` to pin the sidecar timestamp for byte-identical sidecars.
 
@@ -82,12 +85,15 @@ router operator events and the Transfers to the facilitator address, even those 
 Reuse the pure functions from `@quietpay/indexer`: `decodeRouterLog`, `decodeTransferLog`, `buildLedgerRows`, `toCsv`
 (and `eventSetHash`). They take events as arguments and share no storage.
 
-## Sample
+## Samples
 
-`docs/lead/samples/ledger-sample.csv` and `.meta.json`: live testnet blocks 12347996 to 12348705, 2 rows (the first real
-router payment with its partial refund, and one direct transfer standing in for an agent payment). The direct transfer
-was sent from the deployer wallet to the payout address, which is used as `FACILITATOR_PAYTO` here, so the row shows the
-x402 path and the exclusion of the router's own payout transfer. There is no real x402 facilitator traffic yet.
+- **Live sample: pending.** A live export needs a real payment and refund on the qualifying router, which waits for official
+  USDT in the payer wallet (`docs/lead/blocked.md`). The CLI has been run live against the qualifying router: it indexed
+  its operator events (`RelayerSet`, `MerchantRegistered`) and exported a valid, empty ledger (header only).
+- **Synthetic sample (format only):** `docs/lead/samples/synthetic-sample.csv` and `.meta.json` are generated from
+  hand-made logs by `packages/indexer/scripts/make-synthetic-sample.ts`. They are **not** chain data. They show a partly
+  refunded router row, a plain x402 row, and the double-count rule (a router payout to the facilitator address is counted
+  once, as router). Dates look odd because the fake chain uses made-up block timestamps.
 
 ## Limits
 

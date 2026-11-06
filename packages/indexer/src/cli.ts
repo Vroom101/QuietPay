@@ -2,7 +2,7 @@
 import { writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
-import { getDeployment } from "@quietpay/shared";
+import { assertQualifyingConfig, getDeployment, getQualifyingDeployment, QUALIFYING_CHAIN_ID } from "@quietpay/shared";
 import { IndexerDb } from "./db.js";
 import { buildExport, indexOnce, rebuild, type IndexerConfig } from "./indexer.js";
 import { makeLogSource } from "./rpc.js";
@@ -22,21 +22,24 @@ function need(name: string): string {
 
 function loadConfig(): { cfg: IndexerConfig; rpcUrl: string; dbPath: string } {
   const chainId = Number(process.env.CHAIN_ID ?? 1874);
+  // On the qualifying chain, only the qualifying router and the official USDT are accepted.
   const dep = (() => {
     try {
-      return getDeployment(chainId);
+      return chainId === QUALIFYING_CHAIN_ID ? getQualifyingDeployment() : getDeployment(chainId);
     } catch {
       return undefined;
     }
   })();
   const deployBlock = Number(process.env.DEPLOY_BLOCK ?? dep?.deployBlock ?? NaN);
   if (!Number.isFinite(deployBlock)) throw new Error("No deploy block: set DEPLOY_BLOCK or record deployBlock in deployments.json");
+  const usdt = process.env.USDT_ADDRESS ?? dep?.token ?? need("USDT_ADDRESS");
+  if (chainId === QUALIFYING_CHAIN_ID) assertQualifyingConfig({ chainId, tokenAddress: usdt });
   return {
     rpcUrl: need("RPC_URL"),
     dbPath: process.env.DATABASE_PATH ?? "./indexer.db",
     cfg: {
       router: process.env.ROUTER_ADDRESS ?? dep?.router ?? need("ROUTER_ADDRESS"),
-      usdt: process.env.USDT_ADDRESS ?? dep?.token ?? need("USDT_ADDRESS"),
+      usdt,
       facilitatorPayTo: process.env.FACILITATOR_PAYTO || undefined,
       confirmations: Number(process.env.CONFIRMATIONS ?? 12),
       deployBlock,

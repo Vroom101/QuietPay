@@ -164,3 +164,14 @@ describe("formatting and csv", () => {
 });
 
 void USDT;
+
+describe("decimals come from the token, not a hardcoded 6", () => {
+  it("formats with the token decimals by default and honours an 18-decimal token", () => {
+    expect(formatAmount(1n)).toBe("0.000001"); // token.json says 6
+    expect(formatAmount(1n, 18)).toBe("0.000000000000000001");
+    expect(formatAmount(5n, 0)).toBe("5");
+    const rows = buildLedgerRows([raw(paidLog({ block: 1, orderId: order(1), value: 25_000_000_000_000_000_000n, fee: 0n }))], { router: ROUTER, decimals: 18 });
+    expect(rows[0]!.grossUsdt).toBe("25.000000000000000000");
+    expect(rows[0]!.refundedUsdt).toBe("0.000000000000000000");
+  });
+});

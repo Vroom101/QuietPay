@@ -43,3 +43,11 @@
   - *`Ownable2Step`, refunds while paused, a rescue function for tokens sent directly to the router*: considered and not
     added (the spec says a paused router reverts refunds; direct transfers are documented as unrecoverable).
   - *The payer's wallet shows an opaque nonce*: documented limitation; consent depends on the widget showing the fee.
+
+## Phase 4 follow-ups
+- The earlier live sample export came from the superseded stand-in router, so it was removed (it stays in git history). A
+  clearly labelled synthetic sample replaces it until a real official-USDT payment exists.
+- The indexer's decimals now come from `token.json` (default) instead of a hardcoded 6; the CLI accepts only the qualifying
+  router and the official USDT on chain 1874.
+- forge writes the wrong hash into `transactions[].hash` of a broadcast file for the creation tx; `record-deployment.mjs`
+  reads the creation receipt instead.

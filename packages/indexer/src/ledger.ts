@@ -1,4 +1,5 @@
-import { formatAmount, ZERO_AMOUNT } from "./format.js";
+import { token } from "@quietpay/shared";
+import { formatAmount } from "./format.js";
 import type { LedgerRow, LedgerStatus, RawEvent } from "./types.js";
 
 export interface LedgerConfig {
@@ -30,7 +31,8 @@ export function isoUtc(ts: number): string {
  * could be negative (the relay fee is not returned); the ledger reports zero in that case.
  */
 export function buildLedgerRows(events: RawEvent[], cfg: LedgerConfig): LedgerRow[] {
-  const d = cfg.decimals ?? 6;
+  const d = cfg.decimals ?? token.decimals;
+  const ZERO_AMOUNT = formatAmount(0n, d);
   const router = lc(cfg.router);
   const payTo = cfg.facilitatorPayTo ? lc(cfg.facilitatorPayTo) : undefined;
   const sorted = [...events].sort(compareEvents);
