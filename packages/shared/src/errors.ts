@@ -14,6 +14,8 @@ export const ERROR_CODES = [
   // added with refunds (shared-change)
   "insufficient_refund_balance",
   "payment_replayed",
+  "budget_exceeded",
+  "invalid_amount",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -40,6 +42,8 @@ export const ERROR_HTTP_STATUS: Record<ErrorCode, number> = {
   fee_over_cap: 422,
   insufficient_refund_balance: 422,
   payment_replayed: 409,
+  budget_exceeded: 503,
+  invalid_amount: 400,
 };
 
 /** Plain-words text for end users. Never mentions gas, WBT or transactions. */
@@ -55,6 +59,8 @@ export const ERROR_USER_MESSAGES: Record<ErrorCode, string> = {
   fee_over_cap: "This payment could not be processed right now, and you have not been charged. Please try again later.",
   insufficient_refund_balance: "The merchant's refund wallet does not hold enough to cover this refund yet. Please top it up and try again.",
   payment_replayed: "This approval was already used. Please start a new payment.",
+  budget_exceeded: "Payments are paused briefly while we catch up. Please try again later.",
+  invalid_amount: "That amount is not valid. Use a number with up to 6 decimal places.",
 };
 
 export function errorBody(code: ErrorCode, message?: string): ErrorResponse {

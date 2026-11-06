@@ -78,6 +78,11 @@ export const paymentRouterAbi = [
         "name": "value",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "fee",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -421,6 +426,24 @@ export const paymentRouterAbi = [
   },
   {
     "type": "function",
+    "name": "setRefundSigner",
+    "inputs": [
+      {
+        "name": "merchantId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newSigner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setRelayer",
     "inputs": [
       {
@@ -594,6 +617,31 @@ export const paymentRouterAbi = [
       },
       {
         "name": "payout",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RefundSignerChanged",
+    "inputs": [
+      {
+        "name": "merchantId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "oldSigner",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "newSigner",
         "type": "address",
         "indexed": false,
         "internalType": "address"
@@ -800,6 +848,11 @@ export const paymentRouterAbi = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "TokenAmountMismatch",
+    "inputs": []
   },
   {
     "type": "error",

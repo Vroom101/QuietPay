@@ -11,8 +11,8 @@ import tokenJson from "../token.json";
 
 export const token = tokenJson;
 
-/** keccak256("quietpay.pay.v1") */
-export const PAY_TAG = keccak256(stringToHex("quietpay.pay.v1"));
+/** keccak256("quietpay.pay.v2"). v2 binds the relay fee into the nonce. */
+export const PAY_TAG = keccak256(stringToHex("quietpay.pay.v2"));
 /** keccak256("quietpay.refund.v1") */
 export const REFUND_TAG = keccak256(stringToHex("quietpay.refund.v1"));
 /** validBefore may be at most this many seconds after validAfter. */
@@ -34,20 +34,26 @@ export function merchantIdFromSlug(slug: string): Hex {
   return keccak256(stringToHex(slug));
 }
 
-/** Must match PaymentRouter.computeNonce. */
+/**
+ * Must match PaymentRouter.computeNonce: keccak256(abi.encode(PAY_TAG, merchantId, orderId, payout, value, fee)).
+ * `fee` is required with no default: the payer signs the exact fee they were quoted, and the router recomputes the
+ * nonce from the fee the relayer submits, so a different fee makes the token reject the signature.
+ */
 export function computePayNonce(args: {
   merchantId: Hex;
   orderId: Hex;
   payout: Address;
   value: bigint;
+  fee: bigint;
 }): Hex {
   return keccak256(
-    encodeAbiParameters(parseAbiParameters("bytes32, bytes32, bytes32, address, uint256"), [
+    encodeAbiParameters(parseAbiParameters("bytes32, bytes32, bytes32, address, uint256, uint256"), [
       PAY_TAG,
       args.merchantId,
       args.orderId,
       args.payout,
       args.value,
+      args.fee,
     ]),
   );
 }
@@ -114,20 +120,6 @@ export function checkAuthWindow(validAfter: number, validBefore: number, nowSeco
   if (nowSeconds <= validAfter) return "authorization not yet valid";
   if (nowSeconds >= validBefore) return "authorization expired";
   return null;
-}
-
-/** Format base units (6 decimals) for display, e.g. 25000000n -> "25.00". */
-export function formatUsdt(value: bigint | string, decimals: number = token.decimals): string {
-  const v = BigInt(value);
-  const base = 10n ** BigInt(decimals);
-  const whole = v / base;
-  const frac = (v % base).toString().padStart(decimals, "0").slice(0, 2);
-  return `${whole.toString()}.${frac}`;
-}
-
-export function parseUsdt(amount: string): bigint {
-  const [w, f = ""] = amount.split(".");
-  return BigInt(w || "0") * 10n ** BigInt(token.decimals) + BigInt(f.padEnd(token.decimals, "0").slice(0, token.decimals));
 }
 
 /** Must match PaymentRouter.computeRefundNonce. `payer` comes from the receipt, never from the caller. */

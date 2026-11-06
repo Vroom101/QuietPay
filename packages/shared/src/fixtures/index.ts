@@ -37,6 +37,7 @@ export function makeOrder(over: Partial<Order> & { id?: Hex; amount?: string; fe
         orderId: id,
         payout: FIXTURE_PAYOUT,
         value: BigInt(amount),
+        fee: BigInt(fee),
       }),
       payout: FIXTURE_PAYOUT,
       fee,

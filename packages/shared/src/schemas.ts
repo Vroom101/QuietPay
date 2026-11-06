@@ -46,6 +46,8 @@ export const Order = z.object({
   refundedAmount: Amount.or(z.literal("0")).optional(),
   explorerUrl: z.string().url().optional(),
   checkout: CheckoutParams,
+}).refine((o) => o.fee === o.checkout.fee && o.amount === o.checkout.value && o.payout.toLowerCase() === o.checkout.payout.toLowerCase(), {
+  message: "order amount, fee and payout must equal what the payer signs (checkout.value, checkout.fee, checkout.payout)",
 });
 export type Order = z.infer<typeof Order>;
 

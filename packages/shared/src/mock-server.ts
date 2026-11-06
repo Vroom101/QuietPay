@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { ERROR_HTTP_STATUS, errorBody, type ErrorCode } from "./errors.js";
 import { CreateOrderRequest, RefundRequest, RelayPayRequest, type Order } from "./schemas.js";
+import { InvalidAmountError, parseUsdt } from "./amount.js";
 import {
   FIXTURE_PAYER,
   FIXTURE_ROUTER,
@@ -68,13 +69,26 @@ export function createMockRelayer(opts: { settleAfterMs?: number } = {}): Server
     }
 
     if (req.method === "POST" && url.pathname === "/v1/orders") {
-      const parsed = CreateOrderRequest.safeParse(await readJson(req));
-      if (!parsed.success) return fail(res, "amount_mismatch");
+      const body = (await readJson(req)) as Record<string, unknown> | undefined;
+      // A decimal amount ("25.5") is parsed strictly; seven decimals or any malformed value is invalid_amount.
+      if (body && typeof body.amount === "string" && body.amount.includes(".")) {
+        try {
+          body.amount = parseUsdt(body.amount).toString();
+        } catch (e) {
+          if (e instanceof InvalidAmountError) return fail(res, "invalid_amount");
+          throw e;
+        }
+      }
+      const parsed = CreateOrderRequest.safeParse(body);
+      if (!parsed.success) return fail(res, parsed.error.issues.some((i) => i.path.includes("amount")) ? "invalid_amount" : "bad_signature");
       const id = ("0x" + randomBytes(32).toString("hex")) as `0x${string}`;
       const now = Math.floor(Date.now() / 1000);
+      // The fee is part of the signed nonce, so it travels with the order and never exceeds amount - 1.
+      const fee = BigInt(parsed.data.amount) > 50_000n ? "50000" : "0";
       const order = makeOrder({
         id,
         amount: parsed.data.amount,
+        fee,
         reference: parsed.data.reference,
         createdAt: now,
         expiresAt: now + (parsed.data.expiresInSeconds ?? 900),
