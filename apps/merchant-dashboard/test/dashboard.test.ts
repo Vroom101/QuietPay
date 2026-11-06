@@ -36,8 +36,8 @@ describe("listOrders", () => {
 describe("toRow", () => {
   it("formats amount and fee, keeps payer and receipt link", () => {
     const r = toRow(orderSettled);
-    expect(r.amount).toBe("25.00 USDT");
-    expect(r.fee).toBe("0.05 USDT");
+    expect(r.amount).toBe("25.000000 USDT");
+    expect(r.fee).toBe("0.050000 USDT");
     expect(r.payer).toBe(orderSettled.payer);
     expect(r.explorerUrl).toBe(orderSettled.explorerUrl);
   });
