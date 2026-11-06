@@ -50,3 +50,7 @@ A read-only grep of `apps/`, `packages/widget`, `packages/relayer`, `packages/me
 `computeRefundNonce` unchanged; `parseUsdt` is strict (plain decimal, at most 6 places, no rounding, throws
 `InvalidAmountError`); `formatUsdt` is exact (6 places); `formatUsdtShort` is lossy and display-only; error codes
 `invalid_amount` and `budget_exceeded` added; `checkFundPlan` guards `scripts/fund-payer.ts`.
+
+## Added after R4
+- **B:** three test files use the mock EIP-712 domain name `"DemoUSDT"` and trip `scripts/qualify-check.ts` ("no demo-token references"): `packages/merchant-sdk/test/refund.test.ts:29`, `packages/relayer/test/config.test.ts:16`, `packages/relayer/test/refunds.test.ts:33`. Rename the domain name string (any neutral name such as "Test Token"). Also, two relayer tests (`pentest-round4` R4-VULN-1b and `refunds.test.ts` "requires merchant authentication") time out at 5 s when all packages run in parallel; they pass alone.
+- **B:** `packages/indexer/src/api/*` (written on the backend side) now redacts RPC URLs in errors and `/v1/health`, and parses blank env values as unset. Review it.
