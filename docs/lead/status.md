@@ -17,3 +17,4 @@
 - Indexer, ledger and CSV export built (`packages/indexer`, `docs/lead/ledger.md`); live sample in `docs/lead/samples/`.
 06:46 Phase 1 | Tasks 1-6 | contracts hardened, 65 forge tests pass, stand-in token removed (awaiting Opus review)
 06:48 Phase 1 | Opus review | no exploitable issue; v-normalize + underflow fix applied; 66 forge tests pass
+06:53 Phase 2 | Tasks 1-6 | shared hardened, 108 shared tests pass; relayer + dashboard knowingly red until A/B merge
