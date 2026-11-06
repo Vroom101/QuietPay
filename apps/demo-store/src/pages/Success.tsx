@@ -2,7 +2,8 @@ import { formatUsdt, token } from "@quietpay/shared";
 import { formatUnits } from "viem";
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { readPayment, type PaymentStatus } from "../payment";
+import { readPayment, readRefundStatus, type PaymentStatus } from "../payment";
+import type { CustomerRefundStatus } from "@quietpay/shared";
 
 export function Success() {
   const { orderId } = useParams();
@@ -15,6 +16,25 @@ function Receipt({ orderId }: { orderId: string }) {
   const [delayed, setDelayed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [details, setDetails] = useSearchParams();
+  const [refund, setRefund] = useState<CustomerRefundStatus>();
+
+  // Once paid, keep the customer informed about refunds (the merchant may refund later). Safe fields only.
+  useEffect(() => {
+    if (!state.paid || state.demo) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      const r = await readRefundStatus(orderId, controller.signal);
+      if (controller.signal.aborted) return;
+      if (r) setRefund(r);
+      timer = setTimeout(load, 20_000);
+    };
+    void load();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [orderId, state.paid]);
 
   // The shop only marks an order paid once its server has verified the signed webhook.
   useEffect(() => {
@@ -103,6 +123,18 @@ function Receipt({ orderId }: { orderId: string }) {
           </>
         )}
       </dl>}
+      {state.paid && !state.demo && refund && refund.totalRefunded !== "0" && <section className="gateway-receipt-details" aria-label="Refund status" data-testid="refund-status">
+        <h2>{refund.status === "refunded" ? "Fully refunded" : "Partially refunded"}</h2>
+        <dl>
+          <div><dt>You paid</dt><dd>{formatUsdt(BigInt(refund.amountPaid))}</dd></div>
+          <div><dt>Refunded so far</dt><dd>{formatUsdt(BigInt(refund.totalRefunded))}</dd></div>
+          <div><dt>Not refunded</dt><dd>{formatUsdt(BigInt(refund.remaining))}</dd></div>
+        </dl>
+        <ol>{refund.refunds.map((item, i) => <li key={`${item.createdAt}-${i}`} className="mt-2 flex justify-between gap-3">
+          <span>{item.status === "settled" ? "Refunded" : "Refund pending"} · {new Date(item.createdAt * 1000).toLocaleDateString()}{item.txHash && <> · <a href={`https://explorer.testnet.whitechain.io/tx/${item.txHash}`} target="_blank" rel="noopener noreferrer">view on explorer</a></>}</span>
+          <strong>{formatUsdt(BigInt(item.amount))}</strong>
+        </li>)}</ol>
+      </section>}
       {complete && showDetails && !!state.refunds?.length && <section className="gateway-receipt-details" aria-label="Refund history">
         <h2>Refund history</h2>
         <ol>{state.refunds.map((refund) => <li key={refund.id} className="mt-2 flex justify-between gap-3">

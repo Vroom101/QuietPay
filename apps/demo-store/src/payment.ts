@@ -1,6 +1,6 @@
 import { tokenHeaders } from "./order-token";
 import type { DemoRefund } from "./billing";
-import type { OrderStatus } from "@quietpay/shared";
+import { CustomerRefundStatus, type OrderStatus } from "@quietpay/shared";
 
 export interface PaymentMethod {
   id: string;
@@ -38,4 +38,20 @@ export async function readPayment(id: string, signal: AbortSignal): Promise<Paym
   const response = await fetch(`/api/orders/${encodeURIComponent(id)}/paid`, { headers: tokenHeaders(id), signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]) });
   if (!response.ok) throw new Error("Could not load payment status");
   return response.json() as Promise<PaymentStatus>;
+}
+
+/**
+ * The customer's own refund status (safe fields only), from the store's token-protected endpoint. The token goes in a
+ * header, never in the URL. Any failure (unknown order, wrong token, network, malformed or over-sharing response)
+ * returns undefined and the receipt simply shows nothing extra.
+ */
+export async function readRefundStatus(id: string, signal: AbortSignal): Promise<CustomerRefundStatus | undefined> {
+  try {
+    const response = await fetch(`/api/orders/${encodeURIComponent(id)}/refund-status`, { headers: tokenHeaders(id), signal });
+    if (!response.ok) return undefined;
+    const parsed = CustomerRefundStatus.safeParse(await response.json());
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
 }

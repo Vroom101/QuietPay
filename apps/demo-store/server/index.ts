@@ -26,6 +26,14 @@ if (payoutEnv === undefined) {
   console.warn("demo-store: QUIETPAY_PAYOUT_ADDRESS is not set; the checkout pins the payout the relayer reports instead of your own.");
 }
 
+const merchantWallets = (process.env.QUIETPAY_MERCHANT_WALLETS ?? "")
+  .split(",").map((w) => w.trim()).filter(Boolean);
+if (merchantWallets.some((w) => !/^0x[0-9a-fA-F]{40}$/.test(w))) {
+  console.error("demo-store: QUIETPAY_MERCHANT_WALLETS must be comma separated 0x addresses.");
+  process.exit(1);
+}
+if (merchantWallets.length === 0 && payoutEnv) merchantWallets.push(payoutEnv);
+
 const port = Number(process.env.PORT ?? 3001);
 const app = buildApp(sdk, {
   baseUrl: process.env.QUIETPAY_BASE_URL || "http://localhost:8787",
@@ -37,6 +45,14 @@ const app = buildApp(sdk, {
   // Paid orders and processed webhook ids survive restarts here.
   stateFile: process.env.QUIETPAY_STATE_FILE || ".data/demo-store-state.json",
   receiptDatabasePath: process.env.QUIETPAY_RECEIPT_DATABASE_PATH || "quietpay-receipts.db",
+  merchantAuth: merchantWallets.length
+    ? {
+        wallets: merchantWallets,
+        domain: process.env.QUIETPAY_AUTH_DOMAIN || "localhost:5173",
+        uri: process.env.QUIETPAY_AUTH_URI || "http://localhost:5173",
+        chainId: Number(process.env.QUIETPAY_CHAIN_ID || 1874),
+      }
+    : undefined,
   refunds: process.env.QUIETPAY_DASHBOARD_TOKEN
     ? {
         dashboardToken: process.env.QUIETPAY_DASHBOARD_TOKEN,

@@ -12,7 +12,7 @@ import {
   type RelayPayRequest,
 } from "@quietpay/shared";
 import { isAddress, type Address, type Hex } from "viem";
-import type { PrivateKeyAccount } from "viem/accounts";
+import type { CheckoutSigner } from "./wallet.js";
 import { NETWORK_MESSAGE } from "./messages.js";
 
 /** Error carrying a relayer code (or "network"/"timeout"/"unknown") for the UI to map to plain words. */
@@ -243,7 +243,7 @@ export interface SignCheckoutOptions {
  * approves. Throws WidgetError("checkout_*") without signing when anything is off.
  */
 export async function signCheckout(
-  account: PrivateKeyAccount,
+  account: CheckoutSigner,
   order: Order,
   nowSeconds: number = Math.floor(Date.now() / 1000),
   opts: SignCheckoutOptions = {},

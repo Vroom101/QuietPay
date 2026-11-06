@@ -31,6 +31,8 @@ interface MerchantConfig {
   apiKey: string;
   merchantId: Hex;
   refunds?: MerchantRefundConfig;
+  /** Extra credential accepted by the guard: a live wallet-login session token. */
+  acceptSession?: (token: string) => boolean;
 }
 class RouteError extends Error {
   constructor(
@@ -141,7 +143,9 @@ export function registerMerchantRefunds(
           });
         const provided =
           req.headers.authorization?.match(/^Bearer (.+)$/)?.[1] ?? "";
-        if (!timingSafeEqual(digest(provided), digest(settings.dashboardToken)))
+        const staticOk = timingSafeEqual(digest(provided), digest(settings.dashboardToken));
+        const sessionOk = config.acceptSession?.(provided) ?? false;
+        if (!staticOk && !sessionOk)
           return reply.code(401).send({
             error: {
               code: "unauthorized",

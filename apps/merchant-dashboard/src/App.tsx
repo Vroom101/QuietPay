@@ -14,6 +14,7 @@ import {
 } from "react";
 import { OrderStatus, type Order } from "@quietpay/shared";
 import { DashboardError, listOrders } from "./lib/api";
+import { WalletLoginError, injectedProvider, shortAddress, signInWithWallet, signOut } from "./lib/wallet-login";
 import { STATUS_STYLES, demoOrderToDashboard, safeHttpUrl, shortHex, toRow, type DashboardOrder } from "./lib/view";
 
 const MERCHANT_URL = import.meta.env.VITE_MERCHANT_API_URL || "/api/merchant";
@@ -32,6 +33,14 @@ function loadKey(): string {
   }
 }
 
+function loadWalletAddress(): string {
+  try {
+    return sessionStorage.getItem("qp-wallet-address") ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function loadDemoSession(): boolean {
   try {
     return sessionStorage.getItem("qp-merchant-demo") === "1";
@@ -45,6 +54,9 @@ export function App() {
   const [apiKey, setApiKey] = useState(loadKey);
   const [demoSession, setDemoSession] = useState(loadDemoSession);
   const [draft, setDraft] = useState("");
+  const [wallet, setWallet] = useState(loadWalletAddress);
+  const [walletBusy, setWalletBusy] = useState(false);
+  const [walletError, setWalletError] = useState<string>();
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
@@ -60,7 +72,34 @@ export function App() {
     setSelected(undefined);
   }
 
+  async function walletLogin() {
+    setWalletError(undefined);
+    setWalletBusy(true);
+    try {
+      const session = await signInWithWallet({ merchantUrl: MERCHANT_URL, provider: injectedProvider() });
+      request.current++;
+      activeToken.current = session.token;
+      setOrders([]);
+      try {
+        sessionStorage.setItem("qp-dashboard-token", session.token);
+        sessionStorage.setItem("qp-wallet-address", session.address);
+      } catch { /* storage unavailable: the session lives in memory only */ }
+      setWallet(session.address);
+      setApiKey(session.token);
+      setDraft("");
+      changeView("Overview");
+    } catch (e) {
+      setWalletError(e instanceof WalletLoginError ? e.message : "Wallet sign-in failed.");
+    } finally {
+      setWalletBusy(false);
+    }
+  }
+
   function disconnect() {
+    if (wallet && apiKey) void signOut({ merchantUrl: MERCHANT_URL, token: apiKey });
+    setWallet("");
+    setWalletError(undefined);
+    try { sessionStorage.removeItem("qp-wallet-address"); } catch { /* Storage may be unavailable. */ }
     request.current++;
     activeToken.current = "";
     try { sessionStorage.removeItem(DEMO_MODE ? "qp-merchant-demo" : "qp-dashboard-token"); } catch { /* Storage may be unavailable. */ }
@@ -160,6 +199,8 @@ export function App() {
             <form onSubmit={saveKey}>
               <label>Dashboard access token<input type="password" value={draft} onChange={(e) => setDraft(e.target.value)} autoComplete="off" required /></label>
               <button type="submit" className="md-signin-submit">Open merchant dashboard <span aria-hidden="true">→</span></button>
+              <button type="button" className="md-signin-submit" disabled={walletBusy} onClick={() => void walletLogin()}>{walletBusy ? "Waiting for wallet…" : "Sign in with MetaMask"}</button>
+              {walletError && <p role="alert" className="md-notice">{walletError}</p>}
             </form>
           )}
         </section>
@@ -178,7 +219,7 @@ export function App() {
             <button key={item} type="button" aria-current={view === item ? "page" : undefined} onClick={() => changeView(item)}>{item}</button>
           ))}
         </nav>
-        <div className="md-side-note"><strong>{merchantName}</strong><span>{DEMO_MODE ? "Storefront demo" : "Dashboard token access"}</span></div>
+        <div className="md-side-note"><strong>{merchantName}</strong><span>{DEMO_MODE ? "Storefront demo" : wallet ? "Signed in as " + shortAddress(wallet) : "Dashboard token access"}</span></div>
       </aside>
       <main className="md-main">
         <header className="md-top">
@@ -195,7 +236,10 @@ export function App() {
           <form onSubmit={saveKey} className="md-glass md-access">
             <label>Dashboard access token<input type="password" value={draft} onChange={(e) => setDraft(e.target.value)} autoComplete="off" required /></label>
             <button type="submit">Load orders</button>
+            {!hasAccess && <button type="button" disabled={walletBusy} onClick={() => void walletLogin()}>{walletBusy ? "Waiting for wallet…" : "Sign in with MetaMask"}</button>}
+            {wallet && hasAccess && <span>Signed in as {shortAddress(wallet)}</span>}
             {hasAccess && <button type="button" onClick={disconnect}>Sign out</button>}
+            {walletError && <p role="alert" className="md-notice">{walletError}</p>}
           </form>
         )}
         {DEMO_MODE && view === "Settings" && <div className="md-glass md-access"><p>This workspace shows payments recorded by the demo storefront. Connect the merchant server to see live orders.</p><button type="button" onClick={disconnect}>Sign out</button></div>}

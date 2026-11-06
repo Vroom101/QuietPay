@@ -14,12 +14,14 @@ import {
   type ExpectedCheckout,
 } from "./client.js";
 import { KeystoreError, getOrCreateAccount } from "./keystore.js";
+import { connectMetaMask, injectedProvider, metamaskAvailable, requireBalance, type CheckoutSigner } from "./wallet.js";
 import { GENERIC_MESSAGE, TIMEOUT_MESSAGE, messageForCode } from "./messages.js";
 
 type View = "loading" | "ready" | "paying" | "settled" | "error";
 
 const STEPS: Record<string, string> = {
-  signing: "Approve the payment...",
+  connecting: "Connecting your wallet...",
+  signing: "Approve the payment in your wallet...",
   sending: "Sending your payment...",
   confirming: "Confirming your payment...",
 };
@@ -55,6 +57,7 @@ export class QuietpayCheckout extends LitElement {
     view: { state: true },
     order: { state: true },
     account: { state: true },
+    walletAddress: { state: true },
     step: { state: true },
     errorMessage: { state: true },
     errorCode: { state: true },
@@ -72,6 +75,8 @@ export class QuietpayCheckout extends LitElement {
   declare view: View;
   declare order: Order | undefined;
   declare account: PrivateKeyAccount | undefined;
+  /** Set when the payer chose to pay from a browser wallet (MetaMask) instead of the built-in demo key. */
+  declare walletAddress: string | undefined;
   declare step: string;
   declare errorMessage: string;
   declare errorCode: string;
@@ -91,6 +96,7 @@ export class QuietpayCheckout extends LitElement {
     this.view = "loading";
     this.order = undefined;
     this.account = undefined;
+    this.walletAddress = undefined;
     this.step = "";
     this.errorMessage = "";
     this.errorCode = "";
@@ -161,6 +167,7 @@ export class QuietpayCheckout extends LitElement {
     this.errorCode = code;
     if (code === "timeout") this.errorMessage = TIMEOUT_MESSAGE;
     else if (code === "network" && err instanceof WidgetError) this.errorMessage = err.message;
+    else if (code.startsWith("wallet_") && code !== "wallet_unreadable" && err instanceof WidgetError) this.errorMessage = err.message;
     else this.errorMessage = messageForCode(code);
     this.view = "error";
     this.emit("quietpay:error", { code, message: this.errorMessage });
@@ -198,13 +205,32 @@ export class QuietpayCheckout extends LitElement {
     }
   }
 
-  async pay() {
+  /** Pay from a browser wallet (MetaMask): same order checks, same single gasless signature, different signer. */
+  async payWithWallet() {
+    if (this.view === "paying") return;
+    try {
+      this.step = "connecting";
+      this.view = "paying";
+      const signer = await connectMetaMask();
+      this.walletAddress = signer.address;
+      // Say exactly what is missing BEFORE asking for a signature (guidance only; the relayer simulation is the real check).
+      const shown = this.#displayed;
+      const provider = injectedProvider();
+      if (shown && provider) await requireBalance(provider, shown.token, signer.address, BigInt(shown.amount));
+      this.view = "ready";
+      await this.pay(signer);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  async pay(signer?: CheckoutSigner) {
     if (this.view === "paying") return;
     try {
       this.view = "paying";
       this.step = "sending";
-      const account = this.account ?? (await getOrCreateAccount());
-      this.account = account;
+      const account: CheckoutSigner = signer ?? this.account ?? (await getOrCreateAccount());
+      if (!signer) this.account = account as PrivateKeyAccount;
       // The order the payer saw and clicked Pay on. Without it there is nothing the payer agreed to.
       const displayed = this.#displayed;
       if (!displayed) throw new WidgetError("checkout_display_mismatch", "checkout refused: no displayed order to pay");
@@ -250,6 +276,12 @@ export class QuietpayCheckout extends LitElement {
   }
 
   private renderWallet() {
+    if (this.walletAddress) {
+      return html`
+        <div class="muted">Paying from your wallet (gas is paid by the shop, not you):</div>
+        <code data-testid="payer">${this.walletAddress}</code>
+      `;
+    }
     if (!this.account) return nothing;
     return html`
       <div class="muted">Your payment address (add USDT here to pay):</div>
@@ -267,7 +299,10 @@ export class QuietpayCheckout extends LitElement {
       case "ready":
         body = html`
           ${o ? this.renderSummary(o) : nothing}
-          <button @click=${() => void this.pay()}>Pay ${o ? formatUsdt(o.amount) : ""} USDT</button>
+          ${metamaskAvailable()
+            ? html`<button data-testid="pay-wallet" @click=${() => void this.payWithWallet()}>Pay ${o ? formatUsdt(o.amount) : ""} USDT with MetaMask</button>`
+            : nothing}
+          <button class=${metamaskAvailable() ? "secondary" : ""} data-testid="pay-demo" @click=${() => void this.pay()}>${metamaskAvailable() ? "Pay with demo wallet" : `Pay ${o ? formatUsdt(o.amount) : ""} USDT`}</button>
           ${this.renderWallet()}
         `;
         break;

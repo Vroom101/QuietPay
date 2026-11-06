@@ -7,6 +7,7 @@ import type * as SdkApi from "@quietpay/merchant-sdk";
 import { formatUsdt, ORDER_TOKEN_HEADER } from "@quietpay/shared";
 import { CartError, priceCart } from "./catalog.js";
 import { registerCustomerRefunds, setPrivateHeaders, type CustomerRefundConfig } from "./customer-refund-routes.js";
+import { createMerchantAuth, type MerchantAuthConfig } from "./merchant-auth.js";
 import { REDACTED_HEADERS } from "./customer-refunds.js";
 
 /** The frozen merchant-SDK surface this server relies on. */
@@ -16,6 +17,8 @@ export interface StoreConfig extends Partial<Pick<CustomerRefundConfig, "custome
   /** Enable the Fastify logger; the order token and Authorization headers are always redacted. */
   logger?: boolean | { stream?: NodeJS.WritableStream; level?: string };
   refunds?: MerchantRefundConfig;
+  /** Wallet sign-in for the merchant dashboard. Off when absent or when no wallets are listed. */
+  merchantAuth?: MerchantAuthConfig;
   receiptDatabasePath?: string;
   baseUrl: string;
   apiKey: string;
@@ -323,6 +326,8 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
     return rec ? { paid: true, ...rec } : { paid: false };
   });
 
-  registerMerchantRefunds(app, sdk, config);
+  const merchantAuth = config.merchantAuth ? createMerchantAuth(config.merchantAuth, config.now) : undefined;
+  if (merchantAuth?.enabled) merchantAuth.register(app);
+  registerMerchantRefunds(app, sdk, merchantAuth?.enabled ? { ...config, acceptSession: merchantAuth.isSession } : config);
   return app;
 }
