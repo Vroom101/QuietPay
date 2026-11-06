@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { parseUsdt } from "@quietpay/shared";
 import type * as SdkApi from "@quietpay/merchant-sdk";
+import { PRODUCTS, cents, fromCents } from "../src/products.js";
 
 /** The frozen merchant-SDK surface this server relies on. */
 export type MerchantSdk = Pick<typeof SdkApi, "createOrder" | "getOrder" | "verifyWebhook">;
@@ -29,13 +30,30 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   const seenEvents = new Set<string>();
 
   app.post("/api/checkout", async (req, reply) => {
-    const total = (req.body as { cartTotal?: unknown } | null)?.cartTotal;
-    // NOTE: a real shop recomputes the total from its own cart/price data. The demo trusts the client.
-    if (typeof total !== "string" || !/^\d{1,9}(\.\d{1,2})?$/.test(total)) {
-      return reply.code(400).send({ error: "cartTotal must be a decimal string such as 25.00" });
+    const { items, cartTotal } = (req.body ?? {}) as { items?: unknown; cartTotal?: unknown };
+    if (!items || typeof items !== "object" || Array.isArray(items)) {
+      return reply.code(400).send({ error: "A cart with product quantities is required" });
     }
+
+    let totalCents = 0;
+    for (const [id, quantity] of Object.entries(items)) {
+      const product = PRODUCTS.find((entry) => entry.id === id);
+      if (!product || typeof quantity !== "number" || !Number.isSafeInteger(quantity) || quantity < 1) {
+        return reply.code(400).send({ error: "The cart contains an invalid product or quantity" });
+      }
+      totalCents += cents(product.price) * quantity;
+    }
+    // Keep the previous checkout limit of nine whole digits and two decimal places.
+    if (totalCents === 0 || totalCents > 99_999_999_999) {
+      return reply.code(400).send({ error: "The cart total is outside the checkout limits" });
+    }
+
+    const total = fromCents(totalCents);
+    if (cartTotal !== total) {
+      return reply.code(409).send({ error: "The cart total has changed. Refresh the shop and try again." });
+    }
+
     const amount = parseUsdt(total);
-    if (amount <= 0n) return reply.code(400).send({ error: "cartTotal must be positive" });
     try {
       const order = await sdk.createOrder({
         baseUrl: config.baseUrl,

@@ -5,18 +5,20 @@ import { createMockRelayer } from "@quietpay/shared/mock-server";
 import { merchantIdFromSlug } from "@quietpay/shared";
 import { webhookSettled } from "@quietpay/shared/fixtures";
 import { signWebhook } from "@quietpay/shared/webhook";
-import * as sdk from "../server/sdk-stub.js";
+import * as sdk from "@quietpay/merchant-sdk";
 import { buildApp } from "../server/app.js";
 
 let relayer: Server;
 let app: ReturnType<typeof buildApp>;
 const SECRET = "test-secret";
+let baseUrl: string;
 
 beforeAll(async () => {
   relayer = createMockRelayer();
   await new Promise<void>((r) => relayer.listen(0, "127.0.0.1", r));
+  baseUrl = `http://127.0.0.1:${(relayer.address() as AddressInfo).port}`;
   app = buildApp(sdk, {
-    baseUrl: `http://127.0.0.1:${(relayer.address() as AddressInfo).port}`,
+    baseUrl,
     apiKey: "k",
     merchantId: merchantIdFromSlug("demo-store"),
     webhookSecret: SECRET,
@@ -36,17 +38,33 @@ const post = (body: string, sig?: string) =>
   });
 
 describe("demo-store server", () => {
-  it("creates an order from cartTotal", async () => {
-    const res = await app.inject({ method: "POST", url: "/api/checkout", payload: { cartTotal: "25.50" } });
+  it("prices a multi-item cart from the catalog and sends the correct base units", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/checkout",
+      payload: { items: { mug: 2, notebook: 1 }, cartTotal: "32.50" },
+    });
     expect(res.statusCode).toBe(200);
-    expect(res.json().orderId).toMatch(/^0x[0-9a-f]{64}$/);
+    const { orderId } = res.json();
+    expect(orderId).toMatch(/^0x[0-9a-f]{64}$/);
+    const order = await sdk.getOrder({ baseUrl, orderId });
+    expect(order.amount).toBe("32500000");
   });
 
-  it("rejects a bad cartTotal", async () => {
-    for (const cartTotal of ["abc", "-1", "0", "1.234", 5]) {
-      const res = await app.inject({ method: "POST", url: "/api/checkout", payload: { cartTotal } });
+  it("rejects missing items, invalid products and quantities, and totals outside the limit", async () => {
+    for (const items of [undefined, [], {}, { unknown: 1 }, { mug: 0 }, { mug: -1 }, { mug: 1.5 }, { mug: "2" }, { mug: Number.MAX_SAFE_INTEGER }]) {
+      const res = await app.inject({ method: "POST", url: "/api/checkout", payload: { items, cartTotal: "12.00" } });
       expect(res.statusCode).toBe(400);
     }
+  });
+
+  it("rejects an amount that does not match the server-priced cart", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/checkout",
+      payload: { items: { mug: 1 }, cartTotal: "0.01" },
+    });
+    expect(res.statusCode).toBe(409);
   });
 
   it("verifies webhooks, stores the paid order and dedupes by event id", async () => {

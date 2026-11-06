@@ -26,8 +26,12 @@ export function Checkout() {
       const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ cartTotal: total }),
+        body: JSON.stringify({ items, cartTotal: total }),
       });
+      if (res.status === 409) {
+        setError("Your cart total has changed. Refresh the shop and try again.");
+        return;
+      }
       if (!res.ok) throw new Error("checkout failed");
       setOrderId(((await res.json()) as { orderId: string }).orderId);
     } catch {
@@ -51,7 +55,7 @@ export function Checkout() {
               <span>{items[p.id]} x {p.name}</span>
               <span>
                 {p.price} USDT{" "}
-                {!orderId && <button className="ml-2 text-stone-400" onClick={() => remove(p.id)}>remove</button>}
+                {!orderId && <button className="ml-2 text-stone-400" disabled={busy} onClick={() => remove(p.id)}>remove</button>}
               </span>
             </li>
           ))}
