@@ -343,6 +343,13 @@ export class FacilitatorService {
         try {
           await this.sendLocked(row);
         } catch (error) {
+          // Refused before anything was sent (cap, expiry, revert limit) but the authorization may have been used by
+          // someone else meanwhile: then the payee was paid and this must not become a plain failure.
+          if (
+            this.relayer.db.attempts(id).length === 0 &&
+            (await this.resolveExternal(row)) !== "none"
+          )
+            return;
           this.store.failed(
             id,
             error instanceof PaymentError
@@ -514,13 +521,18 @@ export class FacilitatorService {
     // Only a REVERTED attempt can mean someone else used the authorization first. If our own tx succeeded
     // but did not pay as signed, our tx consumed the nonce: that is a plain failure, never an external settlement.
     if (receipt.status !== "success" && (await this.resolveExternal(row)) !== "none") return;
-    if (receipt.status !== "success")
+    // A revert counts against the payer only if it happened inside the signed window: a tx the relayer held back
+    // until after validBefore expired through no fault of the payer (same exemption as checkout). x402 reverts are
+    // not "first-time payer" reverts either: that pool belongs to checkout's new-payer loss share.
+    const validBefore = BigInt(FacilitatorRequest.parse(JSON.parse(row.request)).paymentPayload.payload.authorization.validBefore);
+    if (receipt.status !== "success" && BigInt(svc.now()) < validBefore)
       svc.db.recordRevert({
         txHash: hash,
         orderId: row.id,
         payer: row.payer,
         ts: svc.now(),
         wei: receipt.gasUsed * receipt.effectiveGasPrice,
+        firstTime: false,
       });
     svc.db.raw
       .prepare(

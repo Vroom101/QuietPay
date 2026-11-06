@@ -8,3 +8,6 @@
 
 ## A-F1: bearer x402 payload (needs a spec change)
 After a payment settles, the signed authorization is public calldata. Anyone can rebuild the `PAYMENT-SIGNATURE` header and, if the original request is still `settlement_pending` (or its delivery was released), obtain the resource before the payer's own retry. EIP-3009 cannot bind a requester. A fix needs a spec-level change (for example the agent signs a short-lived pickup secret the paywall checks, or the first `/settle` response carries a delivery token). The facilitator spec is frozen, so this is recorded here for the lead to decide. Mitigations in place: short settlement wait, `delivery_attempts` cap, lease tokens, nothing delivered before settlement.
+
+## C-F1: parallel x402 sends from one wallet before any revert is mined
+Each in-flight x402 send passes the per-wallet revert-count check because none has been mined yet, so one wallet can spend up to the hourly loss budget in gas (which then pauses sends for everyone until the window rolls). A per-payer in-flight cap fixes it but also limits legitimate agents that fire parallel paid calls; the right number is a product decision. Today the global budget is the backstop.

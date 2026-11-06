@@ -186,3 +186,12 @@ describe("route matrix: facilitator rate limit follows the trusted-proxy setting
     await a.close();
   });
 });
+
+describe("route matrix: caches cannot mix up CORS answers (round C F5)", () => {
+  it("every response varies on Origin", async () => {
+    for (const r of [{ m: "GET", u: "/supported" }, { m: "GET", u: "/v1/metrics" }, { m: "POST", u: "/verify" }, { m: "GET", u: "/nope" }]) {
+      const res = await app.inject({ method: r.m as "GET", url: r.u, remoteAddress: nextIp(), headers: { origin: "https://x.example" } });
+      expect(String(res.headers.vary).toLowerCase(), r.u).toContain("origin");
+    }
+  });
+});

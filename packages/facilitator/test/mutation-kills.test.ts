@@ -164,4 +164,39 @@ describe("round A findings", () => {
     expect(e.db.raw.prepare("SELECT status FROM x402_payments").get()).toEqual({ status: "unresolved" });
     expect(e.db.payerVolume(payer.address, 0)).toBe(10000n);
   });
+
+  it("C-F2: x402 reverts are not first-time-payer reverts (they must not eat checkout's new-payer pool)", async () => {
+    const e = setup();
+    e.state.frontRun = true;
+    e.chain.authorizationUsed = async () => false;
+    await e.service.settle(await e.request(1), MERCHANT_ID);
+    await vi.waitFor(() => expect(e.db.revertStats(payer.address, 0).count).toBe(1));
+    expect(e.db.raw.prepare("SELECT first_time FROM reverts").get()).toEqual({ first_time: 0 });
+  });
+
+  it("C-F3: a revert that is only processed after validBefore (relayer held it) is not charged to the payer", async () => {
+    const e = setup({ maxRevertsPerDay: 1 });
+    e.state.frontRun = true;
+    e.chain.authorizationUsed = async () => false;
+    e.state.hold = true; // no receipt yet
+    await e.service.settle(await e.request(1), MERCHANT_ID);
+    e.clock.t += 500; // validBefore passes while the tx waits
+    e.state.hold = false;
+    const row = e.db.raw.prepare("SELECT id FROM x402_payments").get() as { id: string };
+    await e.service.recover(row.id);
+    expect(e.db.raw.prepare("SELECT status FROM x402_payments").get()).toEqual({ status: "failed" });
+    expect(e.db.revertStats(payer.address, 0).count).toBe(0);
+  });
+
+  it("C-F4: a payer at the revert limit whose authorization was used by someone else meanwhile is settled, not failed", async () => {
+    const e = setup({ maxRevertsPerDay: 1 });
+    e.db.recordRevert({ txHash: "0x" + "ee".repeat(32), orderId: "x", payer: payer.address, ts: e.clock.t, wei: 1n });
+    // verify sees an unused nonce, then the foreign tx lands before our (refused) send
+    let calls = 0;
+    e.chain.authorizationUsed = async () => ++calls > 1;
+    e.state.external = matched(3);
+    const res = await e.service.settle(await e.request(1), MERCHANT_ID);
+    expect(res).toMatchObject({ success: true, transaction: FOREIGN });
+    expect(e.state.sent).toHaveLength(0);
+  });
 });

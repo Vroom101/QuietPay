@@ -29,3 +29,15 @@ Round A (facilitator, paid API, shared wallet; read-only review, code-checked by
 Round B hypotheses rejected after checking the code: nonce reuse to fake a settlement (the binding decodes the call and matches payer, payee, amount and nonce; `chain-extensions-external` tests), replay on a pricier resource (policy amount is enforced per resource: `value_mismatch`), another merchant taking a delivery lease (`delivery()` and `claim` check the calling merchant), checkout fee/value tampering (amount and fee mutants killed), webhook replay (documented, `isDuplicate` hook added). Round B items accepted as known: per-order revert limit can be used to annoy one order (documented in decisions, costs the attacker real reverts); `GET /v1/orders/:id` is unthrottled by design.
 
 Clean rounds are not proof of absence: these are the findings of these methods only.
+
+Round C (Opus re-check of the round A/B fixes; read-only, code-checked by me):
+
+| Id | Finding | Severity | Status |
+|---|---|---|---|
+| C-F2 | x402 reverts were stored as first-time-payer reverts, eating checkout's new-payer pool and skewing its loss-budget share. | Medium | Fixed (`firstTime: false`). Test `C-F2`. |
+| C-F3 | A tx the relayer held past `validBefore` and that then reverted was charged to the payer's daily revert count. | Low/Medium | Fixed: only reverts inside the signed window count (checkout has the same exemption). Test `C-F3`. |
+| C-F4 | In `settle()` a payer at a cap, whose authorization was used by someone else between verify and send, was stored as `failed` although the payee was paid. | Low | Fixed: with no attempt of ours, a used nonce is resolved against the chain before a failure is stored. Test `C-F4`. |
+| C-F5 | `Vary: Origin` missing on non-allow-listed responses. | Low | Fixed (every relayer/facilitator response). Test. |
+| C-F1 | N parallel x402 settles from one wallet all pass the revert-count check before any reverts are mined, so one wallet can burn up to the hourly loss budget before the per-wallet limit bites. | Medium | Accepted, bounded: the global hourly loss budget (`reservedSpend`, reserved at send time) caps the total and pauses sends; the per-wallet limit stops repeats the next day. A per-payer in-flight cap would also throttle legitimate parallel agent calls, so it is a product decision. Listed in `blocked.md`. |
+
+Round count: A, B and C done (maximum three). Rounds A and C each produced valid findings, which were fixed with tests; round B's one real finding was fixed. The component is therefore not "closed by two clean rounds" per the rule; it is recorded as: all valid findings fixed, two items open (A-F1 spec, C-F1 product decision).
