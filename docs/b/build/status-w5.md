@@ -1,0 +1,2 @@
+- w5 commit 1-2: shared schemas; demo-store customer refund status, token auth, webhook refunds, tokened /paid
+- w5 commit 3: tests (attack, feature) and docs
