@@ -44,5 +44,5 @@ the live tx link below.
 ## Live gasless execution (2026-11-06)
 
 A zero-WBT payer completed a gasless payment through the deployed router on chain 1874: https://explorer.testnet.whitechain.io/tx/0xa7376dddb584f27c61ba67a793c86ef79dc040c077d899921cabe025bb0a4e70.
-That run used our testnet `DemoUSDT` (the official test USDT has no faucet, so we could not fund a payer with it).
+That early run used a self-minted stand-in token, so it is NOT qualification evidence and is superseded.
 The official token's signature acceptance is covered by the fork test above, not by a broadcast transaction.

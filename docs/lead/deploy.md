@@ -1,26 +1,20 @@
-# Deploying (needs funded keys, run locally)
+# Deploying the qualifying router (needs funded keys, run locally)
 
-1. Fund a deployer wallet and a relayer wallet with test WBT from the Whitechain faucet.
-2. **Token.** The official Whitechain test USDT has no faucet, so for the testnet demo we deploy `DemoUSDT`
-   (`DEPLOY_DEMO_TOKEN=true`): a labelled, valueless stand-in with a public `faucet(to, amount)` capped at 1,000
-   per call. It is not Tether. After deploy, set the relayer's `USDT_ADDRESS` to its address and
-   `TOKEN_DOMAIN_NAME="Quietpay Demo USDT"`, `TOKEN_DOMAIN_VERSION=1`. On mainnet, skip the flag, set `USDT_ADDRESS`
-   to the real USDT and leave the domain defaults; no router or relayer code changes.
-   Deploy and register:
+The bounty token is the official Whitechain test USDT, `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7`, chain 1874.
+This repo never deploys, mints or substitutes a token on a public network.
+
+1. Fund the owner and relayer wallets with test WBT. The payer wallet must hold **zero WBT**; fund the payer and the
+   refund signer with the official test USDT.
+2. Qualifying deploy (the script requires chain 1874 and the official USDT address and refuses anything else):
    ```
    cd contracts
-   export DEPLOYER_PRIVATE_KEY=0x... DEPLOY_DEMO_TOKEN=true   # or USDT_ADDRESS=0x... for an existing token
-   export RELAYER_ADDRESS=0x... DEMO_MERCHANT_ID=$(cast keccak demo-store) DEMO_PAYOUT=0x...
-   forge script script/Deploy.s.sol --rpc-url https://rpc.ankr.com/whitechain_testnet --broadcast
+   export OWNER_PRIVATE_KEY=0x... RELAYER_ADDRESS=0x... MERCHANT_PAYOUT=0x... REFUND_SIGNER=0x... RPC_URL=...
+   forge script script/DeployQualifying.s.sol --rpc-url $RPC_URL --simulate      # dry run
+   forge script script/DeployQualifying.s.sol --rpc-url $RPC_URL --broadcast --legacy
    ```
-3. Put the router address and tx into `contracts/deployments.json`, then run
-   `pnpm --filter @quietpay/shared sync:deployments`.
-4. Verify the source on the explorer with `forge verify-contract`, using the explorer verifier URL.
-   Build settings: solc 0.8.24, via_ir, optimizer 200 runs, evm paris.
-5. Host the relayer (`render.yaml`), set secrets in the dashboard, fund the relayer with WBT.
-   Set `EXPLORER_BASE_URL` to the real explorer (not confirmed during the build).
-6. Mint demo USDT to the payer and refund signer with `cast send <token> "faucet(address,uint256)" <addr> 100000000`.
-   Run `packages/shared/scripts/first-payment.mjs` with a payer that holds USDT and zero WBT. Put the explorer link in
-   `docs/lead/first-payment.md` and the README.
+3. Record the result in `contracts/deployments.json`, then `pnpm --filter @quietpay/shared sync:deployments`.
+4. Verify the source: `forge verify-contract <router> src/PaymentRouter.sol:PaymentRouter --chain-id 1874 --verifier blockscout --verifier-url https://explorer.testnet.whitechain.io/api/ --constructor-args $(cast abi-encode "constructor(address,address)" <usdt> <owner>)`.
+5. Host the relayer (`render.yaml`) and set its secrets in the dashboard.
+6. Live evidence goes in `docs/lead/live-usdt.md`.
 
-Freeze contract signatures at hour 22.
+For local development only, `script/DeployLocal.s.sol` deploys a test mock token to anvil and refuses to run on chain 1874.

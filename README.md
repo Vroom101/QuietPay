@@ -6,14 +6,11 @@ fee in one atomic step.
 
 Built for ETHGlobal Mumbai 2026 (Whitechain: Operate and Scale tracks). **Testnet only.**
 
-## Live on Whitechain Sepolia (chain 1874)
+## Status
 
-| | |
-| --- | --- |
-| PaymentRouter (verified) | [0x6a765694262E1c9CdDbb1C76008a61df7f58D86f](https://explorer.testnet.whitechain.io/address/0x6a765694262E1c9CdDbb1C76008a61df7f58D86f) |
-| DemoUSDT (verified, testnet stand-in, not Tether) | [0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4](https://explorer.testnet.whitechain.io/address/0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4) |
-| First payment from a payer with zero WBT | [tx](https://explorer.testnet.whitechain.io/tx/0xa7376dddb584f27c61ba67a793c86ef79dc040c077d899921cabe025bb0a4e70) |
-| First partial refund | [tx](https://explorer.testnet.whitechain.io/tx/0xf628b683710360ccc20c1de1287e522d429112a1f431547bc798ea62384c0038) |
+Quietpay targets the official Whitechain test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874 only.
+An earlier deployment used a self-minted stand-in token; it is superseded and is not qualification evidence.
+The qualifying deployment and live official-USDT payment are tracked in `docs/lead/live-usdt.md`.
 
 ## How it works
 
@@ -60,8 +57,8 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 ## Limitations
 
 - Demo-grade payer wallet: a random key encrypted with AES-GCM in IndexedDB. Not production custody.
-- Testnet demo uses `DemoUSDT`, a valueless stand-in with a public faucet, because the official test USDT has no
-  faucet. It is not Tether. Mainnet is a config change to the real USDT. USDT only, testnet only, no audit. No INR conversion or production custody is claimed.
+- Official test USDT only, testnet only, no audit. No INR conversion or production custody is claimed.
+- Tokens sent directly to the router are not supported and cannot be recovered.
 - The relayer is a trusted gas sponsor: it can censor or pause, but cannot redirect funds or exceed the fee cap.
 - The rate limiter is in memory; the gas loss budget is persisted.
 - Not done yet: hosted relayer (payments so far ran through a local relayer), relayer refund endpoints, a browser run of the widget.

@@ -11,7 +11,8 @@
 - Live chain run via a local relayer; hosted relayer and browser walkthrough still open.
 
 ## Update 2026-11-06: live on testnet
-- DemoUSDT and PaymentRouter (with refunds) deployed and source-verified on chain 1874.
+- An early router and a self-minted stand-in token were deployed on chain 1874 (superseded, not qualifying).
 - Real gasless payment from a zero-WBT payer and a real partial refund recorded (see `first-payment.md`, `refund.md`).
 - Still open: hosted relayer, relayer refund endpoints, browser run of the widget, P1.
 - Indexer, ledger and CSV export built (`packages/indexer`, `docs/lead/ledger.md`); live sample in `docs/lead/samples/`.
+06:46 Phase 1 | Tasks 1-6 | contracts hardened, 65 forge tests pass, stand-in token removed (awaiting Opus review)
