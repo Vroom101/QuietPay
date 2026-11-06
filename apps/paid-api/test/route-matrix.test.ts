@@ -110,3 +110,19 @@ describe("paid-api route matrix", () => {
     expect(app.server.headersTimeout).toBeGreaterThan(0);
   });
 });
+
+describe("paid-api unexpected failures", () => {
+  it("an unexpected internal error becomes a fixed 500 that leaks nothing", async () => {
+    const e = setup();
+    const broken = buildPaidApi({ policies: e.policies, facilitatorUrl: "http://127.0.0.1:1", apiKey: "secret-api-key" });
+    broken.addHook("preHandler", async () => {
+      throw new Error("db at C:\secret\path exploded with secret-api-key");
+    });
+    const res = await broken.inject({ method: "GET", url: "/health" });
+    await broken.close();
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body)).toEqual({ error: { code: "resource_unavailable", message: "Something went wrong on our side." } });
+    clean(res.body, "500");
+  });
+});
+

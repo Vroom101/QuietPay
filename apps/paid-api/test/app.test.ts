@@ -13,7 +13,7 @@ import {
   buildAgentAuthorization,
 } from "@quietpay/shared";
 async function running(
-  options: { failFirst?: boolean; offline?: boolean; unknown?: boolean; hold?: boolean } = {},
+  options: { failFirst?: boolean; offline?: boolean; unknown?: boolean; hold?: boolean; defaults?: boolean } = {},
 ) {
   const e = setup();
   if (options.hold) e.state.hold = true;
@@ -33,7 +33,7 @@ async function running(
     policies: e.policies,
     facilitatorUrl,
     apiKey: "test-key",
-    handlers: { "/v1/quote": handler },
+    handlers: options.defaults ? undefined : { "/v1/quote": handler },
     ...(options.offline
       ? {
           fetch: (async () => {
@@ -257,6 +257,19 @@ describe("paid API refuses a wrong price over real HTTP", () => {
       const ok = await fetch(e.url + "/v1/quote", { headers: await e.headers() });
       expect(ok.status).toBe(200);
       expect(e.handler).toHaveBeenCalledTimes(1);
+    } finally {
+      await e.close();
+    }
+  });
+});
+
+describe("paid API built-in demo responses", () => {
+  it("serves the built-in quote after a confirmed payment when no handler is supplied", async () => {
+    const e = await running({ defaults: true });
+    try {
+      const res = await fetch(e.url + "/v1/quote", { headers: await e.headers() });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ demo: true, symbol: "WBT/USDT", price: "1.000000" });
     } finally {
       await e.close();
     }

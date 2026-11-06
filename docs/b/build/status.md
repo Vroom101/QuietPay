@@ -1,1 +1,2 @@
 - 17:35 W0 done: worktree, merges, baseline green, chain checks, reconcile, deployment-state, config-matrix
+- 17:54 W1+W2 merged: preflight (19 codes), deployment-state test; 85 new tests
