@@ -7,6 +7,10 @@ export interface Deployment {
   deployTx: string | null;
   explorerUrl: string | null;
   verified: boolean;
+  tokenKind?: string;
+  tokenDeployTx?: string;
+  tokenExplorerUrl?: string;
+  demoMerchantSlug?: string;
 }
 
 export const deployments = raw as Record<string, Deployment>;

@@ -1,7 +1,7 @@
 // CP1: one real USDT payment from a payer with zero WBT, through the live relayer.
 // Usage (local shell, from the repo root):
 //   RELAYER_URL=... QUIETPAY_API_KEY=... QUIETPAY_MERCHANT_ID=0x... PAYER_PRIVATE_KEY=0x... \
-//   pnpm --filter @quietpay/shared exec tsx ../../scripts/first-payment.mjs
+//   pnpm --filter @quietpay/shared exec tsx scripts/first-payment.mjs
 import { privateKeyToAccount } from "viem/accounts";
 import { buildCheckoutAuthorization } from "@quietpay/shared";
 
