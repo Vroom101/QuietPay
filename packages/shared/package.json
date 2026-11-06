@@ -1,0 +1,32 @@
+{
+  "name": "@quietpay/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./webhook": "./src/webhook.ts",
+    "./fixtures": "./src/fixtures/index.ts",
+    "./mock-server": "./src/mock-server.ts",
+    "./token.json": "./token.json"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "mock": "tsx src/mock-server.ts",
+    "gen:abi": "node scripts/gen-abi.mjs",
+    "sync:deployments": "node scripts/sync-deployments.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.21.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
