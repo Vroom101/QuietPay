@@ -1,0 +1,23 @@
+# Render blueprint for the relayer. Secrets are set in the Render dashboard, never here.
+services:
+  - type: web
+    name: quietpay-relayer
+    runtime: docker
+    dockerfilePath: ./packages/relayer/Dockerfile
+    dockerContext: .
+    healthCheckPath: /v1/health
+    disk: { name: data, mountPath: /data, sizeGB: 1 }
+    envVars:
+      - { key: CHAIN_ID, value: "1874" }
+      - { key: RPC_URL, value: https://rpc.ankr.com/whitechain_testnet }
+      - { key: USDT_ADDRESS, value: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7" }
+      - { key: DATABASE_PATH, value: /data/quietpay.db }
+      - { key: ROUTER_ADDRESS, sync: false }
+      - { key: RELAYER_PRIVATE_KEY, sync: false }
+      - { key: OPERATOR_TOKEN, sync: false }
+      - { key: MERCHANT_API_KEYS, sync: false }
+      - { key: WEBHOOK_SECRET, sync: false }
+      - { key: LOSS_BUDGET_WBT_PER_HOUR, value: "0.05" }
+      - { key: PAYER_CAP_USDT, value: "100" }
+      - { key: MAX_GAS_PRICE, sync: false }
+      - { key: EXPLORER_BASE_URL, sync: false }
