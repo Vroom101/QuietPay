@@ -36,8 +36,8 @@ never hardcoded), built from integer base units (no floating point).
 ### The double-count rule
 
 A router payment also emits a USDT `Transfer`, and a merchant payout may be the same address as `FACILITATOR_PAYTO`.
-A Transfer is recorded as a `payto_transfer` deposit **only if** its `from` is not the router **and** its transaction has no router
-`Paid` or `Refunded` log. This is tested in unit tests, on anvil with the real router, and on the live testnet
+A Transfer is recorded as a `payto_transfer` deposit **only if** its `from` is not the router (decision T1d, `decisions.md`). A pay-to address equal to the router is refused.
+This is tested in unit tests, on anvil with the real router, and on the live testnet
 (the router's 4.95 payout transfer to the facilitator address is excluded in the sample).
 
 ## Finalization
