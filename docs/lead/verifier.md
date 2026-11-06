@@ -34,10 +34,10 @@ pnpm --filter @quietpay/verifier cli verify --csv FILE --rpc URL --router 0x.. -
    `[fromBlock, toBlock]`. The sidecar must be well formed.
 2. **Finality.** The verifier reads the node's head and refuses a sidecar `toBlock` above `head - confirmations` (the
    sidecar's own `confirmations`): `to_block_not_final`, before any log is read. Then it fetches the router's logs, and
-   with `--payto` the USDT Transfers to that address, for `[fromBlock, toBlock]`. It uses the indexer's paged
-   `getLogsPaged`: at most 1,000 blocks per call, halving the page on `-32062`, with backoff on rate limits.
-3. **Rows.** It decodes the logs with the indexer's pure `decodeRouterLog`/`decodeTransferLog` and rebuilds rows with
-   `buildLedgerRows`. Then it compares the rebuilt rows with the CSV row by row, keyed by `tx_hash:log_index`. Each
+   with `--payto` the USDT Transfers to that address, for `[fromBlock, toBlock]`. It uses its own pager
+   (`src/spec.ts`): at most 1,000 blocks per call, halving the page on `-32062`, with backoff on rate limits.
+3. **Rows.** It decodes the raw logs with its own decoder and rebuilds rows with its own `deriveRows`
+   (both in `src/spec.ts`, written from `ledger.md`, not imported from the indexer). Then it compares the rebuilt rows with the CSV row by row, keyed by `tx_hash:log_index`. Each
    difference gets its own reason: `missing_row`, `extra_row`, `wrong_amount` (gross, fee, net), `wrong_refunded`,
    `wrong_status`, `wrong_field` (source, order, merchant, payer), `wrong_block`, `wrong_log_index`, `wrong_tx_hash`. An
    unmatched row is paired by tx hash, or by block and log index, so a moved row is named for the cell that is wrong
@@ -45,7 +45,7 @@ pnpm --filter @quietpay/verifier cli verify --csv FILE --rpc URL --router 0x.. -
 4. **Event set hash.** It recomputes `eventSetHash` over every decoded router event and pay-to Transfer in range, and
    compares it with the sidecar (`event_set_hash_mismatch`). An event that the CSV rules leave out (an operator event, or
    a router payout to the pay-to address) still changes the hash.
-5. **Chain invariants**, computed independently of `buildLedgerRows`. For each CSV router row whose key is a real `Paid`
+5. **Chain invariants**, computed independently of `deriveRows`. For each CSV router row whose key is a real `Paid`
    log, the verifier checks:
    - `gross == Paid.value`
    - `fee == Paid.fee`
@@ -91,8 +91,16 @@ the facilitator.
 - **It is not proof of an x402 API purchase.** A `payto_transfer` row only shows that USDT reached the pay-to address.
   It says nothing about which API call, if any, the deposit paid for. Proving that needs the facilitator's settlement
   authorization records, which this verifier does not check.
-- **It shares row rules with the indexer.** Rows are rebuilt with the same pure `buildLedgerRows`, so a bug in those
-  rules would be reproduced, not caught. The invariants in step 5 are computed separately and partly cover this risk.
+- **Its row rules are a second implementation of the same spec.** `src/spec.ts` does not import the indexer, and a
+  differential property test (`test/differential.test.ts`) requires identical rows. A misreading of `ledger.md` shared by
+  both would still go unnoticed; the invariants in step 5 are computed separately and partly cover this risk.
+- **Anchoring.** A result is printed `OK (unanchored)` unless `--from`, `--to` and `--min-confirmations` were supplied from
+  outside the export. Without them a forger can shrink the range in both files. Compare the printed checkpoint with the
+  publisher's out of band. Sidecars written since 2026-11-06 also record `router`, `usdt` and `payTo`; the verifier fails
+  with `config_mismatch` if it is run with different values (so omitting `--payto` cannot hide deposits).
+- **A refund appears only in the export that contains its payment.** Rows are placed at their `Paid` block, so a refund
+  made after `toBlock` of an earlier export, or of a payment before `fromBlock`, is not visible in a later range's rows.
+  Export from the deploy block, or re-export, to see current refund totals. Pinned by a test as a known limitation.
 - **It covers only the given range and addresses.** Events before `fromBlock`, or contracts other than the given router
   and USDT, are out of scope. If the wrong `--payto` is given, the file is judged against that address.
 - **Refund transfers are not cross-checked.** For `Refunded` logs, only `totalRefunded` is used. The token movement

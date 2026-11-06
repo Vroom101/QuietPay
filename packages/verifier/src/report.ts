@@ -32,7 +32,7 @@ export function formatHuman(r: VerifyReport, csvPath?: string): string {
     }
   }
   L.push("");
-  L.push(`RESULT: ${r.ok ? "OK" : "FAIL"}`);
+  L.push(`RESULT: ${r.ok ? (r.anchored ? "OK" : "OK (unanchored: pass --from, --to and --min-confirmations from outside the file to rule out a shrunken range)") : "FAIL"}`);
   L.push(`Note: ${r.trust}`);
   return L.join("\n");
 }

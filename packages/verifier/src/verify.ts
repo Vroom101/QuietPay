@@ -95,6 +95,7 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
     rowsExpected: null,
     eventsInRange: null,
     eventSetHash: { sidecar: null, recomputed: null },
+    anchored: false,
     checkpoint: null,
     checks: Object.fromEntries(CHECKS.map((c) => [c, "skipped"])) as VerifyReport["checks"],
     issues,
@@ -130,6 +131,19 @@ export async function verifyLedger(input: VerifyInput): Promise<VerifyReport> {
   }
 
   const want = input.expected ?? {};
+  report.anchored = want.fromBlock !== undefined && want.toBlock !== undefined && want.minConfirmations !== undefined;
+  for (const [name, mine, theirs] of [["router", router, meta.router], ["usdt", usdt, meta.usdt], ["payTo", payTo ?? null, meta.payTo]] as const) {
+    if (theirs !== undefined && theirs !== mine) {
+      issues.push({
+        check: "sidecar",
+        code: "config_mismatch",
+        field: name,
+        expected: String(theirs),
+        actual: String(mine),
+        message: `sidecar says the export covered ${name} ${theirs}, but the verifier was run with ${mine}; stripped or swapped inputs cannot be verified`,
+      });
+    }
+  }
   for (const [name, exp, got] of [["fromBlock", want.fromBlock, meta.fromBlock], ["toBlock", want.toBlock, meta.toBlock]] as const) {
     if (exp !== undefined && exp !== got) {
       issues.push({

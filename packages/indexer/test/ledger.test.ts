@@ -175,3 +175,14 @@ describe("decimals come from the token, not a hardcoded 6", () => {
     expect(rows[0]!.refundedUsdt).toBe("0.000000000000000000");
   });
 });
+
+describe("known limitation: a refund is shown only in the export that contains its payment", () => {
+  it("a refund of a payment before fromBlock produces no row in the later range", () => {
+    const evs = [
+      raw(paidLog({ block: 200, orderId: order(1), value: 25_000_000n, fee: 50_000n })),
+      raw(refundedLog({ block: 900, orderId: order(1), amount: 5_000_000n, total: 5_000_000n, index: 0 })),
+    ];
+    const later = buildLedgerRows(evs, cfg).filter((r) => r.block >= 500);
+    expect(later).toEqual([]); // documented in docs/lead/verifier.md; export from the deploy block to see it
+  });
+});

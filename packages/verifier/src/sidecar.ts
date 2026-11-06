@@ -3,6 +3,9 @@ export interface ExportMeta {
   toBlock: number;
   confirmations: number;
   eventSetHash: string;
+  router?: string;
+  usdt?: string;
+  payTo?: string | null;
   generatedAt: string;
 }
 
@@ -28,6 +31,9 @@ export function parseSidecar(text: string): { meta: ExportMeta } | { error: stri
       toBlock: j.toBlock,
       confirmations: j.confirmations,
       eventSetHash: j.eventSetHash,
+      ...(typeof j.router === "string" ? { router: j.router.toLowerCase() } : {}),
+      ...(typeof j.usdt === "string" ? { usdt: j.usdt.toLowerCase() } : {}),
+      ...(j.payTo === null || typeof j.payTo === "string" ? { payTo: j.payTo === null ? null : j.payTo.toLowerCase() } : {}),
       generatedAt: typeof j.generatedAt === "string" ? j.generatedAt : "",
     },
   };

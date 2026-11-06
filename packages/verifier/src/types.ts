@@ -34,6 +34,7 @@ export type IssueCode =
   | "bad_sidecar"
   | "to_block_not_final"
   | "range_mismatch"
+  | "config_mismatch"
   | "confirmations_below_expected"
   | "rpc_disagreement"
   // rows (CSV vs rows rebuilt from chain logs)
@@ -88,6 +89,8 @@ export interface VerifyReport {
   eventsInRange: number | null;
   eventSetHash: { sidecar: string | null; recomputed: string | null };
   /** What a reader can compare out of band: the range the verifier checked, the events found, their hash. */
+  /** True only when the expected range and depth came from outside the export (--from/--to/--min-confirmations). */
+  anchored: boolean;
   checkpoint: { fromBlock: number; toBlock: number; eventCount: number; eventSetHash: string } | null;
   checks: Record<CheckName, CheckStatus>;
   issues: Issue[];

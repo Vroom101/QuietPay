@@ -160,6 +160,9 @@ export function buildExport(
       toBlock: to,
       confirmations: cfg.confirmations,
       eventSetHash: eventSetHash(inRange),
+      router: cfg.router.toLowerCase(),
+      usdt: cfg.usdt.toLowerCase(),
+      payTo: cfg.facilitatorPayTo ? cfg.facilitatorPayTo.toLowerCase() : null,
       generatedAt: opts.generatedAt ?? new Date().toISOString(),
     },
   };

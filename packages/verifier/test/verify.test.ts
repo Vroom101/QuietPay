@@ -361,3 +361,36 @@ describe("second RPC cross-check (L4)", () => {
     expect(codes(r)).toContain("rpc_disagreement");
   });
 });
+
+describe("the sidecar pins what the export covered (Opus R1 findings 2 and 3)", () => {
+  it("records router, usdt and payTo in the sidecar", async () => {
+    const { meta } = await valid();
+    expect(meta).toMatchObject({ router: ROUTER, usdt: USDT, payTo: PAYTO });
+  });
+
+  it("fails when --payto is left out but the export covered deposits (stripped deposits cannot hide)", async () => {
+    const chain = scenario();
+    const { csv, metaText } = await valid();
+    const r = await run(csv, metaText, chain, { payTo: undefined });
+    expect(r.ok).toBe(false);
+    expect(codes(r)).toContain("config_mismatch");
+  });
+
+  it("fails when the verifier is pointed at a different router or token than the sidecar names", async () => {
+    const chain = scenario();
+    const { csv, metaText } = await valid();
+    const forged = JSON.stringify({ ...JSON.parse(metaText), payTo: null });
+    const r = await run(csv, forged, chain); // sidecar now claims no deposits were covered, verifier is told PAYTO
+    expect(codes(r)).toContain("config_mismatch");
+  });
+
+  it("marks an OK result as unanchored unless the range was supplied from outside", async () => {
+    const chain = scenario();
+    const { csv, metaText, meta } = await valid();
+    const loose = await run(csv, metaText, chain);
+    expect(loose.ok).toBe(true);
+    expect(loose.anchored).toBe(false);
+    const pinned = await run(csv, metaText, chain, { expected: { fromBlock: meta.fromBlock, toBlock: meta.toBlock, minConfirmations: 12 } });
+    expect(pinned.anchored).toBe(true);
+  });
+});

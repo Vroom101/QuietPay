@@ -57,5 +57,9 @@ export interface ExportMeta {
   toBlock: number;
   confirmations: number;
   eventSetHash: string;
+  /** What the export covered, so a verifier can refuse a mismatched setup. Absent in exports made before 2026-11-06. */
+  router?: string;
+  usdt?: string;
+  payTo?: string | null;
   generatedAt: string;
 }
