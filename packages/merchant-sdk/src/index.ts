@@ -15,8 +15,10 @@ import {
 import {
   WebhookEvent,
   verifyWebhookSignature,
+  isValidWebhookTolerance,
   WEBHOOK_SIGNATURE_HEADER,
   WEBHOOK_TOLERANCE_SECONDS,
+  WEBHOOK_MAX_TOLERANCE_SECONDS,
 } from "@quietpay/shared/webhook";
 
 export type { Order, WebhookEvent, Refund, RefundContext };
@@ -112,7 +114,7 @@ export interface VerifyWebhookOptions {
   body: string;
   /** Value of the `Quietpay-Signature` header. */
   signatureHeader: string;
-  /** Defaults to 300 seconds. */
+  /** Defaults to 300 seconds. Must be a finite number in (0, 86400]; anything else throws WebhookVerificationError. */
   toleranceSeconds?: number;
   /** For tests. */
   nowSeconds?: number;
@@ -126,8 +128,15 @@ export interface VerifyWebhookOptions {
 export function verifyWebhook(opts: VerifyWebhookOptions): WebhookEvent {
   if (opts.secret.trim() === "") throw new WebhookVerificationError("Webhook secret is empty; refusing to verify");
   if (!opts.signatureHeader) throw new WebhookVerificationError("Missing Quietpay-Signature header");
+  // R8-W1: a NaN (e.g. Number(undefined)), Infinity, zero or negative tolerance must not silently disable the replay window.
+  const tolerance = opts.toleranceSeconds ?? WEBHOOK_TOLERANCE_SECONDS;
+  if (!isValidWebhookTolerance(tolerance)) {
+    throw new WebhookVerificationError(
+      `toleranceSeconds must be a finite number greater than 0 and at most ${WEBHOOK_MAX_TOLERANCE_SECONDS}; got ${String(tolerance)}`,
+    );
+  }
   const ok = verifyWebhookSignature(opts.secret, opts.body, opts.signatureHeader, {
-    toleranceSeconds: opts.toleranceSeconds ?? WEBHOOK_TOLERANCE_SECONDS,
+    toleranceSeconds: tolerance,
     nowSeconds: opts.nowSeconds,
   });
   if (!ok) throw new WebhookVerificationError("Invalid signature or timestamp outside tolerance");

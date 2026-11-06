@@ -25,6 +25,12 @@ export class RateLimiter {
     return true;
   }
 
+  /** True if a hit would currently be allowed. Records nothing. */
+  wouldAllow(key: string): boolean {
+    const cutoff = this.now() - this.windowMs;
+    return (this.hits.get(key) ?? []).filter((x) => x > cutoff).length < this.limit;
+  }
+
   private prune(cutoff: number) {
     for (const [k, v] of this.hits) {
       if (v.every((x) => x <= cutoff)) this.hits.delete(k);

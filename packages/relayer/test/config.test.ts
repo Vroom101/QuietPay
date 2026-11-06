@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { getQualifyingDeployment } from "@quietpay/shared";
 import { loadConfig } from "../src/config.js";
 import { makeCfg, MERCHANT_ID } from "./helpers.js";
 
 const cfg = makeCfg();
 const env = {
-  RPC_URL: cfg.rpcUrl, USDT_ADDRESS: cfg.usdt, ROUTER_ADDRESS: cfg.router,
+  RPC_URL: cfg.rpcUrl, USDT_ADDRESS: cfg.usdt, ROUTER_ADDRESS: getQualifyingDeployment().router,
   RELAYER_PRIVATE_KEY: cfg.relayerKey, OPERATOR_TOKEN: cfg.operatorToken,
-  MERCHANT_API_KEYS: `test:${MERCHANT_ID}`, WEBHOOK_SECRET: cfg.webhookSecret,
+  MERCHANT_API_KEYS: `test-merchant-key-at-least-24:${MERCHANT_ID}`, WEBHOOK_SECRET: cfg.webhookSecret,
 };
 
 describe("P0 configuration", () => {

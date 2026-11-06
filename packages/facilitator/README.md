@@ -111,3 +111,6 @@ Workspace typechecks and app/widget builds pass. The standalone facilitator suit
 16 tests and the paid API suite has 8. Docker images/hosting are prepared but have not
 been built or deployed. No production contracts were changed for x402; the test token
 was extended to model its direct-transfer authorization method.
+
+The optional Render blueprint is `render.facilitator.yaml`; root `render.yaml`
+retains main's tested relayer-only deployment.

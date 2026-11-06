@@ -44,3 +44,12 @@ HTTP API. See ../b/frontend-integration.md for the merged API contract.
 Older branch recovery tests were replaced with extension integration tests against
 main's owner/hash-scoped state machine; main's security suites were retained.
 Fresh Solidity/Anvil validation remains for CI on this Windows environment.
+
+Main round 8 is also retained: qualifying-only relayer startup, RPC node chain
+check, failed-auth throttling, 24-character merchant keys, bounded webhook
+verification tolerance, recursive secret exclusions in Docker builds.
+
+Merge validation: 1,117 local tests passed across the workspace (final shared
+security-suite rerun included); 12 Anvil/live-RPC tests skipped. All workspace
+TypeScript checks and widget/dashboard/store builds passed. Foundry/Anvil
+execution remains for CI; no new live transactions were submitted.

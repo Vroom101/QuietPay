@@ -56,6 +56,11 @@ Webhook verification uses the per-merchant derived secret from main's relayer,
 not the relayer's master WEBHOOK_SECRET. Configure QUIETPAY_WEBHOOK_SECRET with
 that derived value. Public endpoints retain main's rate limits and SSRF checks.
 
+Main round 8 restricts production relayer startup to chain 1874, official USDT,
+and the recorded qualifying router, with no bypass. Merchant API keys must have
+at least 24 characters. Other chain/token configurations are test-only injected
+fixtures, not supported production startup settings.
+
 Relayer deployment: CHAIN_ID/USDT_ADDRESS/ROUTER_ADDRESS/TOKEN_DOMAIN_NAME/
 TOKEN_DOMAIN_VERSION. Merchant refunds pin QUIETPAY_CHAIN_ID/QUIETPAY_TOKEN_ADDRESS/
 QUIETPAY_ROUTER_ADDRESS and the same token domain. SDK callers can pin chainId,
@@ -81,3 +86,6 @@ Use Node 20 for the installed SQLite binary. Workspace TypeScript checks pass.
 All workspace suites were exercised; fixes were followed by targeted reruns.
 Anvil and Foundry were unavailable, so fresh Solidity/Anvil runs and the optional
 live-RPC sample test still require CI or an environment with those tools.
+
+Main's render.yaml remains the default deployment. The optional combined
+facilitator and paid API blueprint is render.facilitator.yaml.

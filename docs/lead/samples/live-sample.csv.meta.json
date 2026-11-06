@@ -3,5 +3,8 @@
   "toBlock": 12361516,
   "confirmations": 12,
   "eventSetHash": "49c6a5bb26787ed991d50f108aafd7b0a400da86ceef489c57e7c7c5caa9e926",
+  "router": "0xb9d475cdd817900b45c356169c6fdc379b942d82",
+  "usdt": "0xcedfb56113143d55b2358b8cfbb0deb5ad2f55a7",
+  "payTo": null,
   "generatedAt": "2026-11-06T09:38:19Z"
 }

@@ -36,6 +36,13 @@ export type WebhookEvent = z.infer<typeof WebhookEvent>;
 
 export const WEBHOOK_SIGNATURE_HEADER = "Quietpay-Signature";
 export const WEBHOOK_TOLERANCE_SECONDS = 300;
+/** Upper bound for a caller-supplied tolerance (one day). */
+export const WEBHOOK_MAX_TOLERANCE_SECONDS = 86400;
+
+/** A replay tolerance must be a finite number in (0, WEBHOOK_MAX_TOLERANCE_SECONDS]. NaN and Infinity never pass. */
+export function isValidWebhookTolerance(tol: number): boolean {
+  return Number.isFinite(tol) && tol > 0 && tol <= WEBHOOK_MAX_TOLERANCE_SECONDS;
+}
 
 /** Header format: `t=<unix seconds>,v1=<hex HMAC-SHA256 of t + "." + body>` */
 export function computeWebhookSignature(secret: string, timestamp: number, body: string): string {
@@ -73,7 +80,9 @@ export function verifyWebhookSignature(
   if (!parsed) return false;
   const now = opts?.nowSeconds ?? Math.floor(Date.now() / 1000);
   const tol = opts?.toleranceSeconds ?? WEBHOOK_TOLERANCE_SECONDS;
-  if (Math.abs(now - parsed.t) > tol) return false;
+  // R8-W1: a NaN/Infinity/zero/negative tolerance would disable or break the freshness check. Fail closed.
+  if (!isValidWebhookTolerance(tol)) return false;
+  if (!Number.isFinite(now) || Math.abs(now - parsed.t) > tol) return false;
   const expected = Buffer.from(computeWebhookSignature(secret, parsed.t, body), "hex");
   return parsed.v1.some((sig) => {
     const got = Buffer.from(sig, "hex");
