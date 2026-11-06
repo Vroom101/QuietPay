@@ -8,6 +8,7 @@ import type {
   TransferArgs,
   PreparedTx,
   TxReceipt,
+  ExternalSettlement,
 } from "@quietpay/relayer/core";
 import {
   makeEnv,
@@ -44,15 +45,32 @@ export function setup(
     simulationFails: false,
     broadcastFails: false,
     missingLog: false,
+    /** A third party submits the signed authorization first: when we broadcast, the nonce is already used and our tx reverts. */
+    frontRun: false,
+    /** On the Nth simulateTransfer call the nonce is already used (the foreign tx landed before we sent). */
+    usedAtSimulateCall: 0,
+    simulateCalls: 0,
+    /** What the chain reports about a non-facilitator tx that consumed the nonce. */
+    external: { kind: "none" } as ExternalSettlement,
+    externalLookups: 0,
     sent: [] as PreparedTx[],
     prepared: [] as { tx: PreparedTx; args: TransferArgs }[],
     release: undefined as (() => void) | undefined,
   };
   chain.getTokenBalance = async () => state.balance;
   chain.authorizationUsed = async (_payer, n) => state.used.has(n);
-  chain.simulateTransfer = async () => {
+  chain.simulateTransfer = async (args) => {
+    state.simulateCalls++;
+    if (state.usedAtSimulateCall && state.simulateCalls >= state.usedAtSimulateCall) {
+      state.used.add(args.nonce);
+      throw new Error("authorization is used");
+    }
     if (state.simulationFails) throw new Error("simulation failed");
     return 100_000n;
+  };
+  chain.findExternalSettlement = async () => {
+    state.externalLookups++;
+    return state.external;
   };
   chain.prepareTransfer = async (args, gas, gasPrice, replacementNonce) => {
     const tx: PreparedTx = {
@@ -72,12 +90,21 @@ export function setup(
     if (!prepared) return broadcast(raw);
     if (!state.sent.some((t) => t.hash === prepared.tx.hash))
       state.sent.push(prepared.tx);
+    if (state.frontRun) state.used.add(prepared.args.nonce);
     if (state.broadcastFails) throw new Error("Lost send response");
     return prepared.tx.hash;
   };
   const receipt = (hash: Hex): TxReceipt => {
     const p = state.prepared.find((p) => p.tx.hash === hash)!;
     state.used.add(p.args.nonce);
+    if (state.frontRun)
+      return {
+        status: "reverted",
+        blockNumber: 2n,
+        gasUsed: 60000n,
+        effectiveGasPrice: p.tx.gasPrice,
+        transfers: [],
+      };
     return {
       status: "success",
       blockNumber: 1n,

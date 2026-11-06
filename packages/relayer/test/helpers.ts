@@ -75,6 +75,7 @@ export class FakeChain implements ChainPort {
   async getBalance() { return this.balance; }
   async getTokenBalance() { return this.refundBalance; }
   async authorizationUsed(_payer?: Hex, _nonce?: Hex) { return false; }
+  async findExternalSettlement(_args?: unknown) { return { kind: "none" } as const; }
   async simulateTransfer() { throw new Error("Configure a transfer fake for x402 tests"); return 0n; }
   async prepareTransfer(): Promise<PreparedTx> { throw new Error("Configure a transfer fake for x402 tests"); }
   async simulateRefund() { if (this.simulateFails) throw new Error("refund simulation failed"); return this.gas; }

@@ -240,6 +240,15 @@ export class Db {
     ] as const) {
       if (!cols.includes(name)) this.raw.exec(`ALTER TABLE orders ADD COLUMN ${name} ${type}`);
     }
+    // x402 payments settled by a transaction we did not send (front-run authorization): where and how.
+    const x402Cols = (this.raw.prepare("PRAGMA table_info(x402_payments)").all() as { name: string }[]).map((c) => c.name);
+    for (const [name, type] of [
+      ["settlement_source", "TEXT"],
+      ["settlement_log_index", "INTEGER"],
+      ["settlement_block", "INTEGER"],
+    ] as const) {
+      if (!x402Cols.includes(name)) this.raw.exec(`ALTER TABLE x402_payments ADD COLUMN ${name} ${type}`);
+    }
     const attemptCols = (this.raw.prepare("PRAGMA table_info(tx_attempts)").all() as { name: string }[]).map((c) => c.name);
     if (!attemptCols.includes("payer")) {
       this.raw.transaction(() => {
