@@ -242,6 +242,9 @@ importers:
       '@types/node':
         specifier: ^20.14.0
         version: 20.19.43
+      fast-check:
+        specifier: 3.23.2
+        version: 3.23.2
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -298,6 +301,9 @@ importers:
       '@types/node':
         specifier: ^20.14.0
         version: 20.19.43
+      fast-check:
+        specifier: 3.23.2
+        version: 3.23.2
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -332,6 +338,9 @@ importers:
       '@types/node':
         specifier: ^20.14.0
         version: 20.19.43
+      fast-check:
+        specifier: 3.23.2
+        version: 3.23.2
       typescript:
         specifier: ^5.6.0
         version: 5.9.3

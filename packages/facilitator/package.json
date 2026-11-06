@@ -17,11 +17,12 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/node": "^20.14.0",
-    "typescript": "^5.6.0",
-    "vitest": "^2.1.0",
-    "@quietpay/indexer": "workspace:*",
     "@quietpay/agent-client": "workspace:*",
-    "@quietpay/agent-demo": "workspace:*"
+    "@quietpay/agent-demo": "workspace:*",
+    "@quietpay/indexer": "workspace:*",
+    "@types/node": "^20.14.0",
+    "fast-check": "3.23.2",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   }
 }
