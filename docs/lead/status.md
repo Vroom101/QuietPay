@@ -22,3 +22,4 @@
 07:00 Phase 4 | indexer verified vs prompt | 26 tests, CLI live-checked on qualifying router; live sample pending funds
 07:02 Final | report written | phases 1,2,4 done; phase 3 live payment/refund pending: unfunded; poller running
 - 08:30 fix(relayer): fee in pay nonce, stand-in case removed (CI typecheck)
+- 08:35 test(dashboard): exact six-decimal expectations (CI)
