@@ -1,17 +1,39 @@
 {
   "1874": {
     "network": "Whitechain Sepolia",
-    "router": "0x6a765694262E1c9CdDbb1C76008a61df7f58D86f",
-    "token": "0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4",
-    "tokenKind": "self-minted stand-in token (superseded; not the official USDT)",
-    "deployTx": "0x34c3ac16785052021ccc1030dce2bc41031b416fb159872a3b63353d3b12badb",
-    "tokenDeployTx": "0x8c42668e8303a929ba87566352b4d823ef9017d27600a520b29cebbd16b9f5e4",
-    "explorerUrl": "https://explorer.testnet.whitechain.io/address/0x6a765694262E1c9CdDbb1C76008a61df7f58D86f",
-    "tokenExplorerUrl": "https://explorer.testnet.whitechain.io/address/0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4",
+    "qualifying": true,
+    "router": "0xb9D475cdd817900B45C356169c6FdC379B942d82",
+    "token": "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7",
+    "deployBlock": 12351795,
+    "deployTx": "0xb2ce9853989c79207659f2c7aac30d165a4b152e84c2f76c265342273ea3c4fa",
+    "owner": "0x1E009f4fecE682514fCD5F284CaDdB1f46b10e2D",
+    "relayer": "0x5e97E3E39ba9DaBbc1297392a2eE62A139F1ceeA",
+    "merchants": {
+      "demo-store": {
+        "merchantId": "0x1d3fd9d6b97c92388e18a6e72355c17e73deaeef19351e5d6acce905f81454ac",
+        "payout": "0x8DEA71e7930b45648Dc9d2E8fEc742F56B329425",
+        "refundSigner": "0xeF70298c52b917d2301F7331bfe7038550d2CD5d"
+      }
+    },
+    "explorerUrl": "https://explorer.testnet.whitechain.io/address/0xb9D475cdd817900B45C356169c6FdC379B942d82",
+    "deployTxUrl": "https://explorer.testnet.whitechain.io/tx/0xb2ce9853989c79207659f2c7aac30d165a4b152e84c2f76c265342273ea3c4fa",
     "verified": true,
-    "demoMerchantSlug": "demo-store",
-    "deployBlock": 12347996,
-    "qualifying": false,
-    "note": "stand-in token, superseded"
+    "history": [
+      {
+        "network": "Whitechain Sepolia",
+        "router": "0x6a765694262E1c9CdDbb1C76008a61df7f58D86f",
+        "token": "0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4",
+        "tokenKind": "self-minted stand-in token (superseded; not the official USDT)",
+        "deployTx": "0x34c3ac16785052021ccc1030dce2bc41031b416fb159872a3b63353d3b12badb",
+        "tokenDeployTx": "0x8c42668e8303a929ba87566352b4d823ef9017d27600a520b29cebbd16b9f5e4",
+        "explorerUrl": "https://explorer.testnet.whitechain.io/address/0x6a765694262E1c9CdDbb1C76008a61df7f58D86f",
+        "tokenExplorerUrl": "https://explorer.testnet.whitechain.io/address/0x02Dd211C97b0611146ce9D673F9C56B4fbC9e6f4",
+        "verified": true,
+        "demoMerchantSlug": "demo-store",
+        "deployBlock": 12347996,
+        "qualifying": false,
+        "note": "stand-in token, superseded"
+      }
+    ]
   }
 }

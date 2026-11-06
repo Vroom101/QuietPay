@@ -17,7 +17,8 @@
     "test": "vitest run",
     "mock": "tsx src/mock-server.ts",
     "gen:abi": "node scripts/gen-abi.mjs",
-    "sync:deployments": "node scripts/sync-deployments.mjs"
+    "sync:deployments": "node scripts/sync-deployments.mjs",
+    "record:deployment": "node scripts/record-deployment.mjs"
   },
   "dependencies": {
     "viem": "^2.21.0",

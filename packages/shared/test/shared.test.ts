@@ -309,3 +309,16 @@ describe("mock relayer amounts and fees", () => {
     }
   });
 });
+
+describe("deployments.json", () => {
+  it("has exactly one qualifying router for the official USDT, and only history entries marked non-qualifying", async () => {
+    const { getQualifyingDeployment, getDeployment } = await import("../src/index.js");
+    const d = getQualifyingDeployment();
+    expect(d.token.toLowerCase()).toBe(QUALIFYING_USDT.toLowerCase());
+    expect(d.router).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    expect(d.deployBlock).toBeGreaterThan(0);
+    expect(d.verified).toBe(true);
+    expect(d.merchants?.["demo-store"]?.merchantId).toMatch(/^0x[0-9a-f]{64}$/);
+    for (const h of getDeployment(1874).history ?? []) expect(h.qualifying).toBe(false);
+  });
+});
