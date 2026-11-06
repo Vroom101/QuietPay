@@ -26,3 +26,4 @@
 - 09:36 live payment + refund done on qualifying router; demo-store 400 fix
 - 09:38 live indexer export (1 router row) saved; tag qualifying-v1
 - 11:10 verifier built; live sample verified OK against chain 1874; pen test rounds 1-3 fixed
+- 12:40 L0 reconcile written; baseline green (see reconcile.md)
