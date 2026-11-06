@@ -52,4 +52,6 @@ const app = buildApp(sdk, {
     : undefined,
 });
 
-app.listen({ port, host: "127.0.0.1" }).then(() => console.log(`demo-store api on http://127.0.0.1:${port}`));
+// HOST defaults to loopback (local dev). Hosting sets HOST=0.0.0.0 so the platform proxy can reach it.
+const host = process.env.HOST || "127.0.0.1";
+app.listen({ port, host }).then(() => console.log(`demo-store api on http://${host}:${port}`));

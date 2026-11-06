@@ -119,14 +119,20 @@ function loadState(file: string | undefined): PersistedState {
 }
 
 export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
+  // Body size and timeout limits (W3) plus a header-redacting logger (W5).
   const app: FastifyInstance = Fastify({
     logger: config.logger
       ? { level: "info", redact: { paths: REDACTED_HEADERS, censor: "[redacted]" }, ...(typeof config.logger === "object" ? config.logger : {}) }
       : false,
+    bodyLimit: 64 * 1024,
+    requestTimeout: 30_000,
+    connectionTimeout: 60_000,
   });
+  app.server.headersTimeout = 15_000;
   const receipts = config.receiptDatabasePath ? new ReceiptStore(config.receiptDatabasePath,
     JSON.stringify([config.baseUrl.replace(/\/+$/, ""), config.merchantId.toLowerCase()])) : undefined;
   app.addHook("onClose", async () => receipts?.close());
+  app.get("/health", async () => ({ ok: true })); // platform health check; reveals nothing
   app.get("/api/checkout/methods", async () => ({ methods: [{ id: "usdt", name: "Tether USD", symbol: "USDT", simulated: false }] }));
   const state = loadState(config.stateFile);
   const paid = new Map<string, PaidRecord>(Object.entries(state.paid));

@@ -36,6 +36,24 @@ services:
       - { key: X402_QUOTE_AMOUNT, value: "10000" }
       - { key: X402_SIGNAL_AMOUNT, value: "20000" }
       - { key: X402_SETTLEMENT_WAIT_MS, value: "5000" }
+      # Names added to match docs/b/build/config-matrix.md (defaults shown; change only on purpose).
+      - { key: ALLOW_PRIVATE_WEBHOOKS, value: "0" }
+      - { key: SETTLE_CONFIRMATIONS, value: "1" }
+      - { key: RELAY_FEE_USDT, value: "0.05" }
+      - { key: RATE_LIMIT_PER_MINUTE, value: "20" }
+      - { key: TOKEN_DOMAIN_NAME, value: "Tether USD" }
+      - { key: TOKEN_DOMAIN_VERSION, value: "1" }
+      - { key: PORT, value: "8787" }
+      - { key: MIN_VALID_SECONDS, value: "60" }
+      - { key: REVERTED_PAYER_MIN_VALID_SECONDS, value: "120" }
+      - { key: MAX_REVERTS_PER_DAY, value: "2" }
+      - { key: PAYER_LOSS_SHARE_PERCENT, value: "25" }
+      - { key: TX_MAX_AGE_SECONDS, value: "1800" }
+      - { key: FIRST_TIME_PAYER_LOSS_SHARE_PERCENT, value: "5" }
+      - { key: FIRST_TIME_PAYER_LOSS_CAP_PERCENT, value: "100" }
+      - { key: MAX_NEW_PAYERS_PER_IP_PER_HOUR, value: "10" }
+      - { key: RECONCILE_INTERVAL_SECONDS, value: "30" }
+      - { key: CORS_ORIGINS, value: "" }
   - type: web
     name: quietpay-paid-api
     runtime: docker

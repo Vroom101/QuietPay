@@ -4,6 +4,8 @@ import { assertNodeChainId, makeChain } from "./chain.js";
 import { RelayerService } from "./service.js";
 import { buildServer } from "./server.js";
 import { WebhookWorker } from "./webhooks.js";
+import { acquireInstanceLock } from "./instance-lock.js";
+import { recordDbIdentity } from "./db-backup.js";
 
 const log = (msg: string, extra?: Record<string, unknown>) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), msg, ...extra }));
@@ -12,11 +14,15 @@ const log = (msg: string, extra?: Record<string, unknown>) =>
 // transition is compare-and-set), but each process manages the relayer key's nonce on its own. Run one
 // process per relayer key, or put a shared lock around signing/sending, before scaling horizontally.
 const cfg = loadConfig();
+// One relayer process per database file (exclusive lock file; stale locks from a crash are taken over).
+acquireInstanceLock(cfg.databasePath);
+for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => process.exit(0)); // 'exit' releases the lock
 await assertNodeChainId(cfg.rpcUrl, cfg.chainId);
 const db = new Db(cfg.databasePath);
+recordDbIdentity(db, { chainId: cfg.chainId, router: cfg.router }); // refuses a database that belongs to another chain/router
 const chain = makeChain({ rpcUrl: cfg.rpcUrl, chainId: cfg.chainId, router: cfg.router, relayerKey: cfg.relayerKey, nonceFloor: () => db.nonceFloor() });
 const svc = new RelayerService({ cfg, db, chain, log });
-const worker = new WebhookWorker(db, cfg.webhookSecret, undefined, undefined, log, { allowPrivate: cfg.allowPrivateWebhooks });
+const worker = new WebhookWorker(db, cfg.webhookSecret, undefined, undefined, log, { allowPrivate: cfg.allowPrivateWebhooks, pinConnections: true });
 
 svc.recoverPending();
 // Every RECONCILE_INTERVAL_SECONDS (30 s): heartbeat, sweep stale claims, and resolve every signed tx that

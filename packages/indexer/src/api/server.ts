@@ -6,7 +6,9 @@ import { ExportMetaSchema } from "./model.js";
 import { verifyExport } from "./verifier.js";
 
 export function buildServer(indexer: Indexer, apiKeys: Map<string, string>) {
-  const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
+  // 2 MiB covers an export verification upload; the timeouts stop slow clients holding sockets.
+  const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024, requestTimeout: 30_000, connectionTimeout: 60_000 });
+  app.server.headersTimeout = 15_000;
   app.addHook("onRequest", async (req, reply) => {
     reply.header("access-control-allow-origin", "*");
     reply.header("access-control-allow-headers", "content-type, authorization");
