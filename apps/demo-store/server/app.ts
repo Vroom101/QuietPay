@@ -34,8 +34,12 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
     if (typeof total !== "string" || !/^\d{1,9}(\.\d{1,2})?$/.test(total)) {
       return reply.code(400).send({ error: "cartTotal must be a decimal string such as 25.00" });
     }
-    const amount = parseUsdt(total);
-    if (amount <= 0n) return reply.code(400).send({ error: "cartTotal must be positive" });
+    let amount: bigint;
+    try {
+      amount = parseUsdt(total); // strict: throws on zero or malformed input
+    } catch {
+      return reply.code(400).send({ error: "cartTotal must be a positive decimal such as 25.00" });
+    }
     try {
       const order = await sdk.createOrder({
         baseUrl: config.baseUrl,
