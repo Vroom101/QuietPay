@@ -32,9 +32,18 @@ function loadKey(): string {
   }
 }
 
+function loadDemoSession(): boolean {
+  try {
+    return sessionStorage.getItem("qp-merchant-demo") === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function App() {
   const [selected, setSelected] = useState<Order>();
   const [apiKey, setApiKey] = useState(loadKey);
+  const [demoSession, setDemoSession] = useState(loadDemoSession);
   const [draft, setDraft] = useState("");
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
   const [error, setError] = useState<string>();
@@ -54,13 +63,20 @@ export function App() {
   function disconnect() {
     request.current++;
     activeToken.current = "";
-    try { sessionStorage.removeItem("qp-dashboard-token"); } catch { /* Storage may be unavailable. */ }
+    try { sessionStorage.removeItem(DEMO_MODE ? "qp-merchant-demo" : "qp-dashboard-token"); } catch { /* Storage may be unavailable. */ }
+    if (DEMO_MODE) setDemoSession(false);
     setApiKey("");
     setDraft("");
     setOrders([]);
     setSelected(undefined);
     setError(undefined);
     setLoading(false);
+    changeView("Overview");
+  }
+
+  function startDemo() {
+    try { sessionStorage.setItem("qp-merchant-demo", "1"); } catch { /* Keep the session in memory. */ }
+    setDemoSession(true);
   }
 
   const load = useCallback(async () => {
@@ -87,8 +103,8 @@ export function App() {
   }, [apiKey]);
 
   useEffect(() => {
-    if (apiKey || DEMO_MODE) void load();
-  }, [apiKey, load]);
+    if (DEMO_MODE ? demoSession : apiKey) void load();
+  }, [apiKey, demoSession, load]);
 
   function saveKey(e: FormEvent) {
     e.preventDefault();
@@ -127,6 +143,30 @@ export function App() {
     [apiKey],
   );
 
+  if (DEMO_MODE ? !demoSession : !apiKey) {
+    return (
+      <main className="md-shell md-signin">
+        <section className="md-glass md-signin-card" aria-labelledby="merchant-signin-title">
+          <div className="md-brand"><span role="img" aria-label="QuietPay" style={{ maskImage: `url("${quietPayLogo}")` }} /></div>
+          <div className="md-signin-tag">{DEMO_MODE ? "DEMO WORKSPACE" : "MERCHANT ACCESS"}</div>
+          <h1 id="merchant-signin-title">Merchant verification</h1>
+          <p>{DEMO_MODE ? "Preview how a merchant enters the dashboard. Verification is simulated for this demo." : "Enter your dashboard access token to open your merchant workspace."}</p>
+          {DEMO_MODE ? (
+            <>
+              <div className="md-signin-account"><span>Demo merchant</span><strong>{merchantName}</strong></div>
+              <button type="button" className="md-signin-submit" onClick={startDemo}>Continue as demo merchant <span aria-hidden="true">→</span></button>
+            </>
+          ) : (
+            <form onSubmit={saveKey}>
+              <label>Dashboard access token<input type="password" value={draft} onChange={(e) => setDraft(e.target.value)} autoComplete="off" required /></label>
+              <button type="submit" className="md-signin-submit">Open merchant dashboard <span aria-hidden="true">→</span></button>
+            </form>
+          )}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <div className="md-shell">
       <aside className="md-glass md-sidebar">
@@ -158,7 +198,7 @@ export function App() {
             {hasAccess && <button type="button" onClick={disconnect}>Sign out</button>}
           </form>
         )}
-        {DEMO_MODE && view === "Settings" && <p className="md-glass md-access">This workspace shows payments recorded by the demo storefront. Connect the merchant server to see live orders.</p>}
+        {DEMO_MODE && view === "Settings" && <div className="md-glass md-access"><p>This workspace shows payments recorded by the demo storefront. Connect the merchant server to see live orders.</p><button type="button" onClick={disconnect}>Sign out</button></div>}
         {error && <p role="alert" className="md-notice">{error}</p>}
         {loading && <p role="status" className="md-notice">Loading orders…</p>}
         {(view === "Overview" || view === "Analytics") && <DashboardMetrics orders={periodOrders} demo={DEMO_MODE} />}
