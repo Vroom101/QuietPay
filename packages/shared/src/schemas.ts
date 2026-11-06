@@ -205,3 +205,30 @@ export const Refund = z.object({
 export type Refund = z.infer<typeof Refund>;
 
 export const ListRefundsResponse = z.object({ refunds: z.array(Refund) });
+
+// ---- Customer-facing refund status (additive; served by a store, never by the relayer) ----
+
+/** Header that carries the order status token. It must never travel in a URL or query string. */
+export const ORDER_TOKEN_HEADER = "Quietpay-Order-Token";
+
+/** One refund as a customer may see it: no ids, no failure codes, no signer or payout details. */
+export const CustomerRefundItem = z.object({
+  amount: Amount,
+  status: z.enum(["pending", "settled", "failed"]),
+  txHash: TxHash.optional(),
+  createdAt: z.number().int(),
+}).strict();
+export type CustomerRefundItem = z.infer<typeof CustomerRefundItem>;
+
+/** What GET /api/orders/:id/refund-status returns. Amounts are token base units (6 decimals) as strings. */
+export const CustomerRefundStatus = z.object({
+  orderId: Bytes32,
+  status: z.enum(["pending", "settled", "partially_refunded", "refunded"]),
+  amountPaid: Amount,
+  totalRefunded: Amount.or(z.literal("0")),
+  remaining: Amount.or(z.literal("0")),
+  currency: z.literal("USDT"),
+  lastUpdatedAt: z.number().int(),
+  refunds: z.array(CustomerRefundItem),
+}).strict();
+export type CustomerRefundStatus = z.infer<typeof CustomerRefundStatus>;
