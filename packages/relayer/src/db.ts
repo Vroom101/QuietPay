@@ -153,6 +153,7 @@ export class Db {
         next_attempt_at INTEGER NOT NULL,
         delivered_at INTEGER
       );
+      CREATE INDEX IF NOT EXISTS idx_deliveries_due ON deliveries(next_attempt_at) WHERE delivered_at IS NULL;
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS reverts (
         tx_hash TEXT PRIMARY KEY,
@@ -716,6 +717,22 @@ export class Db {
     return this.raw
       .prepare("SELECT * FROM deliveries WHERE delivered_at IS NULL AND next_attempt_at<=? AND attempts<? ORDER BY next_attempt_at LIMIT ?")
       .all(now, MAX_DELIVERY_ATTEMPTS, limit) as DeliveryRow[];
+  }
+  /**
+   * Due rows chosen fairly across merchants: the oldest `perMerchant` due rows of EVERY merchant (merchant = the
+   * order's merchant, else the body's data.merchantId, else the order itself), regardless of any one merchant's
+   * backlog size. Ordered by per-merchant rank then age, so a LIMIT keeps every merchant's oldest rows first.
+   */
+  dueDeliveriesFair(now: number, perMerchant: number, limit: number): DeliveryRow[] {
+    return this.raw
+      .prepare(`SELECT id, order_id, url, body, attempts, next_attempt_at, delivered_at FROM (
+          SELECT d.*, ROW_NUMBER() OVER (PARTITION BY mk ORDER BY next_attempt_at, id) AS rn FROM (
+            SELECT deliveries.*, lower(COALESCE((SELECT merchant_id FROM orders WHERE orders.id = lower(deliveries.order_id)),
+              CASE WHEN json_valid(body) THEN json_extract(body, '$.data.merchantId') END, 'order:' || order_id)) AS mk
+            FROM deliveries WHERE delivered_at IS NULL AND next_attempt_at<=? AND attempts<?
+          ) d
+        ) WHERE rn<=? ORDER BY rn, next_attempt_at, id LIMIT ?`)
+      .all(now, MAX_DELIVERY_ATTEMPTS, perMerchant, limit) as DeliveryRow[];
   }
   markDelivered(id: string, now: number) {
     this.raw.prepare("UPDATE deliveries SET delivered_at=? WHERE id=?").run(now, id);

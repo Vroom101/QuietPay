@@ -196,7 +196,9 @@ const SCAN_LIMIT = 200;
 const BATCH_LIMIT = 20;
 const MAX_CONCURRENCY = 8;
 const PER_MERCHANT_CAP = 3;
-const PER_HOST_CAP = 3;
+const PER_MERCHANT_HOST_CAP = 3;
+/** Global ceiling of rows aimed at one host per pass; slots are handed out round-robin across merchants. */
+const PER_HOST_CEILING = 8;
 
 type FetchLike = (
   url: string,
@@ -322,18 +324,42 @@ export class WebhookWorker {
    * so retry/backoff accounting is unchanged.
    */
   private async runTick(): Promise<number> {
-    const due = this.db.dueDeliveries(this.now(), SCAN_LIMIT);
+    // Per-merchant oldest rows (rows ordered by per-merchant rank, so one merchant's backlog cannot crowd out others),
+    // then taken round-robin across merchants under the per-(merchant,host) cap and the global per-host ceiling.
+    const due = this.db.dueDeliveriesFair(this.now(), PER_MERCHANT_CAP * 4, SCAN_LIMIT);
     const perMerchant = new Map<string, number>();
+    const perMerchantHost = new Map<string, number>();
     const perHost = new Map<string, number>();
     const batch: DeliveryRow[] = [];
+    const queues = new Map<string, DeliveryRow[]>();
     for (const d of due) {
       const m = this.merchantOf(d.order_id, d.body)?.toLowerCase() ?? `order:${d.order_id}`;
-      const h = this.hostOf(d.url);
-      if ((perMerchant.get(m) ?? 0) >= PER_MERCHANT_CAP || (perHost.get(h) ?? 0) >= PER_HOST_CAP) continue;
-      perMerchant.set(m, (perMerchant.get(m) ?? 0) + 1);
-      perHost.set(h, (perHost.get(h) ?? 0) + 1);
-      batch.push(d);
-      if (batch.length >= BATCH_LIMIT) break;
+      const q = queues.get(m);
+      if (q) q.push(d);
+      else queues.set(m, [d]);
+    }
+    let progress = true;
+    while (progress && batch.length < BATCH_LIMIT) {
+      progress = false;
+      for (const [m, q] of queues) {
+        while (q.length > 0) {
+          const d = q.shift()!;
+          const h = this.hostOf(d.url);
+          const mh = `${m}|${h}`;
+          if ((perMerchant.get(m) ?? 0) >= PER_MERCHANT_CAP) {
+            q.length = 0;
+            break;
+          }
+          if ((perMerchantHost.get(mh) ?? 0) >= PER_MERCHANT_HOST_CAP || (perHost.get(h) ?? 0) >= PER_HOST_CEILING) continue;
+          perMerchant.set(m, (perMerchant.get(m) ?? 0) + 1);
+          perMerchantHost.set(mh, (perMerchantHost.get(mh) ?? 0) + 1);
+          perHost.set(h, (perHost.get(h) ?? 0) + 1);
+          batch.push(d);
+          progress = true;
+          break;
+        }
+        if (batch.length >= BATCH_LIMIT) break;
+      }
     }
     let delivered = 0;
     let next = 0;
