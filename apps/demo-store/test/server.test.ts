@@ -1,6 +1,6 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createMockRelayer } from "@quietpay/shared/mock-server";
 import { merchantIdFromSlug } from "@quietpay/shared";
 import { webhookSettled } from "@quietpay/shared/fixtures";
@@ -22,6 +22,7 @@ beforeAll(async () => {
     apiKey: "k",
     merchantId: merchantIdFromSlug("demo-store"),
     webhookSecret: SECRET,
+    demoConversion: true,
   });
 });
 afterAll(async () => {
@@ -65,6 +66,32 @@ describe("demo-store server", () => {
       payload: { items: { mug: 1 }, cartTotal: "0.01" },
     });
     expect(res.statusCode).toBe(409);
+  });
+
+  const quoteDemo = () => app.inject({
+    method: "POST", url: "/api/checkout/demo-quote",
+    payload: { items: { notebook: 1 }, cartTotal: "8.50", methodId: "demo-stablecoin" },
+  });
+
+  it("quotes the server-priced cart and keeps simulated confirmation separate from paid orders", async () => {
+    const quote = (await quoteDemo()).json();
+    expect(quote).toMatchObject({ symbol: "DEMO", payAmount: "8.50", merchantAmount: "8.40", relayFee: "0.10" });
+    const confirm = () => app.inject({ method: "POST", url: "/api/checkout/demo-confirm", payload: { quoteId: quote.id } });
+    expect((await confirm()).json()).toEqual({ orderId: quote.id });
+    expect((await confirm()).json()).toEqual({ orderId: quote.id });
+    const status = (await app.inject({ url: `/api/orders/${quote.id}/paid` })).json();
+    expect(status).toMatchObject({ paid: false, simulation: { quote } });
+  });
+
+  it("rejects expired quotes", async () => {
+    const quote = (await quoteDemo()).json();
+    const now = vi.spyOn(Date, "now").mockReturnValue(quote.expiresAt);
+    try {
+      const res = await app.inject({ method: "POST", url: "/api/checkout/demo-confirm", payload: { quoteId: quote.id } });
+      expect(res.statusCode).toBe(409);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("verifies webhooks, stores the paid order and dedupes by event id", async () => {

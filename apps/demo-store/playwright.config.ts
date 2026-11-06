@@ -23,6 +23,7 @@ export default defineConfig({
         QUIETPAY_MERCHANT_ID: "",
         QUIETPAY_WEBHOOK_SECRET: "dev-webhook-secret",
         QUIETPAY_WEBHOOK_URL: "",
+        QUIETPAY_ENABLE_DEMO_CONVERSION: "1",
       },
     },
     {

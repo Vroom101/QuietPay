@@ -59,19 +59,19 @@ export class QuietpayCheckout extends LitElement {
   }
 
   static styles = css`
-    :host { display: block; font-family: system-ui, sans-serif; color: #111827; max-width: 24rem; }
-    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 1.25rem; background: #fff; }
+    :host { display: block; font-family: system-ui, sans-serif; color: var(--qp-text, #111827); max-width: 24rem; }
+    .card { border: 1px solid var(--qp-border, #e5e7eb); border-radius: 12px; padding: 1.25rem; background: var(--qp-surface, #fff); }
     .amount { font-size: 2rem; font-weight: 700; margin: .25rem 0; }
-    .muted { color: #6b7280; font-size: .8rem; }
+    .muted { color: var(--qp-muted, #6b7280); font-size: .8rem; }
     .row { display: flex; justify-content: space-between; gap: .5rem; margin: .35rem 0; font-size: .9rem; }
     code { font-size: .75rem; word-break: break-all; }
-    button { width: 100%; padding: .75rem; border: 0; border-radius: 8px; background: #111827; color: #fff; font-size: 1rem; cursor: pointer; margin-top: .75rem; }
+    button { width: 100%; padding: .75rem; border: 0; border-radius: 8px; background: var(--qp-action, #111827); color: #fff; font-size: 1rem; cursor: pointer; margin-top: .75rem; }
     button[disabled] { opacity: .5; cursor: default; }
     button.secondary { background: #e5e7eb; color: #111827; }
     .error { background: #fef2f2; color: #991b1b; padding: .75rem; border-radius: 8px; margin: .5rem 0; font-size: .9rem; }
     .ok { background: #ecfdf5; color: #065f46; padding: .75rem; border-radius: 8px; margin: .5rem 0; }
-    .footer { margin-top: 1rem; font-size: .7rem; color: #6b7280; }
-    a { color: #2563eb; }
+    .footer { margin-top: 1rem; font-size: .7rem; color: var(--qp-muted, #6b7280); }
+    a { color: var(--qp-link, #2563eb); }
   `;
 
   connectedCallback() {

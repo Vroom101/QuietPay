@@ -1,10 +1,7 @@
 import { formatUsdt } from "@quietpay/shared";
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-
-type PaymentStatus =
-  | { paid: false }
-  | { paid: true; amount: string; paidAt: number; txHash?: string };
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { readPayment, type PaymentStatus } from "../payment";
 
 export function Success() {
   const { orderId } = useParams();
@@ -14,21 +11,24 @@ export function Success() {
 function Receipt({ orderId }: { orderId: string }) {
   const [state, setState] = useState<PaymentStatus>({ paid: false });
   const [unavailable, setUnavailable] = useState(false);
+  const [details, setDetails] = useSearchParams();
 
   // The shop only marks an order paid once its server has verified the signed webhook.
   useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = Date.now();
     const tick = async () => {
       try {
-        const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/paid`, { signal });
-        if (!response.ok) throw new Error("Could not load payment status");
-        const status = (await response.json()) as PaymentStatus;
+        const status = await readPayment(orderId, signal);
         if (signal.aborted) return;
-        setState(status);
         setUnavailable(false);
-        if (!status.paid) retry = setTimeout(tick, 2000);
+        if (status.paid || status.simulation) {
+          retry = setTimeout(() => setState(status), Math.max(0, 450 - (Date.now() - startedAt)));
+        } else {
+          retry = setTimeout(tick, 2000);
+        }
       } catch {
         if (signal.aborted) return;
         setUnavailable(true);
@@ -42,19 +42,33 @@ function Receipt({ orderId }: { orderId: string }) {
     };
   }, [orderId]);
 
+  const simulation = state.paid ? undefined : state.simulation;
+  const complete = state.paid || !!simulation;
+  const showDetails = details.get("details") === "1";
   return (
-    <div className="rounded-lg bg-white p-6 text-center shadow-sm">
-      <h2 className="text-2xl font-semibold">{state.paid ? "Payment receipt" : "Order status"}</h2>
-      <p className="mt-2 text-sm text-stone-600" role="status" data-testid="shop-status">
-        {state.paid && "The shop has confirmed your payment."}
+    <div className="gateway gateway-receipt">
+      <p className="gateway-kicker">QUIETPAY CHECKOUT</p>
+      <div className={`payment-indicator ${complete ? "payment-indicator-done" : ""}`} aria-hidden="true">
+        {complete ? <svg viewBox="0 0 32 32" fill="none"><path d="m7 16 6 6L25 10" /></svg> : <span />}
+      </div>
+      <h1>{simulation ? "Demo receipt" : state.paid ? "Payment receipt" : "Processing payment"}</h1>
+      <p className="gateway-receipt-status" role="status" data-testid="shop-status">
+        {simulation && "Simulated conversion complete. No funds moved."}
+        {state.paid && (state.demo ? "Demo payment confirmed. No funds moved." : "The shop has confirmed your payment.")}
         {unavailable && "We couldn't check your payment status. Trying again…"}
-        {!state.paid && !unavailable && "The shop is confirming your payment…"}
+        {!state.paid && !simulation && !unavailable && "The shop is confirming your payment…"}
       </p>
-      <dl className="mx-auto mt-6 max-w-md space-y-3 rounded-lg bg-stone-50 p-4 text-left text-sm">
+      {complete && showDetails && <dl id="payment-details" className="gateway-receipt-details">
         <div>
           <dt className="font-medium">Order number</dt>
-          <dd className="break-all text-stone-600">{orderId}</dd>
+          <dd className="break-all">{orderId}</dd>
         </div>
+        {simulation && <>
+          <div><dt>You paid (simulated)</dt><dd>{simulation.quote.payAmount} {simulation.quote.symbol}</dd></div>
+          <div><dt>Merchant payout (simulated)</dt><dd>{simulation.quote.merchantAmount} USDT</dd></div>
+          <div><dt>Merchant relay fee</dt><dd>{simulation.quote.relayFee} USDT</dd></div>
+          <div><dt>Completed at</dt><dd>{new Date(simulation.confirmedAt * 1000).toLocaleString()}</dd></div>
+        </>}
         {state.paid && (
           <>
             <div>
@@ -68,13 +82,16 @@ function Receipt({ orderId }: { orderId: string }) {
             {state.txHash && (
               <div>
                 <dt className="font-medium">Payment reference</dt>
-                <dd className="break-all text-stone-600">{state.txHash}</dd>
+                <dd className="break-all">{state.txHash}</dd>
               </div>
             )}
           </>
         )}
-      </dl>
-      <Link to="/" className="mt-6 inline-block underline">Keep shopping</Link>
+      </dl>}
+      {complete && <div className="payment-receipt-actions">
+        <button type="button" className="gateway-primary" aria-expanded={showDetails} onClick={() => setDetails(showDetails ? {} : { details: "1" }, { replace: true })}>{showDetails ? "Hide payment details" : "View payment details"}</button>
+        <Link to="/orders" className="gateway-primary payment-secondary">View orders</Link>
+      </div>}
     </div>
   );
 }
