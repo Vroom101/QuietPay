@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { signWebhook } from "@quietpay/shared/webhook";
 import { orderCreated, webhookSettled, webhookFailed } from "@quietpay/shared/fixtures";
+import { ZodError } from "zod";
 import { QuietpayApiError, WebhookVerificationError, createOrder, getOrder, listOrders, refund, verifyWebhook } from "../src/index.js";
 
 const secret = "whsec_sdk_test_1234567890";
@@ -31,7 +32,7 @@ describe("createOrder / getOrder", () => {
   });
 
   it("rejects bad input before any network call", async () => {
-    await expect(createOrder({ baseUrl: "x", apiKey: "k", merchantId, amount: "-5", fetch: fakeFetch(201, {}) })).rejects.toThrow();
+    await expect(createOrder({ baseUrl: "x", apiKey: "k", merchantId, amount: "-5", fetch: fakeFetch(201, {}) })).rejects.toThrow(ZodError);
   });
 
   it("maps relayer errors to QuietpayApiError with the frozen code", async () => {
@@ -93,5 +94,5 @@ it("lists the merchant orders using server credentials and validates the respons
   const orders = await listOrders({baseUrl: "https://relayer.test/", apiKey: "server-only", fetch: fakeFetch(200, { orders: [orderCreated] }, (url, init) => { seen = { url, init }; })});
   expect(orders).toHaveLength(1); expect(seen?.url).toBe("https://relayer.test/v1/orders");
   expect((seen?.init?.headers as Record<string,string>).authorization).toBe("Bearer server-only");
-  await expect(listOrders({baseUrl:"https://relayer.test", apiKey:"server-only", fetch:fakeFetch(200,{orders:[{}]})})).rejects.toThrow();
+  await expect(listOrders({baseUrl:"https://relayer.test", apiKey:"server-only", fetch:fakeFetch(200,{orders:[{}]})})).rejects.toThrow(ZodError);
 });
