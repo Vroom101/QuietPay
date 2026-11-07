@@ -210,6 +210,11 @@ export class Db {
         delivered_at INTEGER, delivery_attempts INTEGER NOT NULL DEFAULT 0, lease_token TEXT, lease_until INTEGER,
         UNIQUE(payer,nonce)
       );
+      CREATE TABLE IF NOT EXISTS gas_topups (
+        tx_hash TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, from_addr TEXT NOT NULL,
+        wei TEXT NOT NULL, block INTEGER NOT NULL, credited_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_gas_topups_merchant ON gas_topups(merchant_id, credited_at DESC);
 `);
     this.migrate();
   }
@@ -300,6 +305,40 @@ export class Db {
     return this.raw
       .prepare("SELECT * FROM orders WHERE merchant_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
       .all(merchantId.toLowerCase(), limit) as OrderRow[];
+  }
+
+  /** Gas tank. Inserts a credited top-up; false if that tx hash was already credited (to anyone). */
+  insertGasTopUp(r: { txHash: string; merchantId: string; from: string; wei: bigint; block: number; creditedAt: number }): boolean {
+    return (
+      this.raw
+        .prepare("INSERT OR IGNORE INTO gas_topups (tx_hash, merchant_id, from_addr, wei, block, credited_at) VALUES (?,?,?,?,?,?)")
+        .run(r.txHash.toLowerCase(), r.merchantId.toLowerCase(), r.from.toLowerCase(), r.wei.toString(), r.block, r.creditedAt).changes === 1
+    );
+  }
+
+  hasGasTopUp(txHash: string): boolean {
+    return this.raw.prepare("SELECT 1 FROM gas_topups WHERE tx_hash = ?").get(txHash.toLowerCase()) !== undefined;
+  }
+
+  /** Newest first. */
+  gasTopUps(merchantId: string, limit: number): { tx_hash: string; from_addr: string; wei: string; block: number; credited_at: number }[] {
+    return this.raw
+      .prepare("SELECT tx_hash, from_addr, wei, block, credited_at FROM gas_topups WHERE merchant_id = ? ORDER BY credited_at DESC, rowid DESC LIMIT ?")
+      .all(merchantId.toLowerCase(), limit) as never;
+  }
+
+  gasCreditedWei(merchantId: string): bigint {
+    const rows = this.raw.prepare("SELECT wei FROM gas_topups WHERE merchant_id = ?").all(merchantId.toLowerCase()) as { wei: string }[];
+    return rows.reduce((s, r) => s + BigInt(r.wei), 0n);
+  }
+
+  /** All-time gas spent on a merchant's orders (every order, not just the newest page) and how many are paid. */
+  gasSpentByMerchant(merchantId: string): { spentWei: bigint; paidOrders: number } {
+    const rows = this.raw.prepare("SELECT id, status FROM orders WHERE merchant_id = ?").all(merchantId.toLowerCase()) as { id: string; status: string }[];
+    let spentWei = 0n;
+    for (const v of this.gasWeiByOrder(rows.map((r) => r.id)).values()) spentWei += v;
+    const paidOrders = rows.filter((r) => r.status === "settled" || r.status === "partially_refunded" || r.status === "refunded").length;
+    return { spentWei, paidOrders };
   }
 
   /** Orders pending on a broadcast tx (for receipt tracking). */

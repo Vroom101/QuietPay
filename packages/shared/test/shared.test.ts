@@ -56,6 +56,11 @@ describe("errors", () => {
       "payment_replayed",
       "budget_exceeded",
       "invalid_amount",
+      "topup_not_found",
+      "topup_unconfirmed",
+      "topup_invalid",
+      "topup_wrong_sender",
+      "topup_already_credited",
     ]);
     for (const c of ERROR_CODES) {
       expect(ERROR_HTTP_STATUS[c]).toBeGreaterThanOrEqual(400);

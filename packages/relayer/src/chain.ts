@@ -44,6 +44,17 @@ export interface TxReceipt {
   transfers?: ReturnType<typeof receiptTransfers>;
 }
 
+/** A plain native-currency transfer as seen on chain (gas tank top-ups). `confirmations` counts the including block. */
+export interface NativeTransfer {
+  from: Hex;
+  to: Hex | null;
+  value: bigint;
+  status: "success" | "reverted";
+  blockNumber: bigint;
+  confirmations: number;
+  chainId: number;
+}
+
 /** A pay transaction signed locally. Nothing has been sent yet; `nonce` is reserved by the NonceManager. */
 export interface SignedTx {
   hash: Hex;
@@ -83,6 +94,8 @@ export interface ChainPort {
   /** Number of transactions from the relayer account included in the latest block (its mined nonce). */
   getConfirmedNonce(): Promise<number>;
   getBlockNumber(): Promise<bigint>;
+  /** A mined native transfer by hash, or null when the node does not know it or it is still pending. */
+  getNativeTransfer(txHash: Hex): Promise<NativeTransfer | null>;
   /**
    * Signs (does not send) a zero-value self-transfer at an EXPLICIT nonce, outside the NonceManager: used
    * to fill a nonce whose pay tx never reached the node, or to replace (cancel) a pay tx whose
@@ -242,6 +255,20 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; router: Hex; r
     },
     getConfirmedNonce: () => pub.getTransactionCount({ address: account.address, blockTag: "latest" }),
     getBlockNumber: () => pub.getBlockNumber(),
+    async getNativeTransfer(txHash) {
+      let tx: Awaited<ReturnType<typeof pub.getTransaction>>;
+      let rc: Awaited<ReturnType<typeof pub.getTransactionReceipt>>;
+      try {
+        tx = await pub.getTransaction({ hash: txHash });
+        rc = await pub.getTransactionReceipt({ hash: txHash });
+      } catch (e) {
+        if (e instanceof TransactionNotFoundError || e instanceof TransactionReceiptNotFoundError) return null;
+        throw e;
+      }
+      const head = await pub.getBlockNumber();
+      const confirmations = head >= rc.blockNumber ? Number(head - rc.blockNumber) + 1 : 0;
+      return { from: tx.from, to: tx.to ?? null, value: tx.value, status: rc.status, blockNumber: rc.blockNumber, confirmations, chainId: cfg.chainId };
+    },
   };
 }
 

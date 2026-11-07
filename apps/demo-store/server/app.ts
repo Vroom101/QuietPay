@@ -10,6 +10,7 @@ import { registerCustomerRefunds, setPrivateHeaders, type CustomerRefundConfig }
 import { createMerchantAuth, type MerchantAuthConfig } from "./merchant-auth.js";
 import { REDACTED_HEADERS } from "./customer-refunds.js";
 import { registerLedgerProxy } from "./ledger-proxy.js";
+import { registerGasTank, type GasSdk } from "./gas-tank.js";
 import { registerSubscriptions, type BillingMode } from "./subscriptions.js";
 
 /** The frozen merchant-SDK surface this server relies on. */
@@ -365,6 +366,10 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   registerLedgerProxy(app, {
     ledgerUrl: config.ledgerUrl, apiKey: config.apiKey, dashboardToken: config.refunds?.dashboardToken,
     ...(merchantAuth?.enabled ? { acceptSession: merchantAuth.isSession } : {}), ...(config.ledgerFetch ? { fetch: config.ledgerFetch } : {}),
+  });
+  registerGasTank(app, sdk as GasSdk, {
+    baseUrl: config.baseUrl, apiKey: config.apiKey, dashboardToken: config.refunds?.dashboardToken,
+    ...(merchantAuth?.enabled ? { acceptSession: merchantAuth.isSession } : {}), ...(config.subscriptionsFetch ? { fetch: config.subscriptionsFetch } : {}),
   });
   const subscriptions = registerSubscriptions(app, {
     baseUrl: config.baseUrl, apiKey: config.apiKey, merchantId: config.merchantId, payout: config.payout, webhookUrl: config.webhookUrl,

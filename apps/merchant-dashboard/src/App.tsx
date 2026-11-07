@@ -8,6 +8,7 @@ import { formatWbt } from "./lib/csv";
 import { BillingWorkspace } from "./BillingWorkspace";
 import { SubscriptionsPanel } from "./SubscriptionsPanel";
 import { AgentPayments } from "./AgentPayments";
+import { GasTank } from "./GasTank";
 import {
   useCallback,
   useEffect,
@@ -291,6 +292,7 @@ export function App() {
         {error && <p role="alert" className="md-notice">{error}</p>}
         {loading && <p role="status" className="md-notice">Loading orders…</p>}
         {(view === "Overview" || view === "Analytics") && <DashboardMetrics orders={periodOrders} demo={DEMO_MODE} />}
+        {!DEMO_MODE && (view === "Overview" || view === "Settings") && hasAccess && <GasTank merchantUrl={MERCHANT_URL} token={apiKey} />}
         {view === "Analytics" && <LedgerExport useFixtures={DEMO_MODE} merchantUrl={MERCHANT_URL} token={apiKey} />}
         {!DEMO_MODE && (view === "Analytics" || view === "Transactions") && hasAccess && <AgentPayments merchantUrl={MERCHANT_URL} token={apiKey} />}
         {!DEMO_MODE && view === "Billing" && hasAccess && <SubscriptionsPanel merchantUrl={MERCHANT_URL} token={apiKey} />}

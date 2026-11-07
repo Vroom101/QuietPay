@@ -1,6 +1,10 @@
 import { privateKeyToAccount } from "viem/accounts";
 import {
   ListOrdersResponse,
+  GasAccount,
+  GasTopUp,
+  CreditGasTopUpRequest,
+  CreditGasTopUpResponse,
   CreateOrderRequest,
   RefundContext,
   Refund,
@@ -21,7 +25,7 @@ import {
   WEBHOOK_MAX_TOLERANCE_SECONDS,
 } from "@quietpay/shared/webhook";
 
-export type { Order, WebhookEvent, Refund, RefundContext };
+export type { Order, WebhookEvent, Refund, RefundContext, GasAccount, GasTopUp, CreditGasTopUpResponse };
 export { WEBHOOK_SIGNATURE_HEADER };
 
 type Hex = `0x${string}`;
@@ -236,6 +240,29 @@ export { paywall, type PaywallOptions } from "./paywall.js";
 export async function listOrders(opts: { baseUrl: string; apiKey: string; fetch?: typeof fetch }): Promise<Order[]> {
   const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/orders`, { headers: { authorization: `Bearer ${opts.apiKey}` } });
   return (await parse(res, ListOrdersResponse)).orders;
+}
+
+/**
+ * Gas tank (merchant server only). The merchant's gas credit with the relayer: balance = credited top-ups minus the gas
+ * spent on their orders. Advisory only; a low or negative balance never blocks a payment.
+ */
+export async function getGasAccount(opts: { baseUrl: string; apiKey: string; fetch?: typeof fetch }): Promise<GasAccount> {
+  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/merchant/gas`, { headers: { authorization: `Bearer ${opts.apiKey}` } });
+  return parse(res, GasAccount);
+}
+
+/**
+ * Credits a top-up: native WBT sent from your registered payout wallet to the relayer address (see getGasAccount().relayer).
+ * The relayer verifies the transfer on chain; a transfer that is too fresh fails with code "topup_unconfirmed" (retry later).
+ */
+export async function creditGasTopUp(opts: { baseUrl: string; apiKey: string; txHash: string; fetch?: typeof fetch }): Promise<CreditGasTopUpResponse> {
+  const body = CreditGasTopUpRequest.parse({ txHash: opts.txHash });
+  const res = await (opts.fetch ?? fetch)(`${trim(opts.baseUrl)}/v1/merchant/gas/topups`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${opts.apiKey}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parse(res, CreditGasTopUpResponse);
 }
 
 export {

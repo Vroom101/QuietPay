@@ -88,6 +88,8 @@ const EnvSchema = z.object({
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   /** How often the reconciliation loop re-checks every broadcast, unresolved transaction. */
   RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
+  /** Confirmations a merchant's gas tank top-up transfer needs before it is credited. */
+  GAS_TOPUP_MIN_CONFIRMATIONS: z.coerce.number().int().min(1).max(1000).default(2),
 });
 
 export interface Config {
@@ -128,6 +130,8 @@ export interface Config {
   firstTimePayerLossCapPercent: number;
   maxNewPayersPerIpPerHour: number;
   trustProxyHops: number;
+  /** Confirmations a gas tank top-up needs before it is credited (GAS_TOPUP_MIN_CONFIRMATIONS, default 2). */
+  gasTopupMinConfirmations?: number;
 }
 
 /** Lower bound for TX_MAX_AGE_SECONDS: the longest authorization window (10 min). */
@@ -196,5 +200,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     firstTimePayerLossCapPercent: e.FIRST_TIME_PAYER_LOSS_CAP_PERCENT,
     maxNewPayersPerIpPerHour: e.MAX_NEW_PAYERS_PER_IP_PER_HOUR,
     trustProxyHops: e.TRUST_PROXY_HOPS,
+    gasTopupMinConfirmations: e.GAS_TOPUP_MIN_CONFIRMATIONS,
   };
 }
