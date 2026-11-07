@@ -6,6 +6,8 @@ fee in one atomic step.
 
 Built for ETHGlobal Mumbai 2026 (Whitechain: Operate and Scale tracks). **Testnet only.**
 
+**Developer docs:** [SDK guide](docs/sdk/README.md), [API reference](docs/sdk/api-reference.md), [widget](docs/sdk/widget.md).
+
 ## Status
 
 Quietpay targets the official Whitechain test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874 only.
@@ -43,7 +45,7 @@ Merchant server --createOrder--> Relayer ----- signed webhook ---> Merchant serv
   invalidates the signature. One receipt per (merchant, order).
 - `packages/shared`: zod schemas, error codes, typed-data builders, fixtures, mock relayer, generated ABI, token facts.
 - `packages/relayer`: Fastify service with a guard pipeline, nonce manager, SQLite and signed webhooks with retry.
-- `packages/merchant-sdk`: `createOrder`, `getOrder`, `verifyWebhook`, and a `refund` stub. The relayer refund API is not built yet.
+- `packages/merchant-sdk`: orders, webhooks, refunds, `createQuietPay({ billing })` with subscriptions and payment links, and the x402 `paywall()`. See the [SDK guide](docs/sdk/README.md).
 - `packages/widget`: Lit `<quietpay-checkout>` plus a React wrapper.
 - `apps/demo-store`, `apps/merchant-dashboard`: the demo shop and the orders view.
 
@@ -81,7 +83,7 @@ Test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` on chain 1874: 6 decimals
 - Official test USDT only, testnet only, contracts not audited. No INR conversion or production custody is claimed.
 - Refunds go to the payer key stored in the browser; if that browser key is lost the refund cannot be received there.
 - The operator pays gas on refunds and on any future x402 settlements. The flat relay fee is not market pricing.
-- x402 agent settlement is not built; a bare USDT transfer to the pay-to address is a `payto_transfer` deposit, not proof of an agent payment. Subscriptions are a roadmap item.
+- x402 agent payments settle through the facilitator (`packages/facilitator`, see `docs/b/build/x402-live.md`); a bare USDT transfer to the pay-to address without the facilitator is still only a `payto_transfer` deposit. Subscriptions are pay-per-period: each renewal is a new signed payment, nothing is pulled automatically.
 - The test USDT is a proxy token whose admin can pause it or blacklist addresses; a router payment would then revert.
 - The verifier proves consistency with chain data inside a declared range, as served by the RPC node(s) given. It does not prove completeness outside that range; pass `--from/--to/--min-confirmations` and compare its checkpoint out of band.
 - `net_usdt` can be negative (the relay fee is not returned on a full refund).

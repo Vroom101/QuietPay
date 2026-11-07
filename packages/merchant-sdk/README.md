@@ -65,6 +65,31 @@ for exactly that order and amount. If the order expires unpaid (after at most 24
 `past_due` and you can create a new renewal. A missed webhook is recovered from the order itself the next time you call
 `createRenewalOrder` or `sweep()`. Every renewal order issued for a period is remembered (`periodOrders`, at most 20): the relayer can still settle a failed or expired order late, so a `payment.settled` for any of them credits that period exactly once, and `payment.failed` only marks it `past_due`. If a second order of an already-paid period settles, it is not credited again and is listed in `duplicatePayments` so you can refund it. Due dates are the first due date plus whole periods, so a month-end billing day does not drift (Jan 31, Feb 28, Mar 31). Calls are serialised per subscription inside one process; if several processes share one database, implement the optional `SubscriptionStore.compareAndSetSubscription(prev, next)` so the SDK can detect and retry a lost race.
 
+Payment links (billing `"product"`, `"one_time"` or `"both"`): `qp.links.create / get / list / deactivate / checkout / applyWebhook`, and
+`qp.links.handleWebhook(raw)` which verifies a webhook and applies it to both subscriptions and links.
+
+## Install
+
+The package is not published to npm. Use it from this repository:
+
+```sh
+pnpm install                                   # in the repo root
+# inside the monorepo: "@quietpay/merchant-sdk": "workspace:*"
+# in your own project: build + pack, then install the tarball
+cd packages/merchant-sdk && pnpm pack --pack-destination /path/to/your-project   # runs the build first
+cd /path/to/your-project && pnpm add ./quietpay-merchant-sdk-0.1.0.tgz
+```
+
+Node 20 or newer.
+
+## Docs
+
+- [Developer guide](../../docs/sdk/README.md): quick start, billing models, payment links, subscriptions, refunds, webhooks, errors, security.
+- [API reference](../../docs/sdk/api-reference.md): every export with signatures.
+- [Widget guide](../../docs/sdk/widget.md): the browser checkout.
+
+## Build
+
 Build: `pnpm build` (ESM + CommonJS + type declarations in `dist/`, `@quietpay/shared` bundled in).
 Check the built package: `node scripts/check-dist.mjs`. The package is not published by any automation.
 
