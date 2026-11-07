@@ -7,7 +7,7 @@ import { fetchLedgerExport, ledgerRowCount, type LedgerExport as Ledger } from "
 
 /**
  * The on-chain ledger (every PaymentRouter event for this merchant, read from the chain by the QuietPay indexer), as a
- * CSV plus the metadata the independent verifier uses to re-derive it. Live mode fetches through the store server,
+ * CSV plus the metadata the ledger service's verify call uses to re-derive it from the chain. Live mode fetches through the store server,
  * which holds the merchant API key.
  */
 export function LedgerExport({ useFixtures, merchantUrl, token }: { useFixtures: boolean; merchantUrl?: string; token?: string }) {
@@ -39,8 +39,8 @@ export function LedgerExport({ useFixtures, merchantUrl, token }: { useFixtures:
         <div>
           <h2 id="ledger-title" className="font-semibold">On-chain ledger export</h2>
           <p className="mt-1 text-sm text-stone-600">
-            Every payment and refund for your store, read straight from the chain. Keep the metadata file: it lets anyone
-            re-check the CSV against the chain with the QuietPay verifier.
+            Every payment and refund for your store, read straight from the chain. Keep the metadata file: together with the
+            CSV it lets you re-check the export against the chain (the ledger service's verify call, about a minute).
           </p>
         </div>
         <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-700">{useFixtures ? "Synthetic sample" : live ? "Live from chain" : "Not connected"}</span>

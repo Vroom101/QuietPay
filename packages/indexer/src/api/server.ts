@@ -5,6 +5,9 @@ import { Indexer } from "./indexer.js";
 import { ExportMetaSchema } from "./model.js";
 import { verifyExport } from "./verifier.js";
 
+/** How long one /v1/ledger/verify request may stay open while it re-reads the chain. */
+export const VERIFY_TIMEOUT_MS = 10 * 60_000;
+
 export function buildServer(indexer: Indexer, apiKeys: Map<string, string>) {
   // 2 MiB covers an export verification upload; the timeouts stop slow clients holding sockets.
   const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024, requestTimeout: 30_000, connectionTimeout: 60_000 });
@@ -85,6 +88,9 @@ export function buildServer(indexer: Indexer, apiKeys: Map<string, string>) {
   app.post("/v1/ledger/verify", async (req, reply) => {
     const id = merchant(req, reply);
     if (!id) return reply;
+    // Verifying re-reads the logs of the whole exported block range from the chain, which can take minutes. The
+    // server-wide 60 s socket timeout is right for the fast routes; give only this authenticated route longer.
+    req.raw.socket?.setTimeout?.(VERIFY_TIMEOUT_MS);
     const body = z
       .object({ csv: z.string().max(1_500_000), meta: ExportMetaSchema })
       .strict()

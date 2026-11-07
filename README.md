@@ -37,7 +37,7 @@ Built for ETHGlobal Mumbai 2026 (Whitechain: Operate and Scale tracks). **Testne
 | **Merchants** | Hosted **payment links** (no website needed), one-time and reusable. A dashboard with revenue, refunds, customers, funnel, subscriptions and network gas covered. Partial and full **refunds**. **CSV exports**: transactions (optionally with gas) and an on-chain ledger. Wallet sign-in with MetaMask. |
 | **Developers** | A server SDK (`createQuietPay`) where you choose `product`, `subscription` or `both` at start-up. A checkout widget (React or web component). Signed webhooks. A reference store. |
 | **Agents** | x402 paid APIs: an agent pays per call with a signed authorization, the facilitator pays the gas. |
-| **Auditors** | An indexer that rebuilds the ledger from chain logs, and an independent verifier that checks the export against the chain. |
+| **Auditors** | An indexer that rebuilds the ledger from chain logs, a verify call that checks a downloaded export against the chain, and a standalone verifier for the indexer's CLI export. |
 
 ---
 
@@ -55,7 +55,7 @@ The demo uses no other token, never mints one, and never fakes funding on the pu
 | Payment link end to end | **Done**: merchant creates a 1 USDT link, customer pays, link shows Paid, second visit refused | `deploy/browser-paylink-real.mjs` |
 | Subscription end to end | **Done**: 1 USDT per month plan, first period paid, status Active, dashboard shows MRR | `deploy/browser-subscription-real.mjs` |
 | x402 agent payments | **Done**: two paid calls (0.01 and 0.02 USDT), the payer sent zero transactions | [quote tx](https://explorer.testnet.whitechain.io/tx/0xff8982448111b5cf95e738eaa10646c8ef090f91640e29320b52ed61047cf88a), [signal tx](https://explorer.testnet.whitechain.io/tx/0xd172e25a0cbac4a738d463047b4d765dd32bee0a8043182ca10a1c4bda9bd8f1), `docs/b/build/x402-live.md` |
-| Ledger export and verifier | **Done**: the live export re-derives from chain data | `docs/lead/ledger.md`, `docs/lead/verifier.md`, `deploy/browser-ledger-check.mjs` |
+| Ledger export and verification | **Done**: the dashboard download (27 rows at the last check) verified against the chain through the ledger service, and a changed amount was caught; the standalone verifier returned RESULT OK on a CLI export of the live chain (17 rows rebuilt from 40 events) | `docs/lead/ledger.md`, `docs/lead/verifier.md`, `deploy/browser-ledger-check.mjs` |
 | Hosted relayer | **Not done**: runs locally; `render.yaml` is ready (set `TRUST_PROXY_HOPS=1` behind a proxy, keep `0` without one) | |
 | Real MetaMask extension UI | **Not automated**: tests inject a wallet with the same signing methods | |
 
@@ -237,15 +237,28 @@ flowchart LR
   T[USDT Transfers to the x402 payTo] --> X
   X --> K[Ledger CSV + .meta.json event-journal-v1]
   K --> M[Merchant downloads from the dashboard]
-  M --> Y[Verifier]
-  Z[RPC node, and optionally a second node] --> Y
-  Y --> O{Rows match chain data in the declared block range?}
-  O -- yes --> OK[RESULT OK]
-  O -- no --> BAD[Mismatch report]
+  M --> Y[POST /v1/ledger/verify: CSV + metadata]
+  Z[RPC node] --> Y
+  Y --> O{Every row matches the chain in the declared block range?}
+  O -- yes --> OK[ok: true, all rows matched]
+  O -- no --> BAD[Altered, missing or extra rows named]
+  X --> CLI[Indexer CLI export]
+  CLI --> SV[Standalone verifier package]
+  Z --> SV
+  SV --> RES[RESULT OK or a mismatch report]
 ```
 
-The indexer and the verifier read chain data only. They never read the relayer's database, so anyone can recompute the
-same file from the same blocks.
+There are two checks, for two file layouts:
+
+- **Dashboard download** (layout `event-journal-v1`): send the CSV and its metadata to the ledger service's
+  `POST /v1/ledger/verify` (merchant API key). It re-reads the logs for the exported block range and names every altered,
+  missing or extra row. Reading about 70,000 blocks takes about a minute.
+- **Standalone verifier** (`packages/verifier`, command in `docs/lead/verifier.md`): an independent program that does not
+  use the indexer's code or database. It checks the file written by the indexer CLI (`export --from N --to M`), a
+  different layout from the dashboard download.
+
+Both read chain data only. Neither reads the relayer's database, so anyone can recompute the same file from the same
+blocks.
 
 ---
 
@@ -428,6 +441,7 @@ Read these before relying on anything here.
   than one transfer costs.
 
 **Ledger and verification**
+- The two ledger layouts are not unified: the standalone verifier does not accept the dashboard download (its statuses and `x402` source are different), and the ledger service's verify call uses the indexer's own chain reader rather than independent code.
 - The verifier proves consistency with chain data inside a declared range, as served by the RPC node(s) given. It does
   not prove completeness outside that range; pass `--from`, `--to` and `--min-confirmations` and compare its checkpoint
   out of band. `--rpc2` cross-checks ledger logs only.

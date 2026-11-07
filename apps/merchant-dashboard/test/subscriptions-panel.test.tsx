@@ -63,6 +63,21 @@ const sub = (over: object) => ({
   nextCharge: "2026-02-01T00:00:00Z", due: false, lastPaidOrderId: "ord_9", customer: "0x" + "22".repeat(20), createdAt: 1, ...over,
 });
 
+it("shows a dash instead of a misleading 0 while the subscriptions are still loading", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    await gate;
+    return url.endsWith("/plans") ? json({ plans: [] }) : json({ subscriptions: [sub({})] });
+  }));
+  await act(async () => root.render(<SubscriptionsPanel merchantUrl="/api/merchant" token="t" />));
+  expect(container.querySelector('[data-testid="subs-active"]')!.textContent).toBe("—");
+  expect(container.querySelector('[data-testid="subs-mrr"]')!.textContent).toBe("—");
+  release();
+  await flush();
+  expect(container.querySelector('[data-testid="subs-active"]')!.textContent).toBe("1");
+});
+
 it("renders plans, subscribers, status labels and summary", async () => {
   vi.stubGlobal("fetch", vi.fn(async (url: string) =>
     url.endsWith("/plans") ? json({ plans: [{ ...plan("5000000", "month"), name: "Pro", amount: "5.00" }] })

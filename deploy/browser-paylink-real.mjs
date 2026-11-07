@@ -1,8 +1,9 @@
 // REAL payment-link run in a browser against the stack from deploy/dev-stack.mjs (Whitechain Sepolia, official USDT).
-// It spends 1 test USDT, gaslessly:
+// It spends 1 test USDT, gaslessly (0.50 comes back through the refund):
 //   1. the merchant signs in to the dashboard with their wallet and creates a one-time 1 USDT payment link (Billing)
 //   2. a customer opens the link (no store, no cart), pays with their wallet and lands on the receipt
 //   3. the link shows as Paid in the dashboard, and opening it again says it was already paid
+//   4. the merchant refunds 0.50 USDT from the dashboard; the customer receipt shows 'Partially refunded'
 //   CHROME_PATH=<chrome.exe> node --env-file=<gitignored env> deploy/browser-paylink-real.mjs
 // Needs PAYER_PRIVATE_KEY, MERCHANT_PAYOUT_PRIVATE_KEY and RPC_URL. Nothing from the env is printed.
 import { createRequire } from "node:module";
@@ -81,6 +82,7 @@ try {
   await cust.page.getByRole("button", { name: /Pay with stablecoin/ }).click();
   await cust.page.getByTestId("pay-wallet").click({ timeout: 30_000 });
   await cust.page.waitForURL(/\/success\/0x[0-9a-f]{64}/i, { timeout: 150_000 });
+  const orderId = cust.page.url().match(/0x[0-9a-fA-F]{64}/)[0];
   await cust.page.getByRole("heading", { name: "Payment receipt" }).waitFor({ timeout: 120_000 }).then(
     () => check("customer paid and landed on the receipt", true),
     () => check("customer paid and landed on the receipt", false),
@@ -104,6 +106,27 @@ try {
     () => check("opening the one-time link again says it was already paid (no second charge)", true),
     () => check("opening the one-time link again says it was already paid (no second charge)", false),
   );
+
+  // 4. the merchant refunds half from the dashboard; the refund is paid on chain back to the customer
+  const order = async () => (await fetch(`${process.env.RELAYER_URL ?? "http://127.0.0.1:8790"}/v1/orders/${orderId}`)).json();
+  await mer.page.getByRole("button", { name: "Transactions", exact: true }).click();
+  const refundButton = mer.page.getByRole("button", { name: "Refund", exact: true }).first();
+  await refundButton.waitFor({ timeout: 30_000 });
+  await refundButton.click();
+  await mer.page.getByLabel("Refund amount (USDT)").fill("0.50");
+  await mer.page.getByRole("button", { name: "Review refund" }).click();
+  await mer.page.getByRole("button", { name: "Confirm refund" }).click();
+  let refunded = 0n;
+  for (let i = 0; i < 60 && refunded !== 500_000n; i++) { await new Promise((r) => setTimeout(r, 2000)); refunded = BigInt((await order()).refunded ?? "0"); }
+  check("merchant refunded 0.50 USDT from the dashboard and it settled on chain", refunded === 500_000n, `refunded ${refunded}`);
+  await cust.page.goto(`${STORE}/success/${orderId}`);
+  await cust.page.getByTestId("refund-status").getByText(/Partially refunded/).waitFor({ timeout: 60_000 }).then(
+    () => check("customer receipt shows 'Partially refunded'", true),
+    () => check("customer receipt shows 'Partially refunded'", false),
+  );
+  const finalUsdt = await usdt(payer.address);
+  check("customer is out exactly 0.50 USDT in the end (1.00 paid, 0.50 refunded) and still paid no gas", before.usdt - finalUsdt === 500_000n && (await nonce(payer.address)) === before.nonce, `${before.usdt - finalUsdt}`);
+  console.log(`order ${orderId}`);
   await cust.ctx.close(); await mer.ctx.close();
 } catch (e) {
   check("run completed without an unexpected error", false, String(e.message).replace(/https?:\/\/\S+/g, "<url>").slice(0, 240));

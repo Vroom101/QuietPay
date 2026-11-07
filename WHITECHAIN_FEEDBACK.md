@@ -27,7 +27,7 @@ test scripts), and we say how.
 - **Full payment cycle on the public testnet.** A 1.000000 USDT payment (0.05 relay fee, merchant received 0.95), a
   0.5 USDT refund, and later many more payments from a browser, all with a payer that held no usable WBT (see section 4).
 - **`eth_getLogs` and receipts are reliable.** Our indexer re-derives a merchant ledger purely from chain logs and an
-  independent verifier re-derived the same file from the chain. The first sync from the deploy block (about 59,000
+  independent verifier re-derived the same file from the chain (checked again on 2026-11-07: OK, 17 rows from 40 events). The first sync from the deploy block (about 59,000
   blocks at the time) finished in one to two minutes against the public RPC.
 - **Fast settlement.** Over our recorded payments the time from order creation to a settled receipt had a median of
   6 seconds and a 90th percentile of 7 seconds (small sample, a handful of live payments, measured from our relayer's

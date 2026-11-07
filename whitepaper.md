@@ -225,10 +225,16 @@ detected, not ignored). It writes an event-journal CSV and a metadata file namin
 confirmations and a hash of the event set. Net revenue per row is `value - fee - refunded`, which is negative after a full
 refund because the fee is kept.
 
-The **verifier** is a separate program that does not read the indexer's database or the relayer. Given the CSV, its
-metadata and an RPC (optionally a second one), it re-reads the logs for the declared range and checks every row and the
-event-set hash. It applies the same qualification guard (official token, qualifying router). Its result is a statement
-of consistency with chain data for that range, not a proof of completeness outside it.
+Two checks exist, for two file layouts. The merchant's dashboard download (`event-journal-v1`) is checked by the ledger
+service's verify call: given the CSV and its metadata it re-reads the logs for the exported block range and reports every
+altered, missing or extra row (on the live testnet it matched all 27 rows of a real export and caught a single changed
+amount). The standalone **verifier** is a separate program that does not read the indexer's database or the relayer: given
+the CSV written by the indexer's command-line export, its metadata and an RPC (optionally a second one), it re-reads the
+logs for the declared range and checks every row and the event-set hash, applying the same qualification guard (official
+token, qualifying router). On the live chain it returned OK for 17 rows rebuilt from 40 events. Either result is a
+statement of consistency with chain data for that range, not a proof of completeness outside it. The two layouts are not
+yet unified, and the ledger service's verify call shares the indexer's chain reader, so only the standalone verifier is
+independent code.
 
 ## 9. Security model
 
@@ -259,7 +265,7 @@ The merchant keeps its refund-signer key and API key private.
 | Forged webhook credits a link or subscription | Credit only for the exact issued order id and amount, after signature verification |
 | Double charge on a subscription period | One order per period under a lock; a late payment of an earlier order of the same period still credits it once; extras are recorded |
 | Spreadsheet formula injection from free text | Cell escaping unless the whole value is numeric |
-| Ledger tampering by the merchant | The verifier re-derives the ledger from chain logs |
+| Ledger tampering by the merchant | A verify call or the standalone verifier re-derives the ledger from chain logs and names any altered row |
 
 **How it was tested.** Tests were written before code: unit, integration, feature and attack tests, including a Foundry
 suite for the router (unit, invariants, fuzz, attack and fork tests). Adversarial rounds then wrote failing exploit tests

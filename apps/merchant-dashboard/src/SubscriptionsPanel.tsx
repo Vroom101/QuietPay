@@ -90,8 +90,8 @@ export function SubscriptionsPanel({ merchantUrl, token }: { merchantUrl: string
       {loading && <p role="status" className="mt-3 text-sm text-stone-600">Loading subscriptions…</p>}
 
       <dl className="my-4 flex flex-wrap gap-x-8 gap-y-2 text-sm">
-        <div><dt className="text-xs text-stone-600">Active subscribers</dt><dd data-testid="subs-active" className="font-medium tabular-nums">{active}</dd></div>
-        <div><dt className="text-xs text-stone-600">Monthly recurring revenue</dt><dd data-testid="subs-mrr" className="font-medium tabular-nums">{formatUsdt(mrrBase)} USDT</dd></div>
+        <div><dt className="text-xs text-stone-600">Active subscribers</dt><dd data-testid="subs-active" className="font-medium tabular-nums">{loading ? "—" : active}</dd></div>
+        <div><dt className="text-xs text-stone-600">Monthly recurring revenue</dt><dd data-testid="subs-mrr" className="font-medium tabular-nums">{loading ? "—" : `${formatUsdt(mrrBase)} USDT`}</dd></div>
       </dl>
 
       <form onSubmit={(e) => void submit(e)} className="flex flex-wrap items-end gap-3" aria-label="Create plan">

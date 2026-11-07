@@ -62,15 +62,16 @@ try {
   await mer.page.getByRole("button", { name: /Sign in with MetaMask/ }).click();
   await mer.page.getByTestId("wallet-chip").waitFor({ timeout: 30_000 });
   await mer.page.getByRole("button", { name: "Billing", exact: true }).click();
+  const planForm = mer.page.getByRole("form", { name: "Create plan" });
   const planName = `Live plan ${new Date().toISOString().slice(11, 19)}`;
   const links = () => mer.page.getByLabel("Signup link").evaluateAll((els) => els.map((e) => e.value));
-  await mer.page.getByRole("button", { name: "Create plan" }).waitFor({ timeout: 20_000 });
+  await planForm.getByRole("button", { name: "Create plan" }).waitFor({ timeout: 20_000 });
   await mer.page.waitForTimeout(1500); // let the existing plans load
   const known = new Set(await links());
-  await mer.page.getByLabel("Plan name").fill(planName);
-  await mer.page.getByLabel("Amount (USDT)").fill("1.00");
-  await mer.page.getByLabel("Interval").selectOption("month");
-  await mer.page.getByRole("button", { name: "Create plan" }).click();
+  await planForm.getByLabel("Plan name").fill(planName);
+  await planForm.getByLabel("Amount (USDT)").fill("1.00");
+  await planForm.getByLabel("Interval").selectOption("month");
+  await planForm.getByRole("button", { name: "Create plan" }).click();
   let url;
   for (let i = 0; i < 40 && !url; i++) { url = (await links()).find((v) => /\/subscribe\//.test(v) && !known.has(v)); if (!url) await mer.page.waitForTimeout(500); }
   check("merchant created a 1 USDT / month plan and got a signup link", !!url, url);
@@ -101,6 +102,7 @@ try {
   await mer.page.reload();
   await mer.page.getByRole("button", { name: "Billing", exact: true }).click();
   await mer.page.getByTestId("subs-active").waitFor({ timeout: 20_000 });
+  await mer.page.getByText("Loading subscriptions").waitFor({ state: "hidden", timeout: 20_000 }).catch(() => {});
   const active = Number(await mer.page.getByTestId("subs-active").textContent());
   const mrr = await mer.page.getByTestId("subs-mrr").textContent();
   check("dashboard counts the active subscriber and shows MRR", active >= 1 && /^\s*[1-9]/.test(mrr ?? ""), `active ${active}, MRR ${mrr}`);
