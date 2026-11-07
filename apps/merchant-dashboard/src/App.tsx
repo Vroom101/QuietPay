@@ -8,6 +8,7 @@ import { formatWbt } from "./lib/csv";
 import { BillingWorkspace } from "./BillingWorkspace";
 import { SubscriptionsPanel } from "./SubscriptionsPanel";
 import { AgentPayments } from "./AgentPayments";
+import { Analytics } from "./Analytics";
 import {
   useCallback,
   useEffect,
@@ -290,7 +291,8 @@ export function App() {
         {DEMO_MODE && view === "Settings" && <div className="md-glass md-access"><p>This workspace shows payments recorded by the demo storefront. Connect the merchant server to see live orders.</p><button type="button" onClick={disconnect}>Sign out</button></div>}
         {error && <p role="alert" className="md-notice">{error}</p>}
         {loading && <p role="status" className="md-notice">Loading orders…</p>}
-        {(view === "Overview" || view === "Analytics") && <DashboardMetrics orders={periodOrders} demo={DEMO_MODE} />}
+        {view === "Overview" && <DashboardMetrics orders={periodOrders} demo={DEMO_MODE} />}
+        {view === "Analytics" && <Analytics orders={orders} range={range} demo={DEMO_MODE} merchantUrl={MERCHANT_URL} token={apiKey} />}
         {view === "Analytics" && <LedgerExport useFixtures={DEMO_MODE} merchantUrl={MERCHANT_URL} token={apiKey} />}
         {!DEMO_MODE && (view === "Analytics" || view === "Transactions") && hasAccess && <AgentPayments merchantUrl={MERCHANT_URL} token={apiKey} />}
         {!DEMO_MODE && view === "Billing" && hasAccess && <SubscriptionsPanel merchantUrl={MERCHANT_URL} token={apiKey} />}

@@ -77,7 +77,7 @@ export function buildMetrics(orders: DashboardOrder[], demo: boolean): Metric[] 
   ];
 }
 
-export function DashboardMetrics({ orders, demo }: { orders: DashboardOrder[]; demo: boolean }) {
+export function DashboardMetrics({ orders, demo, charts = "overview" }: { orders: DashboardOrder[]; demo: boolean; charts?: "overview" | "none" }) {
   const metrics = buildMetrics(orders, demo);
   const monetary = orders.length > 0 && canReportMoney(orders);
   const paid = orders.filter(paidOrder);
@@ -97,14 +97,6 @@ export function DashboardMetrics({ orders, demo }: { orders: DashboardOrder[]; d
   const y = (value: bigint) => 16 + 128 * (high - Number(value) / unit) / (high - low);
   const x = (index: number) => days.length === 1 ? 270 : 18 + 504 * index / (days.length - 1);
 
-  let cursor = 0;
-  const statuses = OrderStatus.options.map((status, index) => {
-    const count = orders.filter((order) => order.status === status).length;
-    const start = cursor;
-    cursor += orders.length ? 100 * count / orders.length : 0;
-    return { status, count, color: colors[index], stop: `${colors[index]} ${start}% ${cursor}%` };
-  });
-  const stops = statuses.filter(({ count }) => count).map(({ stop }) => stop);
   return (
     <>
       <div className="md-metrics">
@@ -117,7 +109,7 @@ export function DashboardMetrics({ orders, demo }: { orders: DashboardOrder[]; d
         ))}
       </div>
       {orders.length > 0 && !monetary && <p className="md-notice">Revenue requires a single settlement token and complete refund amounts.</p>}
-      <div className="md-charts">
+      {charts === "overview" && <div className="md-charts md-charts-one">
         <section className="md-glass md-chart" aria-labelledby="revenue-title">
           <h2 id="revenue-title">Revenue over time</h2>
           <div className="md-legend"><span><i style={{ background: "#145ed6" }} />Gross payments</span><span><i style={{ background: "#138453" }} />{demo ? "After refunds" : "Net revenue"}</span></div>
@@ -135,14 +127,28 @@ export function DashboardMetrics({ orders, demo }: { orders: DashboardOrder[]; d
             <details className="md-chart-data"><summary>View daily totals (UTC)</summary><ul>{days.map(([date, point]) => <li key={date}>{date} · Gross {displayUsdt(point.gross)} USDT · Net {displayUsdt(point.net)} USDT</li>)}</ul></details>
           </> : <p className="md-empty">Revenue will appear when reportable payments are available.</p>}
         </section>
-        <section className="md-glass md-chart" aria-labelledby="status-title">
-          <h2 id="status-title">Payment status breakdown</h2>
-          <div className="md-status-chart">
-            <div className="md-donut" aria-hidden="true" style={{ background: stops.length ? `conic-gradient(${stops.join(", ")})` : "#bad1e4" }}><span>{orders.length}<small>orders</small></span></div>
-            <ul>{statuses.map(({ status, count, color }) => <li key={status}><i style={{ background: color }} /><span>{STATUS_LABELS[status] ?? status.replace(/_/g, " ")}</span><strong>{count}</strong></li>)}</ul>
-          </div>
-        </section>
-      </div>
+      </div>}
     </>
+  );
+}
+
+/** Payment status donut with legend (moved from Overview to Analytics). */
+export function StatusBreakdown({ orders }: { orders: DashboardOrder[] }) {
+  let cursor = 0;
+  const statuses = OrderStatus.options.map((status, index) => {
+    const count = orders.filter((order) => order.status === status).length;
+    const start = cursor;
+    cursor += orders.length ? 100 * count / orders.length : 0;
+    return { status, count, color: colors[index], stop: `${colors[index]} ${start}% ${cursor}%` };
+  });
+  const stops = statuses.filter(({ count }) => count).map(({ stop }) => stop);
+  return (
+    <section className="md-glass md-chart" aria-labelledby="status-title">
+      <h2 id="status-title">Payment status breakdown</h2>
+      <div className="md-status-chart">
+        <div className="md-donut" aria-hidden="true" style={{ background: stops.length ? `conic-gradient(${stops.join(", ")})` : "#bad1e4" }}><span>{orders.length}<small>orders</small></span></div>
+        <ul>{statuses.map(({ status, count, color }) => <li key={status}><i style={{ background: color }} /><span>{STATUS_LABELS[status] ?? status.replace(/_/g, " ")}</span><strong>{count}</strong></li>)}</ul>
+      </div>
+    </section>
   );
 }
