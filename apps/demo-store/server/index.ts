@@ -50,6 +50,8 @@ const app = buildApp(sdk, {
   webhookSecret,
   billing: billingEnv as "one_time" | "subscription" | "both",
   subscriptionsFile: process.env.QUIETPAY_SUBSCRIPTIONS_FILE || undefined,
+  paymentLinksFile: process.env.QUIETPAY_PAYMENT_LINKS_FILE || undefined,
+  merchantName: process.env.QUIETPAY_MERCHANT_NAME || undefined,
   webhookUrl: process.env.QUIETPAY_WEBHOOK_URL || undefined,
   // Paid orders and processed webhook ids survive restarts here.
   stateFile: process.env.QUIETPAY_STATE_FILE || ".data/demo-store-state.json",

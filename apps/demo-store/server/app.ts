@@ -11,6 +11,7 @@ import { createMerchantAuth, type MerchantAuthConfig } from "./merchant-auth.js"
 import { REDACTED_HEADERS } from "./customer-refunds.js";
 import { registerLedgerProxy } from "./ledger-proxy.js";
 import { registerSubscriptions, type BillingMode } from "./subscriptions.js";
+import { registerPaymentLinks } from "./payment-links.js";
 
 /** The frozen merchant-SDK surface this server relies on. */
 export type MerchantSdk = Pick<typeof SdkApi, "createOrder" | "getOrder" | "verifyWebhook"> & Partial<RefundSdk> & { createQuietPay?: typeof SdkApi.createQuietPay };
@@ -47,6 +48,10 @@ export interface StoreConfig extends Partial<Pick<CustomerRefundConfig, "custome
   billing?: BillingMode;
   /** JSON file that persists subscription plans and subscriptions. In memory when omitted. */
   subscriptionsFile?: string;
+  /** JSON file that persists payment links. In memory when omitted. */
+  paymentLinksFile?: string;
+  /** Merchant name shown on the hosted pay page (QUIETPAY_MERCHANT_NAME). */
+  merchantName?: string;
   /** Test hook: fetch used by the subscription client to reach the relayer. */
   subscriptionsFetch?: typeof fetch;
   /** Max POST /api/checkout calls per IP per window (default 20). */
@@ -287,6 +292,13 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
             seenEvents.delete(event.id);
             return reply.code(500).send({ error: "could not record subscription payment" });
           }
+          try {
+            await links.applyWebhook(event);
+          } catch (e) {
+            app.log.error(e);
+            seenEvents.delete(event.id);
+            return reply.code(500).send({ error: "could not record payment link payment" });
+          }
           paid.set(orderId.toLowerCase(), {
             orderId: order.id,
             amount: order.amount,
@@ -369,6 +381,13 @@ export function buildApp(sdk: MerchantSdk, config: StoreConfig) {
   const subscriptions = registerSubscriptions(app, {
     baseUrl: config.baseUrl, apiKey: config.apiKey, merchantId: config.merchantId, payout: config.payout, webhookUrl: config.webhookUrl,
     billing: config.billing, subscriptionsFile: config.subscriptionsFile, dashboardToken: config.refunds?.dashboardToken,
+    ...(merchantAuth?.enabled ? { acceptSession: merchantAuth.isSession } : {}),
+    sdk, ...(config.subscriptionsFetch ? { fetch: config.subscriptionsFetch } : {}),
+    limiter: checkoutLimiter, readLimiter, customer, log: app.log,
+  });
+  const links = registerPaymentLinks(app, {
+    baseUrl: config.baseUrl, apiKey: config.apiKey, merchantId: config.merchantId, payout: config.payout, webhookUrl: config.webhookUrl,
+    billing: config.billing, paymentLinksFile: config.paymentLinksFile, merchantName: config.merchantName, dashboardToken: config.refunds?.dashboardToken,
     ...(merchantAuth?.enabled ? { acceptSession: merchantAuth.isSession } : {}),
     sdk, ...(config.subscriptionsFetch ? { fetch: config.subscriptionsFetch } : {}),
     limiter: checkoutLimiter, readLimiter, customer, log: app.log,

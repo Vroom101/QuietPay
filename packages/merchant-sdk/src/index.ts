@@ -241,6 +241,10 @@ export async function listOrders(opts: { baseUrl: string; apiKey: string; fetch?
 export {
   createQuietPay,
   memorySubscriptionStore,
+  memoryPaymentLinkStore,
+  type PaymentLink,
+  type PaymentLinkStatus,
+  type PaymentLinkStore,
   addInterval,
   QuietpayConfigError,
   type QuietPayConfig,

@@ -327,3 +327,6 @@
   .store-header { gap: 4px; }
   .store-actions .icon-link { width: 27px; }
 }
+
+/* Payment links are sent to customers of merchants without a website: show only the payment gateway. */
+.store-paylink-shell .store-header { display: none; }

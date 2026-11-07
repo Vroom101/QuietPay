@@ -90,7 +90,7 @@ start("store", "apps/demo-store", ["--import", "tsx", "server/index.ts"], {
   // MERCHANT_WALLETS=0xYourMetaMaskAddress[,0x...] in the env file to allow your own.
   ...(process.env.MERCHANT_WALLETS ? { QUIETPAY_MERCHANT_WALLETS: process.env.MERCHANT_WALLETS } : {}),
   QUIETPAY_LEDGER_URL: `http://127.0.0.1:${LEDGER_PORT}`,
-  QUIETPAY_BILLING: process.env.QUIETPAY_BILLING || "both", QUIETPAY_SUBSCRIPTIONS_FILE: resolve(state, "store-subscriptions.json"),
+  QUIETPAY_BILLING: process.env.QUIETPAY_BILLING || "both", QUIETPAY_SUBSCRIPTIONS_FILE: resolve(state, "store-subscriptions.json"), QUIETPAY_PAYMENT_LINKS_FILE: resolve(state, "store-payment-links.json"),
   QUIETPAY_AUTH_DOMAIN: "localhost:5174", QUIETPAY_AUTH_URI: "http://localhost:5174",
 });
 

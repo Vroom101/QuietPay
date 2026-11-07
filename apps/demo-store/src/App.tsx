@@ -8,6 +8,7 @@ import { Cart } from "./pages/Cart";
 import { Success } from "./pages/Success";
 import { Orders } from "./pages/Orders";
 import { InvoicePage, SubscribePage, SubscriptionPage } from "./pages/Billing";
+import { PayLinkPage } from "./pages/PayLink";
 import { Landing, ProductPage } from "./pages/Landing";
 
 function loadSaved(): string[] {
@@ -24,7 +25,7 @@ export function App() {
   const [saved, setSaved] = useState(loadSaved);
   const location = useLocation();
   const view = new URLSearchParams(location.search).get("view");
-  const isCheckout = location.pathname === "/checkout" || location.pathname.startsWith("/checkout/invoice/");
+  const isCheckout = location.pathname === "/checkout" || location.pathname.startsWith("/pay/") || location.pathname.startsWith("/checkout/invoice/");
   const isPaymentRoute = isCheckout || location.pathname.startsWith("/success/") || location.pathname === "/orders";
 
   useEffect(() => {
@@ -49,7 +50,7 @@ export function App() {
   }
 
   return (
-    <div className={isCheckout ? "store-shell store-checkout-shell" : "store-shell"}>
+    <div className={location.pathname.startsWith("/pay/") ? "store-shell store-checkout-shell store-paylink-shell" : isCheckout ? "store-shell store-checkout-shell" : "store-shell"}>
       <header className="store-header">
         <nav className="store-nav" aria-label="Shop">
           <Link to="/shop#catalog">Catalog</Link>
@@ -73,6 +74,7 @@ export function App() {
           <Route path="/invoice/:id" element={<InvoicePage />} />
           <Route path="/subscribe/:id" element={<SubscribePage />} />
           <Route path="/subscription/:id" element={<SubscriptionPage />} />
+          <Route path="/pay/:id" element={<PayLinkPage />} />
           <Route path="/success/:orderId" element={<Success />} />
           <Route path="/orders" element={<Orders />} />
         </Routes>

@@ -110,6 +110,54 @@ export function memorySubscriptionStore(): SubscriptionStore {
   };
 }
 
+export type PaymentLinkStatus = "active" | "paid" | "deactivated";
+
+/** A reusable (or single-use) pay page: each customer visit gets a fresh checkout order for the same amount. */
+export interface PaymentLink {
+  id: string;
+  /** 1-80 characters. */
+  title: string;
+  /** At most 280 characters. */
+  description?: string;
+  /** USDT base units, positive integer. */
+  amount: string;
+  singleUse: boolean;
+  status: PaymentLinkStatus;
+  /** Verified payments credited to this link. */
+  paidCount: number;
+  /** Unix seconds; checkout is refused from this moment on. */
+  expiresAt?: number;
+  createdAt: number;
+  /** Checkout orders issued for this link (last 50). Only these can credit it. */
+  orderIds: string[];
+  /** Orders that were credited (last 50). A repeat webhook for one of these is ignored. */
+  paidOrderIds: string[];
+  lastPaidOrderId?: string;
+  lastPaidAt?: number;
+  /** Orders that settled after a single-use link was already paid: the customer paid twice. Refund these. */
+  duplicatePayments?: string[];
+}
+
+/** Where payment links are kept. The default is in memory; give your database-backed one in production. */
+export interface PaymentLinkStore {
+  getLink(id: string): PaymentLink | undefined | Promise<PaymentLink | undefined>;
+  putLink(link: PaymentLink): void | Promise<void>;
+  listLinks(): PaymentLink[] | Promise<PaymentLink[]>;
+  /** OPTIONAL atomic write (see SubscriptionStore.compareAndSetSubscription): store `next` only if the stored link still equals `prev`. Required when several processes share a database. */
+  compareAndSetLink?(prev: PaymentLink, next: PaymentLink): boolean | Promise<boolean>;
+}
+
+const cloneLink = (l: PaymentLink): PaymentLink => ({ ...l, orderIds: [...l.orderIds], paidOrderIds: [...l.paidOrderIds], ...(l.duplicatePayments ? { duplicatePayments: [...l.duplicatePayments] } : {}) });
+
+export function memoryPaymentLinkStore(): PaymentLinkStore {
+  const links = new Map<string, PaymentLink>();
+  return {
+    getLink: (id) => (links.has(id) ? cloneLink(links.get(id)!) : undefined),
+    putLink: (l) => void links.set(l.id, cloneLink(l)),
+    listLinks: () => [...links.values()].map(cloneLink),
+  };
+}
+
 export interface QuietPayConfig {
   baseUrl: string;
   /** Server side only. */
@@ -123,6 +171,9 @@ export interface QuietPayConfig {
   subscriptionStore?: SubscriptionStore;
   /** Lifetime of a renewal order in seconds: the subscriber's window to pay. Default and maximum 86400 (the relayer's order limit). */
   renewalExpiresInSeconds?: number;
+  paymentLinkStore?: PaymentLinkStore;
+  /** Lifetime of a payment-link checkout order in seconds. Default 1800, 60..86400. */
+  linkCheckoutExpiresInSeconds?: number;
   fetch?: typeof fetch;
   /** Unix seconds; for tests. */
   now?: () => number;
@@ -133,6 +184,8 @@ const INTERVALS: readonly Interval[] = ["day", "week", "month", "year"];
 const AMOUNT = /^[1-9]\d{0,30}$/;
 const SAFE_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 const REF = /^sub:([A-Za-z0-9_.:-]{1,64}):(\d{1,9})$/;
+const LINK_REF = /^link:([A-Za-z0-9_.:-]{1,64}):(\d{1,9})$/;
+const MAX_LINK_EXPIRY = 90 * 86400;
 const MAX_PERIOD_ORDERS = 20;
 const MAX_HISTORY = 50;
 const CAS_RETRIES = 5;
@@ -173,6 +226,9 @@ export function createQuietPay(config: QuietPayConfig) {
   const store = config.subscriptionStore ?? memorySubscriptionStore();
   const renewalTtl = config.renewalExpiresInSeconds ?? 86400;
   if (!Number.isInteger(renewalTtl) || renewalTtl < 60 || renewalTtl > 86400) throw new QuietpayConfigError("renewalExpiresInSeconds: 60-86400");
+  const linkStore = config.paymentLinkStore ?? memoryPaymentLinkStore();
+  const linkTtl = config.linkCheckoutExpiresInSeconds ?? 1800;
+  if (!Number.isInteger(linkTtl) || linkTtl < 60 || linkTtl > 86400) throw new QuietpayConfigError("linkCheckoutExpiresInSeconds: 60-86400");
   const common = { baseUrl: config.baseUrl, apiKey: config.apiKey, ...(config.fetch ? { fetch: config.fetch } : {}) };
   const need = (on: boolean, what: string) => {
     if (!on) throw new QuietpayConfigError(`${what} is turned off: this client was created with billing "${billing}"`);
@@ -435,6 +491,129 @@ export function createQuietPay(config: QuietPayConfig) {
     },
   };
 
+  /** Read-modify-write one link; fn returns the new value or undefined for "no change". Uses compare-and-set when the store has it. */
+  async function updateLink(id: string, fn: (cur: PaymentLink) => PaymentLink | undefined): Promise<PaymentLink | undefined> {
+    for (let i = 0; i < CAS_RETRIES; i++) {
+      const cur = await linkStore.getLink(id);
+      if (!cur) return undefined;
+      const next = fn(cur);
+      if (!next) return cur;
+      if (!linkStore.compareAndSetLink) {
+        await linkStore.putLink(next);
+        return next;
+      }
+      if (await linkStore.compareAndSetLink(cur, next)) return next;
+    }
+    throw new QuietpayConfigError(`Payment link ${id} is being changed concurrently; try again`);
+  }
+  const lockLink = <T>(id: string, fn: () => Promise<T>) => locked(`link:${id}`, fn);
+  async function mustLink(id: string): Promise<PaymentLink> {
+    const l = await linkStore.getLink(id);
+    if (!l) throw new QuietpayConfigError(`Unknown payment link ${id}`);
+    return l;
+  }
+
+  async function applyLinkEvent(event: WebhookEvent): Promise<PaymentLink | undefined> {
+    const m = LINK_REF.exec(event.data.reference ?? "");
+    if (!m || event.type !== "payment.settled" || low(event.data.merchantId) !== low(config.merchantId)) return undefined;
+    const link = await linkStore.getLink(m[1]!);
+    if (!link || !has(link.orderIds, event.data.orderId) || event.data.amount !== link.amount) return undefined;
+    const orderId = event.data.orderId;
+    if (has(link.paidOrderIds, orderId) || has(link.duplicatePayments, orderId)) return undefined; // replay
+    return updateLink(link.id, (cur) => {
+      if (!has(cur.orderIds, orderId) || has(cur.paidOrderIds, orderId) || has(cur.duplicatePayments, orderId)) return undefined;
+      if (cur.singleUse && cur.paidCount > 0) return { ...cur, duplicatePayments: tail([...(cur.duplicatePayments ?? []), orderId]) };
+      return {
+        ...cur,
+        paidCount: cur.paidCount + 1,
+        paidOrderIds: tail([...cur.paidOrderIds, orderId]),
+        lastPaidOrderId: orderId,
+        lastPaidAt: event.createdAt,
+        status: cur.singleUse && cur.status === "active" ? "paid" : cur.status,
+      };
+    });
+  }
+
+  const links = {
+    async create(p: { title: string; amount: string; description?: string; singleUse?: boolean; expiresInSeconds?: number; id?: string }): Promise<PaymentLink> {
+      need(oneTime, "Payment links");
+      const id = p.id ?? randomId("link_");
+      if (!SAFE_ID.test(id)) throw new QuietpayConfigError("link id: 1-64 of A-Z a-z 0-9 _ . : -");
+      const title = typeof p.title === "string" ? p.title.trim() : "";
+      if (!title || title.length > 80) throw new QuietpayConfigError("link title: 1-80 characters");
+      if (typeof p.amount !== "string" || !AMOUNT.test(p.amount)) throw new QuietpayConfigError("link amount: positive integer USDT base units, e.g. \"5000000\" for 5 USDT");
+      const description = p.description?.trim();
+      if (p.description !== undefined && (typeof p.description !== "string" || p.description.length > 280)) throw new QuietpayConfigError("link description: at most 280 characters");
+      if (p.singleUse !== undefined && typeof p.singleUse !== "boolean") throw new QuietpayConfigError("singleUse must be a boolean");
+      if (p.expiresInSeconds !== undefined && (!Number.isInteger(p.expiresInSeconds) || p.expiresInSeconds < 60 || p.expiresInSeconds > MAX_LINK_EXPIRY)) throw new QuietpayConfigError("link expiresInSeconds: 60 to 90 days");
+      if (await linkStore.getLink(id)) throw new QuietpayConfigError(`Payment link ${id} already exists`);
+      const t = now();
+      const link: PaymentLink = {
+        id, title, ...(description ? { description } : {}), amount: p.amount, singleUse: p.singleUse ?? true, status: "active", paidCount: 0,
+        ...(p.expiresInSeconds !== undefined ? { expiresAt: t + p.expiresInSeconds } : {}), createdAt: t, orderIds: [], paidOrderIds: [],
+      };
+      await linkStore.putLink(link);
+      return link;
+    },
+    async get(id: string): Promise<PaymentLink | undefined> {
+      need(oneTime, "Payment links");
+      return linkStore.getLink(id);
+    },
+    /** Newest first. */
+    async list(): Promise<PaymentLink[]> {
+      need(oneTime, "Payment links");
+      return [...(await linkStore.listLinks())].sort((a, b) => b.createdAt - a.createdAt);
+    },
+    /** Stops new checkouts. Orders already issued can still be paid and are still credited. */
+    async deactivate(id: string): Promise<PaymentLink> {
+      need(oneTime, "Payment links");
+      return lockLink(id, async () => {
+        await mustLink(id);
+        return (await updateLink(id, (cur) => (cur.status === "deactivated" ? undefined : { ...cur, status: "deactivated" })))!;
+      });
+    },
+    /**
+     * Opens a checkout order for the link amount. Several open orders per link are fine (customers retry); only a
+     * verified payment.settled for one of them credits the link. Reference: "link:<id>:<n>".
+     */
+    async checkout(id: string): Promise<{ link: PaymentLink; order: Order }> {
+      need(oneTime, "Payment links");
+      return lockLink(id, async () => {
+        const link = await mustLink(id);
+        if (link.status === "deactivated") throw new QuietpayConfigError(`Payment link ${id} is deactivated`);
+        if (link.singleUse && (link.status === "paid" || link.paidCount > 0)) throw new QuietpayConfigError(`Payment link ${id} is single-use and has already been paid`);
+        if (link.expiresAt !== undefined && now() >= link.expiresAt) throw new QuietpayConfigError(`Payment link ${id} has expired`);
+        const order = await createOrder({
+          ...common,
+          merchantId: config.merchantId,
+          amount: link.amount,
+          reference: `link:${link.id}:${link.orderIds.length + 1}`,
+          expiresInSeconds: linkTtl,
+          ...(config.webhookUrl ? { webhookUrl: config.webhookUrl } : {}),
+        });
+        const next = await updateLink(id, (cur) => ({ ...cur, orderIds: tail([...cur.orderIds.filter((x) => low(x) !== low(order.id)), order.id]) }));
+        return { link: next ?? link, order };
+      });
+    },
+    /** Feeds a VERIFIED webhook event in. Returns the link it changed (credited or duplicate recorded), else undefined. */
+    async applyWebhook(event: WebhookEvent): Promise<PaymentLink | undefined> {
+      need(oneTime, "Payment links");
+      const m = LINK_REF.exec(event.data.reference ?? "");
+      if (!m) return undefined;
+      return lockLink(m[1]!, () => applyLinkEvent(event));
+    },
+    /** Verify + apply to subscriptions and links from the raw webhook request. Needs webhookSecret. */
+    async handleWebhook(raw: Omit<VerifyWebhookOptions, "secret">) {
+      if (!config.webhookSecret) throw new QuietpayConfigError("webhookSecret is required for handleWebhook");
+      const event = verifyWebhook({ ...raw, secret: config.webhookSecret });
+      return {
+        event,
+        subscription: recurring ? await subscriptions.applyWebhook(event) : undefined,
+        link: oneTime ? await links.applyWebhook(event) : undefined,
+      };
+    },
+  };
+
   return {
     billing,
     supports: { oneTime, subscription: recurring },
@@ -442,6 +621,7 @@ export function createQuietPay(config: QuietPayConfig) {
     createOrder(o: { amount: string; reference?: string; expiresInSeconds?: number }) {
       need(oneTime, "One-time payments");
       if (o.reference && REF.test(o.reference)) throw new QuietpayConfigError("References starting with sub: are reserved for subscription renewals");
+      if (o.reference && LINK_REF.test(o.reference)) throw new QuietpayConfigError("References starting with link: are reserved for payment links");
       return createOrder({ ...common, merchantId: config.merchantId, ...o, ...(config.webhookUrl ? { webhookUrl: config.webhookUrl } : {}) });
     },
     getOrder: (orderId: string) => getOrder({ baseUrl: config.baseUrl, orderId, ...(config.fetch ? { fetch: config.fetch } : {}) }),
@@ -452,6 +632,8 @@ export function createQuietPay(config: QuietPayConfig) {
     },
     /** Present for every client; each method throws QuietpayConfigError unless billing includes subscriptions. */
     subscriptions,
+    /** Payment links; each method throws QuietpayConfigError unless billing includes one-time payments. */
+    links,
   };
 }
 

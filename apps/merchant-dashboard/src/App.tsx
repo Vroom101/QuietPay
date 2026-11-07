@@ -7,6 +7,7 @@ import { TransactionsExport } from "./TransactionsExport";
 import { formatWbt } from "./lib/csv";
 import { BillingWorkspace } from "./BillingWorkspace";
 import { SubscriptionsPanel } from "./SubscriptionsPanel";
+import { PaymentLinksPanel } from "./PaymentLinksPanel";
 import { AgentPayments } from "./AgentPayments";
 import { Analytics } from "./Analytics";
 import {
@@ -277,7 +278,7 @@ export function App() {
             <button className="md-glass" disabled={!hasAccess || loading} onClick={() => void load()}>Refresh</button>
           </div>
         </header>
-        <div className="md-heading"><h1>{view}</h1><p>{view === "Overview" ? (DEMO_MODE ? `${demoSession} · Payments at a glance` : "Your payments at a glance") : view === "Refunds" ? "Review refunds and manage eligible payments." : (DEMO_MODE ? demoSession : merchantName) + " merchant workspace"}</p></div>
+        <div className="md-heading"><h1>{view}</h1><p>{view === "Overview" ? (DEMO_MODE ? `${demoSession} · Payments at a glance` : "Your payments at a glance") : view === "Refunds" ? "Review refunds and manage eligible payments." : (DEMO_MODE ? demoSession : merchantName) + " merchant workspace"}</p>{!DEMO_MODE && view === "Overview" && hasAccess && <button type="button" className="md-glass" onClick={() => changeView("Billing")}>Create payment link</button>}</div>
         {!DEMO_MODE && (!hasAccess || view === "Settings") && (
           <form onSubmit={saveKey} className="md-glass md-access">
             <label>Dashboard access token<input type="password" value={draft} onChange={(e) => setDraft(e.target.value)} autoComplete="off" required /></label>
@@ -295,6 +296,7 @@ export function App() {
         {view === "Analytics" && <Analytics orders={orders} range={range} demo={DEMO_MODE} merchantUrl={MERCHANT_URL} token={apiKey} />}
         {view === "Analytics" && <LedgerExport useFixtures={DEMO_MODE} merchantUrl={MERCHANT_URL} token={apiKey} />}
         {!DEMO_MODE && (view === "Analytics" || view === "Transactions") && hasAccess && <AgentPayments merchantUrl={MERCHANT_URL} token={apiKey} />}
+        {!DEMO_MODE && view === "Billing" && hasAccess && <PaymentLinksPanel merchantUrl={MERCHANT_URL} token={apiKey} />}
         {!DEMO_MODE && view === "Billing" && hasAccess && <SubscriptionsPanel merchantUrl={MERCHANT_URL} token={apiKey} />}
         {DEMO_MODE && (view === "Billing" || view === "Refunds") && <BillingWorkspace key={view} onRefundRecorded={load} />}
         {showTable && <section className="md-glass md-orders" aria-labelledby="orders-title">
