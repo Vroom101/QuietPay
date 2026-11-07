@@ -1,0 +1,30 @@
+# Netlify site 1 of 2: the store and the hosted payment pages (customers).
+# In Netlify set  Base directory = apps/demo-store  (this file is picked up from there).
+# Public VITE_* variables are set in the Netlify UI, never here: VITE_RELAYER_URL, VITE_MERCHANT_DASHBOARD_URL.
+
+[build]
+  command = "pnpm build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# The browser calls /api/* on this same site; Netlify forwards it to the merchant server (same origin, no CORS).
+# Replace the host with your hosted merchant server before the first deploy.
+[[redirects]]
+  from = "/api/*"
+  to = "https://YOUR-MERCHANT-SERVER.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+# Single-page app: every other path (/shop, /pay/<id>, /subscribe/<id>, /success/<id>) serves index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

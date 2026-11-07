@@ -23,3 +23,6 @@ skills-lock.json
 
 __pycache__/
 *.pyc
+
+# Netlify CLI link state
+.netlify

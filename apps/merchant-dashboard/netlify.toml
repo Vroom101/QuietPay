@@ -1,0 +1,32 @@
+# Netlify site 2 of 2: the merchant dashboard.
+# In Netlify set  Base directory = apps/merchant-dashboard  (this file is picked up from there).
+# Public VITE_* variables are set in the Netlify UI, never here: VITE_STORE_URL, VITE_MERCHANT_NAME.
+# Do NOT set VITE_DEMO_MODE or VITE_USE_FIXTURES: they switch the dashboard to fake data.
+
+[build]
+  command = "pnpm build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# The dashboard calls /api/merchant/* on its own origin; Netlify forwards it to the merchant server.
+# Replace the host with your hosted merchant server before the first deploy.
+[[redirects]]
+  from = "/api/*"
+  to = "https://YOUR-MERCHANT-SERVER.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# The dashboard must never be shown inside another site's frame.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
