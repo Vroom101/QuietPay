@@ -109,7 +109,7 @@ export function DashboardMetrics({ orders, demo, charts = "overview" }: { orders
         ))}
       </div>
       {orders.length > 0 && !monetary && <p className="md-notice">Revenue requires a single settlement token and complete refund amounts.</p>}
-      {charts === "overview" && <div className="md-charts md-charts-one">
+      {charts === "overview" && <div className="md-charts">
         <section className="md-glass md-chart" aria-labelledby="revenue-title">
           <h2 id="revenue-title">Revenue over time</h2>
           <div className="md-legend"><span><i style={{ background: "#145ed6" }} />Gross payments</span><span><i style={{ background: "#138453" }} />{demo ? "After refunds" : "Net revenue"}</span></div>
@@ -127,12 +127,13 @@ export function DashboardMetrics({ orders, demo, charts = "overview" }: { orders
             <details className="md-chart-data"><summary>View daily totals (UTC)</summary><ul>{days.map(([date, point]) => <li key={date}>{date} · Gross {displayUsdt(point.gross)} USDT · Net {displayUsdt(point.net)} USDT</li>)}</ul></details>
           </> : <p className="md-empty">Revenue will appear when reportable payments are available.</p>}
         </section>
+        <StatusBreakdown orders={orders} />
       </div>}
     </>
   );
 }
 
-/** Payment status donut with legend (moved from Overview to Analytics). */
+/** Payment status donut with legend (on Overview next to the revenue chart, and on Analytics). */
 export function StatusBreakdown({ orders }: { orders: DashboardOrder[] }) {
   let cursor = 0;
   const statuses = OrderStatus.options.map((status, index) => {
