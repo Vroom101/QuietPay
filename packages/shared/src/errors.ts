@@ -16,12 +16,6 @@ export const ERROR_CODES = [
   "payment_replayed",
   "budget_exceeded",
   "invalid_amount",
-  // added with the merchant gas tank (shared-change)
-  "topup_not_found",
-  "topup_unconfirmed",
-  "topup_invalid",
-  "topup_wrong_sender",
-  "topup_already_credited",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -50,11 +44,6 @@ export const ERROR_HTTP_STATUS: Record<ErrorCode, number> = {
   payment_replayed: 409,
   budget_exceeded: 503,
   invalid_amount: 400,
-  topup_not_found: 404,
-  topup_unconfirmed: 409,
-  topup_invalid: 422,
-  topup_wrong_sender: 403,
-  topup_already_credited: 409,
 };
 
 /** Plain-words text for end users. Never mentions gas, WBT or transactions. */
@@ -72,11 +61,6 @@ export const ERROR_USER_MESSAGES: Record<ErrorCode, string> = {
   payment_replayed: "This approval was already used. Please start a new payment.",
   budget_exceeded: "Payments are paused briefly while we catch up. Please try again later.",
   invalid_amount: "That amount is not valid. Use a number with up to 6 decimal places.",
-  topup_not_found: "We could not find that transfer yet. Check the reference and try again.",
-  topup_unconfirmed: "That transfer does not have enough confirmations yet. Please try again in a moment.",
-  topup_invalid: "That transfer cannot be credited. It must be a successful, non-zero transfer to the QuietPay relayer address.",
-  topup_wrong_sender: "That transfer did not come from your registered payout wallet, so it cannot be credited.",
-  topup_already_credited: "That transfer has already been credited.",
 };
 
 export function errorBody(code: ErrorCode, message?: string): ErrorResponse {

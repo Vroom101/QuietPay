@@ -4,7 +4,6 @@ import { ZodError } from "zod";
 import {
   AdminPauseRequest,
   CreateOrderRequest,
-  CreditGasTopUpRequest,
   QuietpayError,
   RelayPayRequest,
   RelayRefundRequest,
@@ -215,21 +214,6 @@ export function buildServer(svc: RelayerService): FastifyInstance {
     const merchant = merchantFromKey(req, reply);
     if (!merchant) return reply;
     return { orders: svc.listOrders(merchant) };
-  });
-
-  // Gas tank (prepaid gas credit). Advisory only: a low or negative balance never blocks a payment.
-  app.get("/v1/merchant/gas", async (req, reply) => {
-    if (!ordersAllowed(req)) throw new QuietpayError("rate_limited");
-    const merchant = merchantFromKey(req, reply);
-    if (!merchant) return reply;
-    return svc.gas.account(merchant);
-  });
-  app.post("/v1/merchant/gas/topups", async (req, reply) => {
-    if (!ordersAllowed(req)) throw new QuietpayError("rate_limited");
-    const merchant = merchantFromKey(req, reply);
-    if (!merchant) return reply;
-    const body = CreditGasTopUpRequest.parse(req.body);
-    return reply.code(201).send(await svc.gas.credit(merchant, body.txHash as `0x${string}`));
   });
 
   app.get<{ Params: { id: string } }>("/v1/orders/:id", async (req) => svc.getOrder(req.params.id));

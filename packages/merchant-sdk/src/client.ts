@@ -18,7 +18,7 @@
  */
 import type { Order } from "@quietpay/shared";
 import type { WebhookEvent } from "@quietpay/shared/webhook";
-import { createOrder, creditGasTopUp, getGasAccount, getOrder, listOrders, verifyWebhook, type VerifyWebhookOptions } from "./index.js";
+import { createOrder, getOrder, listOrders, verifyWebhook, type VerifyWebhookOptions } from "./index.js";
 
 type Hex = `0x${string}`;
 export type BillingMode = "one_time" | "subscription" | "both";
@@ -446,11 +446,6 @@ export function createQuietPay(config: QuietPayConfig) {
     },
     getOrder: (orderId: string) => getOrder({ baseUrl: config.baseUrl, orderId, ...(config.fetch ? { fetch: config.fetch } : {}) }),
     listOrders: () => listOrders(common),
-    /** Gas tank: prepaid gas credit with the relayer (advisory; it never blocks payments). */
-    gas: {
-      account: () => getGasAccount(common),
-      creditTopUp: (txHash: string) => creditGasTopUp({ ...common, txHash }),
-    },
     verifyWebhook: (raw: Omit<VerifyWebhookOptions, "secret">) => {
       if (!config.webhookSecret) throw new QuietpayConfigError("webhookSecret is required");
       return verifyWebhook({ ...raw, secret: config.webhookSecret });

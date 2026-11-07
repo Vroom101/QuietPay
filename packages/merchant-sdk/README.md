@@ -30,10 +30,6 @@ if (event.type === "payment.settled") { /* confirm with getOrder, then fulfil */
   (configurable up to a day), refuses an empty secret, and can reject replayed event ids through `isReplay`.
 - Refunds: `getRefundContext`, `refund`, `getRefund`, `listRefunds`. The refund is authorised by your refund-signer key
   (gasless for you; the relayer submits it).
-- Gas tank: `getGasAccount`, `creditGasTopUp` (or `client.gas.account()` / `client.gas.creditTopUp(txHash)`). Send native WBT
-  from your registered payout wallet to the relayer address shown in the account, then submit the tx hash to credit it.
-  Balance = credited minus the gas spent on your orders. It is advisory only: a low or negative balance never blocks a
-  payment. A too-fresh transfer fails with `topup_unconfirmed`; retry in a moment.
 - `paywall()` protects an HTTP route behind an x402 payment (testnet demo only).
 
 ## Choose your billing model at initialisation

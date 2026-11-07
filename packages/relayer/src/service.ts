@@ -1,5 +1,4 @@
 import { RefundService } from "./refunds.js";
-import { GasTank } from "./gas-tank.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { formatUnits, isAddress, type Hex } from "viem";
 import {
@@ -111,7 +110,6 @@ export class RelayerService {
   private readonly orderLimiter: RateLimiter;
   readonly sendLock = new Mutex();
   readonly refunds: RefundService;
-  readonly gas: GasTank;
   private monitor: NodeJS.Timeout | null = null;
   private balanceWei: bigint | null = null;
   private readonly broadcastRetryMs: number;
@@ -134,7 +132,6 @@ export class RelayerService {
     this.ipLimiter = new RateLimiter(d.cfg.rateLimitPerMinute, 60_000, () => this.now() * 1000);
     this.orderLimiter = new RateLimiter(Math.max(5, Math.floor(d.cfg.rateLimitPerMinute / 2)), 60_000, () => this.now() * 1000);
     this.refunds = new RefundService(this, d.log);
-    this.gas = new GasTank(this);
     this.heartbeat();
   }
 

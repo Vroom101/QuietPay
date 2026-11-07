@@ -1,7 +1,7 @@
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
 import { buildCheckoutAuthorization, type Order } from "@quietpay/shared";
-import type { ChainPort, NativeTransfer, MerchantRegistry, PayArgs, SignedTx, TxReceipt, RefundArgs, OrderReceipt, PreparedTx } from "../src/chain.js";
+import type { ChainPort, MerchantRegistry, PayArgs, SignedTx, TxReceipt, RefundArgs, OrderReceipt, PreparedTx } from "../src/chain.js";
 import type { Config } from "../src/config.js";
 import { Db } from "../src/db.js";
 import { RelayerService } from "../src/service.js";
@@ -171,11 +171,6 @@ export class FakeChain implements ChainPort {
   head = 100n;
   async getBlockNumber() {
     return this.head;
-  }
-  /** Seed native transfers by (lowercase) tx hash for gas tank tests. */
-  nativeTransfers = new Map<string, NativeTransfer>();
-  async getNativeTransfer(txHash: Hex): Promise<NativeTransfer | null> {
-    return this.nativeTransfers.get(txHash.toLowerCase()) ?? null;
   }
 }
 
