@@ -20,7 +20,7 @@ services:
     disk: { name: data, mountPath: /data, sizeGB: 2 }
     envVars:
       - { key: CHAIN_ID, value: "1874" }
-      - { key: RPC_URL, value: https://rpc.ankr.com/whitechain_testnet }
+      - { key: RPC_URL, value: https://rpc.testnet.whitechain.io }
       - { key: USDT_ADDRESS, value: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7" }
       - { key: ROUTER_ADDRESS, value: "0xb9D475cdd817900B45C356169c6FdC379B942d82" }
       - { key: DATABASE_PATH, value: /data/quietpay.db }
@@ -33,7 +33,7 @@ services:
       - { key: FACILITATOR_PAYTO, sync: false }
       - { key: FACILITATOR_MERCHANT_ID, sync: false }
       - { key: MAX_GAS_PRICE, sync: false }
-      - { key: EXPLORER_BASE_URL, value: "https://testnet.whitechain.io" }
+      - { key: EXPLORER_BASE_URL, value: "https://explorer.testnet.whitechain.io" }
       - { key: CORS_ORIGINS, sync: false }
       # Render adds one proxy hop; without this every client shares one rate-limit key.
       - { key: TRUST_PROXY_HOPS, value: "1" }
@@ -132,7 +132,7 @@ services:
     healthCheckPath: /v1/health
     disk: { name: indexer-data, mountPath: /indexer-data, sizeGB: 1 }
     envVars:
-      - { key: RPC_URL, value: https://rpc.ankr.com/whitechain_testnet }
+      - { key: RPC_URL, value: https://rpc.testnet.whitechain.io }
       - { key: CHAIN_ID, value: "1874" }
       - { key: ROUTER_ADDRESS, value: "0xb9D475cdd817900B45C356169c6FdC379B942d82" }
       - { key: USDT_ADDRESS, value: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7" }

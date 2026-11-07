@@ -47,7 +47,7 @@ const EnvSchema = z.object({
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(20),
   ORDERS_PER_MINUTE_PER_MERCHANT: z.coerce.number().int().positive().max(1_000_000).default(1200),
   /** EIP-712 domain of the payment token. Defaults to the live Whitechain test USDT. */
-  EXPLORER_BASE_URL: z.string().url().default("https://testnet.whitechain.io"),
+  EXPLORER_BASE_URL: z.string().url().default("https://explorer.testnet.whitechain.io"),
   TOKEN_DOMAIN_NAME: z.string().trim().min(1).default("Tether USD"),
   TOKEN_DOMAIN_VERSION: z.string().trim().min(1).default("1"),
   PORT: z.coerce.number().int().default(8787),

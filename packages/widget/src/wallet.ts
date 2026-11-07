@@ -28,7 +28,7 @@ export interface CheckoutSigner {
 export const WHITECHAIN_SEPOLIA = {
   chainId: 1874,
   chainName: "Whitechain Sepolia",
-  rpcUrls: ["https://rpc.ankr.com/whitechain_testnet"],
+  rpcUrls: ["https://rpc.testnet.whitechain.io"],
   nativeCurrency: { name: "WBT", symbol: "WBT", decimals: 18 },
   blockExplorerUrls: ["https://explorer.testnet.whitechain.io"],
 } as const;
