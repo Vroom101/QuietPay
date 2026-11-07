@@ -26,3 +26,6 @@ __pycache__/
 
 # Netlify CLI link state
 .netlify
+
+# Generated Render environment files contain real secrets
+deploy/render-env/
