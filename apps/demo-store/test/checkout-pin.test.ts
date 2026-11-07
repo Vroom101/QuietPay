@@ -100,6 +100,6 @@ describe("checkout page wiring", () => {
 
   it(".env.example documents QUIETPAY_PAYOUT_ADDRESS and the server reads it", () => {
     expect(readFileSync(new URL("../.env.example", import.meta.url), "utf8")).toMatch(/^QUIETPAY_PAYOUT_ADDRESS=/m);
-    expect(readFileSync(new URL("../server/index.ts", import.meta.url), "utf8")).toMatch(/QUIETPAY_PAYOUT_ADDRESS/);
+    expect(readFileSync(new URL("../server/config.ts", import.meta.url), "utf8")).toMatch(/QUIETPAY_PAYOUT_ADDRESS/);
   });
 });

@@ -64,6 +64,11 @@ describe("cost cards", () => {
     expect(m["Network gas covered"].value).toBe("0.0035");
     expect(m["Network gas covered"].unit).toBe("WBT");
   });
+  it("with no orders yet it does not claim the relayer failed to report gas", () => {
+    const m = by([]);
+    expect(m["Network gas covered"].value).toBe("—");
+    expect(m["Network gas covered"].detail).toBe("Appears once you have orders");
+  });
   it("says so when the relayer does not report gas, and hides cost cards in demo mode", () => {
     expect(by([order({ status: "settled", amount: "1" })])["Network gas covered"].value).toBe("—");
     expect(by([order({ status: "settled", amount: "1" })], true)["Relay fees paid"]).toBeUndefined();

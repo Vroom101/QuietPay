@@ -39,6 +39,8 @@ try {
   await page.getByTestId("wallet-chip").waitFor({ timeout: 30_000 });
   check("merchant signed in with the wallet", true);
 
+  // The cards fill in after the order list loads; wait for the gas card to show a number (or give up after 20 s).
+  await page.locator(".md-metric").filter({ hasText: "Network gas covered" }).getByText(/[\d.]+\s*WBT/).waitFor({ timeout: 20_000 }).catch(() => {});
   const cards = (await page.locator(".md-metric").allTextContents()).join(" | ");
   check("overview shows the relay fees card", /Relay fees paid/.test(cards));
   check("overview shows the network gas card in WBT", /Network gas covered\s*[\d.]+\s*WBT/.test(cards), cards.match(/Network gas covered[^|]*/)?.[0]?.slice(0, 120));

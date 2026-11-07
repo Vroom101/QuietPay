@@ -319,13 +319,8 @@ be unable to pay gas; keys only in the gitignored env file.
 ```ts
 import { createQuietPay } from "@quietpay/merchant-sdk";
 
-const qp = createQuietPay({
-  baseUrl: process.env.QUIETPAY_RELAYER_URL!,
-  apiKey: process.env.QUIETPAY_API_KEY!,            // server side only
-  merchantId: process.env.QUIETPAY_MERCHANT_ID as `0x${string}`,
-  webhookSecret: process.env.QUIETPAY_WEBHOOK_SECRET!,
-  billing: "both",                                   // "product" | "subscription" | "both"
-});
+// One line of setup. Reads QUIETPAY_BASE_URL, QUIETPAY_API_KEY, QUIETPAY_MERCHANT_ID and QUIETPAY_WEBHOOK_SECRET.
+const qp = createQuietPay({ billing: "both" });     // "product" | "subscription" | "both"
 
 const order = await qp.createOrder({ amount: "8500000" });                       // 8.50 USDT, one-time
 const link  = await qp.links.create({ title: "Logo design", amount: "1000000" }); // payment link
@@ -338,7 +333,7 @@ Show the widget in the browser with the order id and pin the amount and payout y
 <quietpay-checkout order-id="0x..." relayer-url="https://your-relayer" expected-amount="8.5" expected-payout="0x..."></quietpay-checkout>
 ```
 
-Full guide with webhooks, refunds, subscriptions, x402, errors and a security checklist: [docs/sdk/README.md](docs/sdk/README.md).
+The complete server (checkout endpoint plus verified webhook) fits in 20 lines: [apps/demo-store/server/quickstart.ts](apps/demo-store/server/quickstart.ts). Full guide with webhooks, refunds, subscriptions, x402, errors and a security checklist: [docs/sdk/README.md](docs/sdk/README.md).
 
 ---
 

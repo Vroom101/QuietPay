@@ -59,7 +59,11 @@ export function buildMetrics(orders: DashboardOrder[], demo: boolean): Metric[] 
           value: gasKnown ? formatWbt(gas, 6) : "—",
           unit: "WBT",
           icon: "⛓",
-          detail: gasKnown ? "Gas the relayer paid on-chain for your payments, refunds and retries (your customers paid none)" : "Not reported by this relayer",
+          detail: !orders.length
+            ? "Appears once you have orders"
+            : gasKnown
+              ? "Gas the relayer paid on-chain for your payments, refunds and retries (your customers paid none)"
+              : "Not reported by this relayer",
         },
       ];
   return [

@@ -8,7 +8,7 @@ once with the QuietPay widget; a relayer pays the gas.
 import { createOrder, getOrder, refund, verifyWebhook } from "@quietpay/merchant-sdk";
 
 const order = await createOrder({
-  baseUrl: process.env.QUIETPAY_RELAYER_URL!,   // https://your-relayer.example
+  baseUrl: process.env.QUIETPAY_BASE_URL!,   // https://your-relayer.example
   apiKey: process.env.QUIETPAY_API_KEY!,        // at least 24 characters, kept on your server
   merchantId: process.env.QUIETPAY_MERCHANT_ID as `0x${string}`,
   amount: "25000000",                           // 25 USDT in base units (6 decimals)
@@ -37,11 +37,8 @@ if (event.type === "payment.settled") { /* confirm with getOrder, then fulfil */
 ```ts
 import { createQuietPay } from "@quietpay/merchant-sdk";
 
+// Reads QUIETPAY_BASE_URL, QUIETPAY_API_KEY, QUIETPAY_MERCHANT_ID and QUIETPAY_WEBHOOK_SECRET from the environment.
 const qp = createQuietPay({
-  baseUrl: process.env.QUIETPAY_RELAYER_URL!,
-  apiKey: process.env.QUIETPAY_API_KEY!,
-  merchantId: process.env.QUIETPAY_MERCHANT_ID as `0x${string}`,
-  webhookSecret: process.env.QUIETPAY_WEBHOOK_SECRET!,
   billing: "both", // "product" / "one_time" (default) | "subscription" | "both"
   // subscriptionStore: yourDbStore,  // in memory by default; implement SubscriptionStore for production
 });

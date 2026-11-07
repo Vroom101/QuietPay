@@ -221,14 +221,17 @@ function addInterval(fromSeconds: number, interval: Interval, count?: number): n
 One configured client with the billing model fixed at creation.
 
 ```ts
-function createQuietPay(config: QuietPayConfig): QuietPayClient
+function createQuietPay(init?: QuietPayInit): QuietPayClient
 ```
 
-| Param (`QuietPayConfig`) | Type | Required | Notes |
+Every option is optional because a missing `baseUrl`, `apiKey`, `merchantId`, `webhookSecret`, `webhookUrl` or `billing` is read from `QUIETPAY_BASE_URL`, `QUIETPAY_API_KEY`, `QUIETPAY_MERCHANT_ID`, `QUIETPAY_WEBHOOK_SECRET`, `QUIETPAY_WEBHOOK_URL` and `QUIETPAY_BILLING`. An option you pass wins over the variable. Empty or blank values count as missing. `createQuietPay()` with no arguments is valid when the variables are set.
+
+| Param (`QuietPayInit`) | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `baseUrl` | `string` | yes | Relayer URL |
-| `apiKey` | `string` | yes | Must not be empty |
-| `merchantId` | `Hex` | yes | 0x + 64 hex |
+| `baseUrl` | `string` | yes (or `QUIETPAY_BASE_URL`) | Relayer URL, must be a full URL |
+| `apiKey` | `string` | yes (or `QUIETPAY_API_KEY`) | Must not be empty |
+| `merchantId` | `Hex` | yes (or `QUIETPAY_MERCHANT_ID`) | 0x + 64 hex |
+| `env` | `Record<string, string \| undefined>` | no | Where the variables are read from. Default `process.env` |
 | `billing` | `"product" \| "one_time" \| "subscription" \| "both"` | no | Default `"one_time"`. `"product"` means `"one_time"` |
 | `webhookUrl` | `string` | no | Added to every order the client creates |
 | `webhookSecret` | `string` | no | Needed by `verifyWebhook` and the `handleWebhook` helpers |
@@ -239,16 +242,10 @@ function createQuietPay(config: QuietPayConfig): QuietPayClient
 | `fetch` | `typeof fetch` | no | For tests |
 | `now` | `() => number` | no | Unix seconds clock, for tests |
 
-**Throws** `QuietpayConfigError` for an unknown `billing`, a bad `merchantId`, an empty `apiKey`, or a TTL out of range.
+**Throws** `QuietpayConfigError` when `baseUrl`, `apiKey` or `merchantId` is missing (one error names every missing one and its variable), for a `baseUrl` that is not a full URL, an unknown `billing`, a bad `merchantId`, or a TTL out of range.
 
 ```ts
-const qp = createQuietPay({
-  baseUrl: process.env.QUIETPAY_BASE_URL!,
-  apiKey: process.env.QUIETPAY_API_KEY!,
-  merchantId: process.env.QUIETPAY_MERCHANT_ID as `0x${string}`,
-  webhookSecret: process.env.QUIETPAY_WEBHOOK_SECRET!,
-  billing: "both",
-});
+const qp = createQuietPay({ billing: "both" }); // everything else from the QUIETPAY_* variables
 ```
 
 ### The client object
@@ -486,7 +483,7 @@ Exported as a type. Returned by `createOrder`, `getOrder`, `listOrders`.
 | `Interval` | `"day" \| "week" \| "month" \| "year"` |
 | `SubscriptionStatus` | `"active" \| "past_due" \| "cancelled"` |
 | `PaymentLinkStatus` | `"active" \| "paid" \| "deactivated"` |
-| `QuietPayConfig`, `QuietPayClient` | The config and the return type of `createQuietPay` |
+| `QuietPayInit`, `QuietPayConfig`, `QuietPayClient` | What `createQuietPay` accepts (all optional, env fallback), the resolved config, and the return type |
 | `CreateOrderOptions`, `GetOrderOptions`, `VerifyWebhookOptions`, `RefundOptions`, `PaywallOptions` | The option objects above |
 | `SubscriptionStore`, `PaymentLinkStore` | Store interfaces |
 | `Order`, `WebhookEvent`, `Refund`, `RefundContext` | Described above (types only) |

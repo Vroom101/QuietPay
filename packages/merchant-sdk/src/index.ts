@@ -248,6 +248,7 @@ export {
   addInterval,
   QuietpayConfigError,
   type QuietPayConfig,
+  type QuietPayInit,
   type QuietPayClient,
   type BillingMode,
   type BillingOption,

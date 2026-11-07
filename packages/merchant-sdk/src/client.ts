@@ -179,6 +179,42 @@ export interface QuietPayConfig {
   now?: () => number;
 }
 
+/**
+ * What createQuietPay() accepts: every field of QuietPayConfig is optional. A missing baseUrl, apiKey, merchantId,
+ * webhookSecret, webhookUrl or billing is read from QUIETPAY_BASE_URL, QUIETPAY_API_KEY, QUIETPAY_MERCHANT_ID,
+ * QUIETPAY_WEBHOOK_SECRET, QUIETPAY_WEBHOOK_URL and QUIETPAY_BILLING. An explicit option always wins.
+ */
+export type QuietPayInit = Partial<QuietPayConfig> & {
+  /** Where the QUIETPAY_* variables are read from. Defaults to process.env. */
+  env?: Record<string, string | undefined>;
+};
+
+const clean = (v: string | undefined) => (v?.trim() ? v.trim() : undefined);
+
+function resolveConfig(input: QuietPayInit): QuietPayConfig {
+  const { env: given, ...rest } = input;
+  const env = given ?? (typeof process !== "undefined" ? process.env : {});
+  const pick = (own: string | undefined, name: string) => clean(own) ?? clean(env[name]);
+  const baseUrl = pick(rest.baseUrl, "QUIETPAY_BASE_URL");
+  const apiKey = pick(rest.apiKey, "QUIETPAY_API_KEY");
+  const merchantId = pick(rest.merchantId, "QUIETPAY_MERCHANT_ID");
+  const missing = [
+    !baseUrl && "baseUrl (QUIETPAY_BASE_URL)",
+    !apiKey && "apiKey (QUIETPAY_API_KEY)",
+    !merchantId && "merchantId (QUIETPAY_MERCHANT_ID)",
+  ].filter(Boolean);
+  if (missing.length) throw new QuietpayConfigError(`createQuietPay: missing ${missing.join(", ")}. Pass them as options or set the environment variables.`);
+  return {
+    ...rest,
+    baseUrl: baseUrl!,
+    apiKey: apiKey!,
+    merchantId: merchantId as Hex,
+    billing: (rest.billing ?? clean(env.QUIETPAY_BILLING) ?? "one_time") as BillingOption,
+    webhookSecret: pick(rest.webhookSecret, "QUIETPAY_WEBHOOK_SECRET"),
+    webhookUrl: pick(rest.webhookUrl, "QUIETPAY_WEBHOOK_URL"),
+  };
+}
+
 const MODES: readonly BillingMode[] = ["one_time", "subscription", "both"];
 const INTERVALS: readonly Interval[] = ["day", "week", "month", "year"];
 const AMOUNT = /^[1-9]\d{0,30}$/;
@@ -214,12 +250,13 @@ const randomId = (prefix: string) => {
   return prefix + Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 };
 
-export function createQuietPay(config: QuietPayConfig) {
+export function createQuietPay(input: QuietPayInit = {}) {
+  const config = resolveConfig(input);
   const chosen = config.billing ?? "one_time";
   const billing: BillingMode = chosen === "product" ? "one_time" : chosen;
   if (!MODES.includes(billing)) throw new QuietpayConfigError(`billing must be one of product (same as one_time), ${MODES.join(", ")}`);
   if (!/^0x[0-9a-fA-F]{64}$/.test(config.merchantId)) throw new QuietpayConfigError("merchantId must be 0x + 64 hex characters");
-  if (!config.apiKey) throw new QuietpayConfigError("apiKey is required");
+  try { new URL(config.baseUrl); } catch { throw new QuietpayConfigError("baseUrl must be a full URL such as https://relayer.example (QUIETPAY_BASE_URL)"); }
   const oneTime = billing !== "subscription";
   const recurring = billing !== "one_time";
   const now = config.now ?? (() => Math.floor(Date.now() / 1000));
