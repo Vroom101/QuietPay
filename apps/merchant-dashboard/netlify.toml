@@ -14,7 +14,7 @@
 # Replace the host with your hosted merchant server before the first deploy.
 [[redirects]]
   from = "/api/*"
-  to = "https://YOUR-MERCHANT-SERVER.onrender.com/api/:splat"
+  to = "https://quietpay-merchant-server.onrender.com/api/:splat"
   status = 200
   force = true
 
